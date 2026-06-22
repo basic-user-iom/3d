@@ -63,7 +63,7 @@ The 403 errors strongly suggest an **API key configuration issue**, not a code p
 
 2. **Check API Key Restrictions**
    - Go to: https://console.cloud.google.com/apis/credentials
-   - Find your API key (or the Cesium Ion key: `AIzaSyAuJtuLbQ1mMTDg9aEAbYP0HQJLYTbjybg`)
+   - Find your API key (or the Cesium Ion key: `YOUR_GOOGLE_MAPS_API_KEY`)
    - Click on the key to edit
 
 3. **HTTP Referrer Restrictions**
@@ -77,7 +77,7 @@ The 403 errors strongly suggest an **API key configuration issue**, not a code p
 
 5. **Verify Key Permissions**
    - The Cesium Ion API key may not have access to Photorealistic 3D Tiles
-   - Consider using your own API key: `AIzaSyBc3NzjCoyxp5xGA2x3MBEirLiJlEHCxE8`
+   - Consider using your own API key: `YOUR_GOOGLE_MAPS_API_KEY`
    - Ensure your key has:
      - Map Tiles API enabled
      - No HTTP referrer restrictions (or includes localhost)
