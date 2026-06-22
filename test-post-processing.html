@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Post-Processing Test Runner</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        h1 {
+            color: #4CAF50;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background: #2a2a2a;
+        }
+        .success { background: #2d5a2d; }
+        .error { background: #5a2d2d; }
+        .info { background: #2d3a5a; }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        #results {
+            margin-top: 20px;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            border-left: 4px solid #666;
+        }
+        .test-result.pass {
+            background: #2d5a2d;
+            border-left-color: #4CAF50;
+        }
+        .test-result.fail {
+            background: #5a2d2d;
+            border-left-color: #f44336;
+        }
+        pre {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Post-Processing Test Runner</h1>
+    
+    <div class="status info" id="status">
+        <strong>Status:</strong> Waiting for app to load...
+    </div>
+    
+    <div>
+        <button onclick="checkViewer()">Check Viewer Connection</button>
+        <button onclick="runAllTests()" id="runBtn" disabled>Run All Tests</button>
+        <button onclick="runIndividualTests()" id="individualBtn" disabled>Run Individual Tests</button>
+    </div>
+    
+    <div id="results"></div>
+    
+    <script>
+        let viewer = null;
+        let testResults = [];
+        
+        function updateStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.className = `status ${type}`;
+            status.innerHTML = `<strong>Status:</strong> ${message}`;
+        }
+        
+        function checkViewer() {
+            updateStatus('Checking for viewer...', 'info');
+            
+            // Try multiple ways to access viewer
+            viewer = window.__viewer || window.sharedViewer || (window.viewerRef?.current);
+            
+            if (viewer) {
+                updateStatus('✅ Viewer found!', 'success');
+                document.getElementById('runBtn').disabled = false;
+                document.getElementById('individualBtn').disabled = false;
+                
+                // Check for post-processing system
+                if (viewer.postProcessingSystem) {
+                    updateStatus('✅ Viewer and Post-Processing System found!', 'success');
+                } else {
+                    updateStatus('⚠️ Viewer found but Post-Processing System not initialized', 'error');
+                }
+            } else {
+                updateStatus('❌ Viewer not found. Make sure the app is loaded and a scene is active.', 'error');
+                document.getElementById('runBtn').disabled = true;
+                document.getElementById('individualBtn').disabled = true;
+            }
+        }
+        
+        function runAllTests() {
+            if (!viewer) {
+                checkViewer();
+                if (!viewer) return;
+            }
+            
+            if (window.postProcessingTests && window.postProcessingTests.runAllTests) {
+                updateStatus('Running all tests...', 'info');
+                const results = window.postProcessingTests.runAllTests();
+                displayResults(results);
+            } else {
+                updateStatus('❌ Test suite not loaded. Check console for errors.', 'error');
+            }
+        }
+        
+        function runIndividualTests() {
+            if (!viewer) {
+                checkViewer();
+                if (!viewer) return;
+            }
+            
+            if (!window.postProcessingTests) {
+                updateStatus('❌ Test suite not loaded.', 'error');
+                return;
+            }
+            
+            updateStatus('Running individual tests...', 'info');
+            const results = {};
+            
+            const tests = [
+                'testShadowMaps',
+                'testColorSpace',
+                'testSSSIntensity',
+                'testSSRCameraMatrices',
+                'testMemoryLeaks',
+                'testTextureUpdates',
+                'testPassOrderStability'
+            ];
+            
+            tests.forEach(testName => {
+                try {
+                    results[testName] = window.postProcessingTests[testName]();
+                } catch (error) {
+                    results[testName] = false;
+                    console.error(`Error in ${testName}:`, error);
+                }
+            });
+            
+            displayResults(results);
+        }
+        
+        function displayResults(results) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<h2>Test Results</h2>';
+            
+            const passed = Object.values(results).filter(r => r === true).length;
+            const total = Object.keys(results).length;
+            
+            resultsDiv.innerHTML += `<div class="status ${passed === total ? 'success' : 'error'}">
+                <strong>Summary:</strong> ${passed}/${total} tests passed
+            </div>`;
+            
+            Object.entries(results).forEach(([name, result]) => {
+                const div = document.createElement('div');
+                div.className = `test-result ${result ? 'pass' : 'fail'}`;
+                div.innerHTML = `
+                    <strong>${name}:</strong> ${result ? '✅ PASS' : '❌ FAIL'}
+                `;
+                resultsDiv.appendChild(div);
+            });
+            
+            updateStatus(`Tests complete: ${passed}/${total} passed`, passed === total ? 'success' : 'error');
+        }
+        
+        // Auto-check on load
+        window.addEventListener('load', () => {
+            setTimeout(checkViewer, 1000);
+        });
+        
+        // Check every 2 seconds if viewer not found
+        setInterval(() => {
+            if (!viewer) {
+                checkViewer();
+            }
+        }, 2000);
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

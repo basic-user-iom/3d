@@ -1,0 +1,201 @@
+﻿        // Configure shadow plane to be transparent (only shows shadows) and fit it under the car
+        const shadowConfig = CONFIG.shadows || {};
+        const shadowPlaneTransparent = shadowConfig.shadowPlaneTransparent !== undefined ? shadowConfig.shadowPlaneTransparent : true;
+        const shadowIntensity = shadowConfig.shadowIntensity !== undefined ? shadowConfig.shadowIntensity : 1.0;
+        
+        let shadowPlane = null;
+        scene.traverse((obj) => {
+          if (obj instanceof THREE.Mesh && (obj.userData.isShadowPlane || (obj.name || '').toLowerCase().includes('shadow'))) {
+            shadowPlane = obj;
+            obj.visible = true;
+            obj.receiveShadow = true;
+            obj.castShadow = false;
+            
+            // Configure material for transparent shadow-only display
+            if (obj.material) {
+              const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+              materials.forEach((mat) => {
+                if (shadowPlaneTransparent) {
+                  // Use ShadowMaterial for transparent shadow-only display
+                  if (!(mat instanceof THREE.ShadowMaterial)) {
+                    if (mat instanceof THREE.Material) {
+                      mat.dispose();
+                    }
+                    const shadowOpacity = Math.min(1.0, 0.1 + (shadowIntensity / 2.0) * 0.9);
+                    const shadowMaterial = new THREE.ShadowMaterial({ 
+                      opacity: shadowOpacity
+                    });
+                    shadowMaterial.depthWrite = true;
+                    obj.material = shadowMaterial;
+                    console.log('Shadow plane configured with ShadowMaterial (transparent, shadow-only)');
+                  } else {
+                    const shadowOpacity = Math.min(1.0, 0.1 + (shadowIntensity / 2.0) * 0.9);
+                    mat.opacity = shadowOpacity;
+                    mat.depthWrite = true;
+                    mat.needsUpdate = true;
+                  }
+                } else {
+                  if (!(mat instanceof THREE.MeshStandardMaterial)) {
+                    if (mat instanceof THREE.Material) {
+                      mat.dispose();
+                    }
+                    const planeOpacity = Math.min(1.0, 0.3 + (shadowIntensity / 2.0) * 0.7);
+                    const standardMaterial = new THREE.MeshStandardMaterial({ 
+                      color: 0x333333,
+                      transparent: true,
+                      opacity: planeOpacity,
+                      side: THREE.DoubleSide,
+                      depthWrite: true
+                    });
+                    obj.material = standardMaterial;
+                  } else {
+                    mat.depthWrite = true;
+                    mat.needsUpdate = true;
+                  }
+                }
+              });
+            }
+            console.log('Shadow plane configured:', obj.name || 'unnamed');
+          }
+        });
+        
+        // Helper function to get shadow map size based on quality setting
+        function getShadowMapSize(quality) {
+          const shadowQuality = CONFIG.shadowQuality || quality || 'high';
+          switch (shadowQuality) {
+            case 'low': return 1024;
+            case 'medium': return 2048;
+            case 'high': return 4096;
+            case 'ultra': return 8192;
+            default: return 4096;
+          }
+        }
+        const shadowMapSize = getShadowMapSize('${options.shadowQuality || 'high'}');
+        console.log('Shadow quality:', '${options.shadowQuality || 'high'}', 'Shadow map size:', shadowMapSize);
+        
+        // Setup lighting from config
+        const lightingConfig = CONFIG.lighting || {};
+        // Darker default ambient so interiors read more strongly; user can override via CONFIG.lighting
+        const ambientIntensity = lightingConfig.ambientIntensity !== undefined ? lightingConfig.ambientIntensity : 0.2;
+        const ambientLight = new THREE.AmbientLight(0xffffff, ambientIntensity);
+        scene.add(ambientLight);
+        
+        // Try to detect the main car/root model for tighter car-only shadows
+        let carRoot = null;
+        gltf.scene.traverse((obj) => {
+          if (!obj || !obj.isObject3D) return;
+          const userData = obj.userData || {};
+          const name = (obj.name || '').toLowerCase();
+          if (userData.isModel || userData.isImportedModel || name.includes('car') || name.includes('vehicle')) {
+            if (!carRoot || (obj.parent === gltf.scene)) {
+              carRoot = obj;
+            }
+          }
+        });
+        if (!carRoot) {
+          carRoot = gltf.scene;
+        }
+        
+        // If we have both carRoot and a shadow plane, fit the plane under the car
+        if (carRoot && shadowPlane) {
+          const carBox = new THREE.Box3().setFromObject(carRoot);
+          if (!carBox.isEmpty()) {
+            const carCenter = carBox.getCenter(new THREE.Vector3());
+            const carSize = carBox.getSize(new THREE.Vector3());
+            const radiusX = carSize.x * 0.75;
+            const radiusZ = carSize.z * 0.75;
+            
+            // Position plane under car center (keep its original Y)
+            shadowPlane.position.x = carCenter.x;
+            shadowPlane.position.z = carCenter.z;
+            
+            // Scale plane in X/Z so it extends beyond car footprint
+            const baseScaleX = shadowPlane.scale.x || 1;
+            const baseScaleZ = shadowPlane.scale.z || 1;
+            shadowPlane.scale.x = (radiusX / 5) * baseScaleX;
+            shadowPlane.scale.z = (radiusZ / 5) * baseScaleZ;
+            
+            shadowPlane.updateMatrixWorld(true);
+            console.log('[WebExport] Shadow plane fitted under car:', {
+              center: { x: carCenter.x, z: carCenter.z },
+              size: { x: carSize.x, z: carSize.z },
+              scale: { x: shadowPlane.scale.x, z: shadowPlane.scale.z }
+            });
+          }
+        }
+        
+        // Add directional lights from config
+        if (lightingConfig.directionalLights && lightingConfig.directionalLights.length > 0) {
+          lightingConfig.directionalLights.forEach(lightConfig => {
+            if (lightConfig.enabled) {
+              const light = new THREE.DirectionalLight(
+                new THREE.Color(lightConfig.color.r, lightConfig.color.g, lightConfig.color.b),
+                lightConfig.intensity
+              );
+              light.position.set(lightConfig.position.x, lightConfig.position.y, lightConfig.position.z);
+              // CRITICAL: Explicitly enable shadow casting
+              light.castShadow = lightConfig.castShadow !== false ? true : false;
+              
+              if (light.castShadow) {
+                // Use shadow map size based on quality setting
+                const lightShadowMapSize = lightConfig.shadowMapSize || shadowMapSize;
+                light.shadow.mapSize.width = lightShadowMapSize;
+                light.shadow.mapSize.height = lightShadowMapSize;
+                // BEST PRACTICE: Small positive bias (0.0001) for sharp shadows
+                light.shadow.bias = lightConfig.shadowBias !== undefined ? lightConfig.shadowBias : 0.0001;
+                // normalBias: 0.15 for balance between sharpness and flickering
+                light.shadow.normalBias = lightConfig.shadowNormalBias !== undefined ? lightConfig.shadowNormalBias : 0.15;
+                
+                // CRITICAL: Use very small near plane to capture interior surfaces (like car interiors)
+                // 0.001 allows the shadow camera to see very close surfaces inside objects
+                light.shadow.camera.near = 0.001;
+                light.shadow.camera.far = 200; // Increased far plane to cover larger scenes
+                
+                // Update shadow camera to include the scene (will be updated after model loads)
+                light.shadow.camera.updateProjectionMatrix();
+                console.log('Directional light configured with shadows:', {
+                  position: light.position,
+                  intensity: light.intensity,
+                  shadowMapSize: shadowMapSize,
+                  near: light.shadow.camera.near,
+                  far: light.shadow.camera.far
+                });
+              }
+              
+              scene.add(light);
+            }
+          });
+        } else if (lightingConfig.sceneLights && lightingConfig.sceneLights.length > 0) {
+          // Fallback to scene lights if directional lights not available
+          lightingConfig.sceneLights.forEach(lightConfig => {
+            if (lightConfig.type === 'DirectionalLight') {
+              const light = new THREE.DirectionalLight(
+                new THREE.Color(lightConfig.color.r, lightConfig.color.g, lightConfig.color.b),
+                lightConfig.intensity
+              );
+              if (lightConfig.position) {
+                light.position.set(lightConfig.position.x, lightConfig.position.y, lightConfig.position.z);
+              }
+              // CRITICAL: Explicitly enable shadow casting
+              light.castShadow = lightConfig.castShadow !== false ? true : false;
+              if (lightConfig.shadow) {
+                // Use shadow map size based on quality setting
+                const lightShadowMapSize = lightConfig.shadow?.mapSize?.width || shadowMapSize;
+                light.shadow.mapSize.width = lightShadowMapSize;
+                light.shadow.mapSize.height = lightShadowMapSize;
+                console.log('Scene light shadow map size:', lightShadowMapSize);
+                if (lightConfig.shadow.camera) {
+                  // CRITICAL: Very small near plane to capture interior surfaces
+                  light.shadow.camera.near = lightConfig.shadow.camera.near || 0.001;
+                  light.shadow.camera.far = lightConfig.shadow.camera.far || 200;
+                } else {
+                  light.shadow.camera.near = 0.001;
+                  light.shadow.camera.far = 200;
+                }
+              } else if (light.castShadow) {
+                // Set defaults if shadow config not provided
+                light.shadow.mapSize.width = shadowMapSize;
+                light.shadow.mapSize.height = shadowMapSize;
+                light.shadow.camera.near = 0.001;
+                light.shadow.camera.far = 200;
+              }

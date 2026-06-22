@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Three.js Ambient Occlusion (AO) Demo</title>
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background-color: #1a1a1a;
+			overflow: hidden;
+		}
+
+		canvas {
+			display: block;
+		}
+
+		#info {
+			position: absolute;
+			top: 20px;
+			left: 20px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 15px 20px;
+			border-radius: 8px;
+			font-size: 14px;
+			line-height: 1.6;
+			max-width: 300px;
+			z-index: 100;
+			backdrop-filter: blur(10px);
+		}
+
+		#info h1 {
+			font-size: 18px;
+			margin-bottom: 10px;
+			color: #4a9eff;
+		}
+
+		#info p {
+			margin: 5px 0;
+			font-size: 12px;
+			color: #ccc;
+		}
+
+		#controls {
+			position: absolute;
+			top: 20px;
+			right: 20px;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 20px;
+			border-radius: 8px;
+			color: white;
+			min-width: 280px;
+			max-height: 90vh;
+			overflow-y: auto;
+			z-index: 100;
+			backdrop-filter: blur(10px);
+		}
+
+		#controls h2 {
+			font-size: 16px;
+			margin-bottom: 15px;
+			color: #4a9eff;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			padding-bottom: 10px;
+		}
+
+		.control-group {
+			margin-bottom: 20px;
+		}
+
+		.control-group label {
+			display: block;
+			margin-bottom: 8px;
+			font-size: 13px;
+			color: #fff;
+		}
+
+		.control-group small {
+			display: block;
+			margin-top: 4px;
+			font-size: 11px;
+			color: #aaa;
+		}
+
+		input[type="range"] {
+			width: 100%;
+			margin: 5px 0;
+		}
+
+		select {
+			width: 100%;
+			padding: 8px;
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 4px;
+			color: white;
+			font-size: 12px;
+			margin-top: 5px;
+		}
+
+		select option {
+			background: #2a2a2a;
+			color: white;
+		}
+
+		.checkbox-label {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			cursor: pointer;
+		}
+
+		input[type="checkbox"] {
+			width: 18px;
+			height: 18px;
+			cursor: pointer;
+		}
+
+		.value-display {
+			display: inline-block;
+			min-width: 50px;
+			text-align: right;
+			color: #4a9eff;
+			font-weight: 600;
+		}
+
+		button {
+			width: 100%;
+			padding: 10px;
+			margin-top: 10px;
+			background: #4a9eff;
+			color: white;
+			border: none;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 13px;
+			font-weight: 600;
+			transition: background 0.2s;
+		}
+
+		button:hover {
+			background: #3a8eef;
+		}
+
+		button:active {
+			background: #2a7edf;
+		}
+
+		#stats {
+			position: absolute;
+			bottom: 20px;
+			left: 20px;
+			color: #0f0;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 8px 12px;
+			border-radius: 4px;
+			font-family: 'Courier New', monospace;
+			font-size: 11px;
+			z-index: 100;
+		}
+	</style>
+</head>
+<body>
+	<div id="info">
+		<h1>🌑 Ambient Occlusion Demo</h1>
+		<p>🖱️ <strong>Drag</strong> to rotate camera</p>
+		<p>🔍 <strong>Scroll</strong> to zoom</p>
+		<p>📊 <strong>Adjust controls</strong> to see AO effects</p>
+		<p style="margin-top: 10px; color: #888; font-size: 11px;">
+			AO adds realistic depth by darkening areas where light is occluded (corners, crevices, contact points).
+		</p>
+	</div>
+
+	<div id="controls">
+		<h2>⚙️ AO Controls</h2>
+		
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="aoEnabled" checked>
+				<span>Enable Ambient Occlusion</span>
+			</label>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Output Mode
+				<select id="aoOutput">
+					<option value="0">Beauty (Final Result)</option>
+					<option value="1">Default</option>
+					<option value="2">SAO Only</option>
+					<option value="4">Normal Map</option>
+				</select>
+			</label>
+			<small>Debug modes to visualize AO processing</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Intensity: <span class="value-display" id="intensityValue">1.00</span>
+				<input type="range" id="intensitySlider" min="0" max="2" step="0.01" value="1.0">
+			</label>
+			<small>Strength of the occlusion effect (0-2)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Bias: <span class="value-display" id="biasValue">0.50</span>
+				<input type="range" id="biasSlider" min="0" max="1" step="0.01" value="0.5">
+			</label>
+			<small>Depth bias to prevent self-occlusion (0-1)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Scale: <span class="value-display" id="scaleValue">1.00</span>
+				<input type="range" id="scaleSlider" min="0.1" max="10" step="0.1" value="1.0">
+			</label>
+			<small>Overall scale of the occlusion effect</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Kernel Radius: <span class="value-display" id="radiusValue">100.00</span>
+				<input type="range" id="radiusSlider" min="1" max="200" step="1" value="100">
+			</label>
+			<small>Sampling radius in pixels (larger = more coverage)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Min Resolution: <span class="value-display" id="minResValue">0</span>
+				<input type="range" id="minResSlider" min="0" max="256" step="1" value="0">
+			</label>
+			<small>Minimum resolution for AO pass (0 = full resolution)</small>
+		</div>
+
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="blurEnabled" checked>
+				<span>Enable Blur</span>
+			</label>
+			<small>Blur the AO result for smoother appearance</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Blur Radius: <span class="value-display" id="blurRadiusValue">8</span>
+				<input type="range" id="blurRadiusSlider" min="1" max="16" step="1" value="8">
+			</label>
+			<small>Blur kernel radius (1-16)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Blur Std Dev: <span class="value-display" id="blurStdDevValue">4.00</span>
+				<input type="range" id="blurStdDevSlider" min="0.1" max="10" step="0.1" value="4.0">
+			</label>
+			<small>Gaussian blur standard deviation</small>
+		</div>
+
+		<button id="resetBtn">🔄 Reset to Defaults</button>
+	</div>
+
+	<div id="stats"></div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+		import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+		import { SAOPass } from 'three/addons/postprocessing/SAOPass.js';
+		import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+		// ==========================================
+		// SCENE SETUP
+		// ==========================================
+
+		const scene = new THREE.Scene();
+		scene.background = new THREE.Color(0x222222);
+
+		const camera = new THREE.PerspectiveCamera(
+			75,
+			window.innerWidth / window.innerHeight,
+			0.1,
+			1000
+		);
+		camera.position.set(8, 6, 12);
+		camera.lookAt(0, 0, 0);
+
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.toneMapping = THREE.ACESFilmicToneMapping;
+		renderer.toneMappingExposure = 1.0;
+		renderer.shadowMap.enabled = true;
+		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		document.body.appendChild(renderer.domElement);
+
+		// Controls
+		const controls = new OrbitControls(camera, renderer.domElement);
+		controls.target.set(0, 2, 0);
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.05;
+		controls.minDistance = 5;
+		controls.maxDistance = 30;
+
+		// ==========================================
+		// LIGHTING
+		// ==========================================
+
+		// Main directional light
+		const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
+		mainLight.position.set(10, 15, 5);
+		mainLight.castShadow = true;
+		mainLight.shadow.mapSize.width = 2048;
+		mainLight.shadow.mapSize.height = 2048;
+		mainLight.shadow.camera.near = 0.5;
+		mainLight.shadow.camera.far = 50;
+		mainLight.shadow.camera.left = -15;
+		mainLight.shadow.camera.right = 15;
+		mainLight.shadow.camera.top = 15;
+		mainLight.shadow.camera.bottom = -15;
+		mainLight.shadow.bias = -0.0001;
+		scene.add(mainLight);
+
+		// Fill light
+		const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+		fillLight.position.set(-5, 5, -5);
+		scene.add(fillLight);
+
+		// Ambient light (kept low to emphasize AO)
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+		scene.add(ambientLight);
+
+		// ==========================================
+		// DEMO OBJECTS (designed to show AO well)
+		// ==========================================
+
+		// Ground plane
+		const groundGeometry = new THREE.PlaneGeometry(30, 30);
+		const groundMaterial = new THREE.MeshStandardMaterial({
+			color: 0x888888,
+			roughness: 0.8,
+			metalness: 0.1
+		});
+		const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+		ground.rotation.x = -Math.PI / 2;
+		ground.position.y = 0;
+		ground.receiveShadow = true;
+		scene.add(ground);
+
+		// Central complex object - stacked boxes (great for AO)
+		const boxGroup = new THREE.Group();
+		
+		// Base box
+		const baseBox = new THREE.Mesh(
+			new THREE.BoxGeometry(3, 1, 3),
+			new THREE.MeshStandardMaterial({ color: 0x4a9eff, roughness: 0.3, metalness: 0.2 })
+		);
+		baseBox.position.y = 0.5;
+		baseBox.castShadow = true;
+		baseBox.receiveShadow = true;
+		boxGroup.add(baseBox);
+
+		// Middle box (smaller, creates crevices)
+		const midBox = new THREE.Mesh(
+			new THREE.BoxGeometry(2, 1.5, 2),
+			new THREE.MeshStandardMaterial({ color: 0x4ecdc4, roughness: 0.3, metalness: 0.2 })
+		);
+		midBox.position.y = 1.75;
+		midBox.castShadow = true;
+		midBox.receiveShadow = true;
+		boxGroup.add(midBox);
+
+		// Top box (smallest)
+		const topBox = new THREE.Mesh(
+			new THREE.BoxGeometry(1.2, 1, 1.2),
+			new THREE.MeshStandardMaterial({ color: 0xff6b6b, roughness: 0.3, metalness: 0.2 })
+		);
+		topBox.position.y = 3;
+		topBox.castShadow = true;
+		topBox.receiveShadow = true;
+		boxGroup.add(topBox);
+
+		boxGroup.position.set(0, 0, 0);
+		scene.add(boxGroup);
+
+		// Left: Torus knot (complex geometry)
+		const torusKnot = new THREE.Mesh(
+			new THREE.TorusKnotGeometry(1.2, 0.4, 100, 16),
+			new THREE.MeshStandardMaterial({ color: 0xffd93d, roughness: 0.4, metalness: 0.3 })
+		);
+		torusKnot.position.set(-5, 2, 0);
+		torusKnot.castShadow = true;
+		torusKnot.receiveShadow = true;
+		scene.add(torusKnot);
+
+		// Right: Sphere on cylinder (contact shadows)
+		const cylinder = new THREE.Mesh(
+			new THREE.CylinderGeometry(0.8, 0.8, 2, 32),
+			new THREE.MeshStandardMaterial({ color: 0x95e1d3, roughness: 0.3, metalness: 0.2 })
+		);
+		cylinder.position.set(5, 1, 0);
+		cylinder.castShadow = true;
+		cylinder.receiveShadow = true;
+		scene.add(cylinder);
+
+		const sphere = new THREE.Mesh(
+			new THREE.SphereGeometry(1, 32, 32),
+			new THREE.MeshStandardMaterial({ color: 0xf38181, roughness: 0.3, metalness: 0.2 })
+		);
+		sphere.position.set(5, 3.5, 0);
+		sphere.castShadow = true;
+		sphere.receiveShadow = true;
+		scene.add(sphere);
+
+		// Back: Multiple overlapping objects
+		const backGroup = new THREE.Group();
+		for (let i = 0; i < 3; i++) {
+			const box = new THREE.Mesh(
+				new THREE.BoxGeometry(1, 1, 1),
+				new THREE.MeshStandardMaterial({
+					color: new THREE.Color().setHSL(0.6 + i * 0.1, 0.7, 0.5),
+					roughness: 0.3,
+					metalness: 0.2
+				})
+			);
+			box.position.set(-2 + i * 2, 1.5, -4);
+			box.rotation.y = i * 0.5;
+			box.castShadow = true;
+			box.receiveShadow = true;
+			backGroup.add(box);
+		}
+		scene.add(backGroup);
+
+		// ==========================================
+		// POST-PROCESSING SETUP
+		// ==========================================
+
+		let composer = null;
+		let aoPass = null;
+		let renderPass = null;
+		let outputPass = null;
+
+		function setupPostProcessing() {
+			composer = new EffectComposer(renderer);
+			
+			// Render pass
+			renderPass = new RenderPass(scene, camera);
+			renderPass.renderToScreen = false;
+			composer.addPass(renderPass);
+
+			// AO pass
+			const width = renderer.domElement.width;
+			const height = renderer.domElement.height;
+			aoPass = new SAOPass(scene, camera, width, height);
+			aoPass.renderToScreen = false;
+			updateAOParameters();
+			composer.addPass(aoPass);
+
+			// Output pass (tone mapping)
+			outputPass = new OutputPass();
+			outputPass.renderToScreen = true;
+			composer.addPass(outputPass);
+		}
+
+		function updateAOParameters() {
+			if (!aoPass) return;
+
+			const params = aoPass.params;
+			if (!params) return;
+
+			// Get values from UI
+			const enabled = document.getElementById('aoEnabled').checked;
+			const output = parseInt(document.getElementById('aoOutput').value);
+			const intensity = parseFloat(document.getElementById('intensitySlider').value);
+			const bias = parseFloat(document.getElementById('biasSlider').value);
+			const scale = parseFloat(document.getElementById('scaleSlider').value);
+			const kernelRadius = parseFloat(document.getElementById('radiusSlider').value);
+			const minResolution = parseInt(document.getElementById('minResSlider').value);
+			const blurEnabled = document.getElementById('blurEnabled').checked;
+			const blurRadius = parseInt(document.getElementById('blurRadiusSlider').value);
+			const blurStdDev = parseFloat(document.getElementById('blurStdDevSlider').value);
+
+			// Map output mode - SAOPass.OUTPUT constants
+			const SAOPassOutput = SAOPass.OUTPUT || {
+				Default: 0,
+				SAO: 1,
+				Normal: 2
+			};
+
+			let saoOutput = SAOPassOutput.Default;
+			if (output === 0 || output === 1) {
+				saoOutput = SAOPassOutput.Default;
+			} else if (output === 2) {
+				saoOutput = SAOPassOutput.SAO;
+			} else if (output === 4) {
+				saoOutput = SAOPassOutput.Normal;
+			}
+
+			// Update parameters
+			params.output = saoOutput;
+			params.saoBias = bias;
+			params.saoIntensity = intensity;
+			params.saoScale = scale;
+			params.saoKernelRadius = kernelRadius;
+			params.saoMinResolution = minResolution;
+			params.saoBlur = blurEnabled;
+			params.saoBlurRadius = blurRadius;
+			params.saoBlurStdDev = blurStdDev;
+
+			// Enable/disable pass (if property exists)
+			if ('enabled' in aoPass) {
+				aoPass.enabled = enabled;
+			}
+		}
+
+		// Initialize post-processing
+		setupPostProcessing();
+
+		// ==========================================
+		// UI CONTROLS
+		// ==========================================
+
+		// Update value displays
+		function updateValueDisplays() {
+			document.getElementById('intensityValue').textContent = 
+				parseFloat(document.getElementById('intensitySlider').value).toFixed(2);
+			document.getElementById('biasValue').textContent = 
+				parseFloat(document.getElementById('biasSlider').value).toFixed(2);
+			document.getElementById('scaleValue').textContent = 
+				parseFloat(document.getElementById('scaleSlider').value).toFixed(2);
+			document.getElementById('radiusValue').textContent = 
+				parseFloat(document.getElementById('radiusSlider').value).toFixed(2);
+			document.getElementById('minResValue').textContent = 
+				document.getElementById('minResSlider').value;
+			document.getElementById('blurRadiusValue').textContent = 
+				document.getElementById('blurRadiusSlider').value;
+			document.getElementById('blurStdDevValue').textContent = 
+				parseFloat(document.getElementById('blurStdDevSlider').value).toFixed(2);
+		}
+
+		// Attach event listeners
+		const controlsToWatch = [
+			'aoEnabled', 'aoOutput', 'intensitySlider', 'biasSlider', 'scaleSlider',
+			'radiusSlider', 'minResSlider', 'blurEnabled', 'blurRadiusSlider', 'blurStdDevSlider'
+		];
+
+		controlsToWatch.forEach(id => {
+			const element = document.getElementById(id);
+			element.addEventListener('input', () => {
+				updateAOParameters();
+				updateValueDisplays();
+			});
+		});
+
+		// Reset button
+		document.getElementById('resetBtn').addEventListener('click', () => {
+			document.getElementById('aoEnabled').checked = true;
+			document.getElementById('aoOutput').value = '0';
+			document.getElementById('intensitySlider').value = '1.0';
+			document.getElementById('biasSlider').value = '0.5';
+			document.getElementById('scaleSlider').value = '1.0';
+			document.getElementById('radiusSlider').value = '100';
+			document.getElementById('minResSlider').value = '0';
+			document.getElementById('blurEnabled').checked = true;
+			document.getElementById('blurRadiusSlider').value = '8';
+			document.getElementById('blurStdDevSlider').value = '4.0';
+			updateAOParameters();
+			updateValueDisplays();
+		});
+
+		// Initial value display update
+		updateValueDisplays();
+
+		// ==========================================
+		// ANIMATION LOOP
+		// ==========================================
+
+		const statsDiv = document.getElementById('stats');
+		let frameCount = 0;
+		let lastTime = performance.now();
+
+		function animate() {
+			requestAnimationFrame(animate);
+
+			controls.update();
+
+			// Rotate objects slightly for visual interest
+			torusKnot.rotation.y += 0.005;
+			backGroup.rotation.y += 0.003;
+			boxGroup.rotation.y += 0.002;
+
+			// Render
+			const aoEnabled = document.getElementById('aoEnabled').checked;
+			if (composer && aoPass && aoEnabled) {
+				composer.render();
+			} else {
+				renderer.render(scene, camera);
+			}
+
+			// Update stats
+			frameCount++;
+			const now = performance.now();
+			if (now - lastTime >= 1000) {
+				const fps = Math.round((frameCount * 1000) / (now - lastTime));
+				statsDiv.textContent = `FPS: ${fps}`;
+				frameCount = 0;
+				lastTime = now;
+			}
+		}
+
+		// Handle window resize
+		window.addEventListener('resize', () => {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			if (composer) {
+				composer.setSize(window.innerWidth, window.innerHeight);
+			}
+			if (aoPass) {
+				aoPass.setSize(window.innerWidth, window.innerHeight);
+			}
+		});
+
+		// Start animation
+		animate();
+
+		console.log('✅ Ambient Occlusion Demo initialized!');
+		console.log('💡 Try adjusting the controls to see how AO affects the scene.');
+	</script>
+</body>
+</html>
+

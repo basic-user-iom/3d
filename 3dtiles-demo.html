@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>Three.js 3D Tiles Loader Demo</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+			color: #444;
+			background-color: #1a1a1a;
+			overflow: hidden;
+		}
+
+		#info {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 10px 15px;
+			border-radius: 5px;
+			font-size: 14px;
+			z-index: 100;
+			line-height: 1.6;
+			max-width: 400px;
+		}
+
+		#info a {
+			color: #4a9eff;
+			text-decoration: none;
+		}
+
+		#info a:hover {
+			text-decoration: underline;
+		}
+
+		#progress {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			color: #fff;
+			font-size: 24px;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 20px 40px;
+			border-radius: 10px;
+			z-index: 200;
+			display: none;
+		}
+
+		#controls {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 15px;
+			border-radius: 5px;
+			color: #fff;
+			font-size: 12px;
+			z-index: 100;
+			min-width: 250px;
+		}
+
+		#controls input[type="text"] {
+			width: 100%;
+			padding: 8px;
+			margin: 5px 0;
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 3px;
+			color: #fff;
+			font-size: 12px;
+		}
+
+		#controls button {
+			width: 100%;
+			padding: 8px 16px;
+			margin: 5px 0;
+			background: #4a9eff;
+			color: white;
+			border: none;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 12px;
+		}
+
+		#controls button:hover {
+			background: #3a8eef;
+		}
+
+		#controls button:disabled {
+			background: #666;
+			cursor: not-allowed;
+		}
+
+		#controls label {
+			display: block;
+			margin-top: 10px;
+			margin-bottom: 5px;
+		}
+
+		#stats {
+			margin-top: 10px;
+			padding-top: 10px;
+			border-top: 1px solid rgba(255, 255, 255, 0.2);
+			font-size: 11px;
+			line-height: 1.6;
+		}
+
+		canvas {
+			display: block;
+		}
+	</style>
+</head>
+<body>
+	<div id="info">
+		<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - 
+		<a href="https://github.com/NASA-AMMOS/3DTilesRendererJS" target="_blank" rel="noopener">3D Tiles Renderer</a><br/>
+		Use mouse to orbit, scroll to zoom. 3D Tiles load progressively based on camera position.<br/>
+		<small>Note: Enter a valid 3D Tiles tileset.json URL to load a tileset.</small>
+	</div>
+
+	<div id="progress">Loading...</div>
+
+	<div id="controls">
+		<div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+			<strong style="display: block; margin-bottom: 10px;">Cesium Ion (Recommended)</strong>
+			<label>Cesium Ion Access Token:</label>
+			<input type="password" id="ionToken" placeholder="Your Cesium Ion token" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI1MjYzMjI5OS1kNThkLTQzNzQtYmNmOC0zMmE4OGQ5ZGYyNDciLCJpZCI6MjE4NzU3LCJpYXQiOjE3NjI4MDYwMzd9.FK12uj-Ziqr1zdpXjuZtPyX6fP-9gQVl5Ci3ViuSFwI">
+			<label style="margin-top: 10px;">Asset ID (e.g., 1 for World Terrain, 96188 for OSM Buildings):</label>
+			<input type="text" id="ionAssetId" placeholder="Enter Cesium Ion asset ID" value="1">
+			<button id="loadIonBtn" style="margin-top: 5px;">Load from Cesium Ion</button>
+		</div>
+		
+		<div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+			<strong style="display: block; margin-bottom: 10px;">Direct URL</strong>
+			<label>3D Tiles URL:</label>
+			<input type="text" id="tilesUrl" placeholder="Enter tileset.json URL" value="">
+			<button id="loadBtn" style="margin-top: 5px;">Load Tileset</button>
+		</div>
+		
+		<button id="clearBtn" disabled>Clear</button>
+		<div id="stats">
+			<div>Active Tiles: <span id="activeTiles">0</span></div>
+			<div>Visible Tiles: <span id="visibleTiles">0</span></div>
+			<div>Downloaded Tiles: <span id="downloadedTiles">0</span></div>
+			<div>Failed Tiles: <span id="failedTiles">0</span></div>
+		</div>
+	</div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+				"three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+				"3d-tiles-renderer": "https://esm.sh/3d-tiles-renderer@0.3.24?external=three"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { TilesRenderer } from '3d-tiles-renderer';
+		import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+		import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+		let camera, scene, renderer, controls;
+		let tilesRenderer = null;
+		let stats = {
+			activeTiles: 0,
+			visibleTiles: 0,
+			downloadedTiles: 0,
+			failedTiles: 0
+		};
+
+		const progressDiv = document.getElementById('progress');
+		const tilesUrlInput = document.getElementById('tilesUrl');
+		const loadBtn = document.getElementById('loadBtn');
+		const clearBtn = document.getElementById('clearBtn');
+		const ionTokenInput = document.getElementById('ionToken');
+		const ionAssetIdInput = document.getElementById('ionAssetId');
+		const loadIonBtn = document.getElementById('loadIonBtn');
+
+		// Error handling
+		window.addEventListener('error', (e) => {
+			console.error('Global error:', e.error);
+			showProgress('Error: ' + (e.error?.message || 'Unknown error'));
+		});
+
+		window.addEventListener('unhandledrejection', (e) => {
+			console.error('Unhandled promise rejection:', e.reason);
+			showProgress('Error: ' + (e.reason?.message || 'Unknown error'));
+		});
+
+		init();
+
+		// Store credentials globally for Service Worker
+		window._swCredentials = { googleApiKey: null, accessToken: null };
+		
+		// Function to update Service Worker credentials
+		window._swUpdateCredentials = function(googleApiKey, accessToken) {
+			window._swCredentials.googleApiKey = googleApiKey;
+			window._swCredentials.accessToken = accessToken;
+			console.log('[Service Worker] Updated credentials');
+		};
+		
+		// Register Service Worker to intercept ALL network requests
+		async function registerServiceWorker() {
+			if (!('serviceWorker' in navigator)) {
+				console.warn('[Service Worker] Not supported in this browser');
+				return false;
+			}
+			
+			try {
+				// Unregister any existing service workers first
+				const registrations = await navigator.serviceWorker.getRegistrations();
+				for (const registration of registrations) {
+					await registration.unregister();
+					console.log('[Service Worker] Unregistered existing worker');
+				}
+				
+				// Register new service worker
+				console.log('[Service Worker] Attempting to register /sw.js...');
+				const registration = await navigator.serviceWorker.register('/sw.js', { 
+					scope: '/',
+					updateViaCache: 'none'
+				});
+				console.log('[Service Worker] Registration successful:', registration.scope);
+				
+				// Wait for service worker to be ready
+				let sw = registration.installing || registration.waiting || registration.active;
+				
+				if (registration.installing) {
+					console.log('[Service Worker] Installing...');
+					await new Promise((resolve, reject) => {
+						const timeout = setTimeout(() => {
+							reject(new Error('Service Worker installation timeout'));
+						}, 10000);
+						
+						registration.installing.addEventListener('statechange', () => {
+							console.log('[Service Worker] State:', registration.installing.state);
+							if (registration.installing.state === 'activated') {
+								clearTimeout(timeout);
+								resolve();
+							} else if (registration.installing.state === 'redundant') {
+								clearTimeout(timeout);
+								reject(new Error('Service Worker installation failed'));
+							}
+						});
+					});
+				} else if (registration.waiting) {
+					console.log('[Service Worker] Waiting, updating...');
+					await registration.update();
+				} else if (registration.active) {
+					console.log('[Service Worker] Already active');
+				}
+				
+				// Store reference for updating API key
+				window._swRegistration = registration;
+				
+				// Verify it's actually registered
+				const allRegistrations = await navigator.serviceWorker.getRegistrations();
+				console.log('[Service Worker] Total registrations:', allRegistrations.length);
+				if (allRegistrations.length > 0) {
+					console.log('[Service Worker] Active worker:', !!allRegistrations[0].active);
+				}
+				
+				return true;
+			} catch (e) {
+				console.error('[Service Worker] Registration failed:', e);
+				console.error('[Service Worker] Error details:', e.message, e.stack);
+				return false;
+			}
+		}
+
+		function init() {
+			try {
+				console.log('Initializing 3D Tiles demo...');
+				
+				// Register service worker for request interception
+				registerServiceWorker().then(registered => {
+					if (registered) {
+						console.log('[Service Worker] Successfully registered');
+					} else {
+						console.warn('[Service Worker] Not registered (may not be supported or failed)');
+					}
+				});
+
+				// Scene
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color(0x263238);
+
+				// Camera
+				camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
+				camera.position.set(0, 0, 10);
+
+				// Renderer
+				renderer = new THREE.WebGLRenderer({ antialias: true });
+				renderer.setPixelRatio(window.devicePixelRatio);
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.outputColorSpace = THREE.SRGBColorSpace;
+				document.body.appendChild(renderer.domElement);
+
+				// Controls
+				controls = new OrbitControls(camera, renderer.domElement);
+				controls.enableDamping = true;
+				controls.dampingFactor = 0.05;
+				controls.screenSpacePanning = false;
+				controls.minDistance = 1;
+				controls.maxDistance = 10000;
+
+				// Add lights
+				const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+				scene.add(ambientLight);
+
+				const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+				directionalLight.position.set(10, 10, 5);
+				scene.add(directionalLight);
+
+				// Grid helper
+				const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0x444444);
+				scene.add(gridHelper);
+
+				// Axes helper
+				const axesHelper = new THREE.AxesHelper(5);
+				scene.add(axesHelper);
+
+				window.addEventListener('resize', onWindowResize);
+
+				// Button handlers
+				loadBtn.addEventListener('click', loadTileset);
+				loadIonBtn.addEventListener('click', loadFromCesiumIon);
+				clearBtn.addEventListener('click', clearTileset);
+
+				// Load default tileset on Enter key
+				tilesUrlInput.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						loadTileset();
+					}
+				});
+				
+				ionAssetIdInput.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						loadFromCesiumIon();
+					}
+				});
+
+				hideProgress();
+				animate();
+				console.log('Initialization complete');
+			} catch (error) {
+				console.error('Error in init:', error);
+				showProgress('Initialization error: ' + error.message);
+			}
+		}
+
+		async function loadFromCesiumIon() {
+			const token = ionTokenInput.value.trim();
+			const assetId = ionAssetIdInput.value.trim();
+			
+			if (!token) {
+				alert('Please enter your Cesium Ion access token');
+				return;
+			}
+			
+			if (!assetId) {
+				alert('Please enter a Cesium Ion asset ID');
+				return;
+			}
+			
+			try {
+				showProgress('Resolving Cesium Ion asset...');
+				loadIonBtn.disabled = true;
+				
+				// Resolve asset ID to URL
+				const endpointUrl = `https://api.cesium.com/v1/assets/${assetId}/endpoint?access_token=${encodeURIComponent(token)}`;
+				const response = await fetch(endpointUrl, {
+					headers: {
+						Accept: 'application/json'
+					}
+				});
+				
+				if (!response.ok) {
+					throw new Error(`Cesium Ion API error: ${response.status} ${response.statusText}`);
+				}
+				
+				const data = await response.json();
+				let tilesetUrl = data.url || data.options?.url;
+				const effectiveToken = data.accessToken?.trim() || token;
+				const googleApiKey = data.options?.googleApiKey || null;
+				
+				if (!tilesetUrl) {
+					throw new Error('Cesium Ion endpoint response did not include a URL');
+				}
+				
+				// Ensure URL ends with tileset.json if it's a directory
+				if (tilesetUrl.endsWith('/')) {
+					tilesetUrl += 'tileset.json';
+				} else if (!tilesetUrl.includes('tileset.json') && !tilesetUrl.includes('.')) {
+					tilesetUrl += '/tileset.json';
+				}
+				
+				// Remove any existing access_token from URL - we'll use headers instead
+				const urlObj = new URL(tilesetUrl);
+				urlObj.searchParams.delete('access_token');
+				// For Google tiles, extract API key from URL if present
+				let extractedGoogleKey = googleApiKey;
+				if (!extractedGoogleKey && urlObj.searchParams.has('key')) {
+					extractedGoogleKey = urlObj.searchParams.get('key');
+					console.log('[Cesium Ion] Extracted Google API key from URL:', extractedGoogleKey.substring(0, 20) + '...');
+				}
+				// Keep key in URL for root.json - patches will add it to individual tile URLs
+				tilesetUrl = urlObj.toString();
+				
+				console.log('[Cesium Ion] Loading tileset with Google API key:', !!extractedGoogleKey);
+				
+				// Update the URL input with resolved URL (without token)
+				tilesUrlInput.value = tilesetUrl;
+				
+				// Load the tileset with the token and Google API key (passed via headers)
+				await loadTilesetWithToken(tilesetUrl, effectiveToken, extractedGoogleKey);
+				
+			} catch (error) {
+				console.error('Error loading from Cesium Ion:', error);
+				showProgress('Error: ' + (error.message || 'Failed to load from Cesium Ion'));
+				loadIonBtn.disabled = false;
+			}
+		}
+		
+		async function loadTilesetWithToken(url, accessToken = null, googleApiKey = null) {
+			try {
+				// Clear existing tileset
+				if (tilesRenderer) {
+					clearTileset();
+				}
+
+				showProgress('Loading tileset...');
+				loadBtn.disabled = true;
+				loadIonBtn.disabled = true;
+
+				console.log('[loadTilesetWithToken] URL:', url.substring(0, 80));
+				console.log('[loadTilesetWithToken] Has Google API Key:', !!googleApiKey);
+				console.log('[loadTilesetWithToken] Google API Key value:', googleApiKey ? googleApiKey.substring(0, 20) + '...' : 'null');
+				console.log('[loadTilesetWithToken] Has Access Token:', !!accessToken);
+				console.log('[loadTilesetWithToken] URL includes tile.googleapis.com:', url.includes('tile.googleapis.com'));
+				console.log('[loadTilesetWithToken] URL includes root.json:', url.includes('root.json'));
+
+				// BEST EFFORT FIX FOR GOOGLE PHOTOREALISTIC 3D TILES
+				// If the user gives us the Google root.json URL WITH a key, pre-fetch it,
+				// rewrite ALL tile URIs to be absolute and to include the key,
+				// then feed a blob URL into TilesRenderer. This avoids having to
+				// intercept internal requests from the library.
+				if (googleApiKey && url.includes('tile.googleapis.com') && url.includes('root.json')) {
+					console.log('[Google Prefetch] Fetching and rewriting root.json with key...');
+					try {
+						const response = await fetch(url);
+						if (response.ok) {
+							const json = await response.json();
+
+							const addKeyToUri = (uri) => {
+								if (!uri || typeof uri !== 'string') return uri;
+								try {
+									// Google root.json uses paths like "/v1/3dtiles/datasets/..."
+									// Make them absolute and add key as needed.
+									const base = 'https://tile.googleapis.com';
+									const fullUrl = uri.startsWith('http')
+										? new URL(uri)
+										: new URL(uri, base);
+
+									if (!fullUrl.searchParams.has('key')) {
+										fullUrl.searchParams.set('key', googleApiKey);
+									}
+									return fullUrl.toString();
+								} catch (e) {
+									// Fallback: simple string append
+									if (uri.includes('key=')) return uri;
+									const sep = uri.includes('?') ? '&' : '?';
+									return uri + sep + 'key=' + encodeURIComponent(googleApiKey);
+								}
+							};
+
+							const rewriteUrls = (obj, depth = 0) => {
+								if (!obj || typeof obj !== 'object' || depth > 20) return;
+
+								if (obj.content && typeof obj.content.uri === 'string') {
+									const original = obj.content.uri;
+									obj.content.uri = addKeyToUri(original);
+									if (original !== obj.content.uri) {
+										console.log('[Google Prefetch] Rewrote content.uri:', original.substring(0, 80));
+									}
+								}
+
+								if (typeof obj.uri === 'string') {
+									const original = obj.uri;
+									obj.uri = addKeyToUri(original);
+									if (original !== obj.uri) {
+										console.log('[Google Prefetch] Rewrote uri:', original.substring(0, 80));
+									}
+								}
+
+								for (const key in obj) {
+									const value = obj[key];
+									if (Array.isArray(value)) {
+										value.forEach((item) => rewriteUrls(item, depth + 1));
+									} else if (typeof value === 'object' && value !== null) {
+										rewriteUrls(value, depth + 1);
+									}
+								}
+							};
+
+							rewriteUrls(json);
+
+							const blob = new Blob([JSON.stringify(json)], { type: 'application/json' });
+							const blobUrl = URL.createObjectURL(blob);
+							console.log('[Google Prefetch] Using blob URL for tileset:', blobUrl);
+
+							// IMPORTANT: from this point on, we load from the local blob URL,
+							// and all tile requests already contain the key.
+							url = blobUrl;
+						} else {
+							console.warn('[Google Prefetch] root.json fetch failed with status', response.status);
+						}
+					} catch (e) {
+						console.error('[Google Prefetch] Error fetching or rewriting root.json:', e);
+					}
+				}
+
+				// Update Service Worker with API key if registered
+				if (googleApiKey && window._swRegistration) {
+					console.log('[loadTilesetWithToken] Updating Service Worker with API key...');
+					try {
+						if (window._swRegistration.active) {
+							window._swRegistration.active.postMessage({
+								type: 'UPDATE_CREDENTIALS',
+								googleApiKey: googleApiKey,
+								accessToken: accessToken
+							});
+						}
+					} catch (e) {
+						console.error('[Service Worker] Failed to update credentials:', e);
+					}
+				}
+				
+				// Patch global fetch AND XMLHttpRequest BEFORE creating TilesRenderer
+				// This is critical for Google Photorealistic 3D Tiles
+				// The 3d-tiles-renderer library may use XMLHttpRequest for GLB files
+				if (googleApiKey) {
+					console.log('[loadTilesetWithToken] Setting up patches for Google API key');
+					const capturedGoogleApiKey = googleApiKey;
+					const capturedAccessToken = accessToken;
+					
+					// Always update stored values
+					window._googleApiKey = capturedGoogleApiKey;
+					window._accessToken = capturedAccessToken;
+					
+					// Store original fetch if not already stored
+					if (!window._originalFetch) {
+						window._originalFetch = window.fetch;
+						
+						// Patch global fetch to add X-Goog-Api-Key header AND key parameter for all Google tile requests
+						window.fetch = function(input, init) {
+							const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+							
+							// Add header AND URL parameter for Google tile requests
+							if (url && url.includes('tile.googleapis.com')) {
+								const headers = new Headers(init?.headers);
+								
+								// Add API key to URL if missing (CRITICAL for Google Photorealistic 3D Tiles)
+								let finalInput = input;
+								if (window._googleApiKey && !url.includes('key=')) {
+									const separator = url.includes('?') ? '&' : '?';
+									const urlWithKey = url + separator + 'key=' + encodeURIComponent(window._googleApiKey);
+									console.log('[fetch] Adding key to URL:', url.substring(0, 80), '->', urlWithKey.substring(0, 100));
+									finalInput = urlWithKey;
+								}
+								
+								// Add headers
+								if (window._googleApiKey && !headers.has('X-Goog-Api-Key')) {
+									headers.set('X-Goog-Api-Key', window._googleApiKey);
+									console.log('[fetch] Added X-Goog-Api-Key header');
+								}
+								if (window._accessToken && !headers.has('Authorization')) {
+									headers.set('Authorization', `Bearer ${window._accessToken}`);
+								}
+								
+								return window._originalFetch(finalInput, {
+									...init,
+									headers: headers
+								});
+							}
+							
+							return window._originalFetch(input, init);
+						};
+					}
+					
+					// Always patch XMLHttpRequest (even if already patched, update the stored values)
+					if (!window._originalXHROpen) {
+						window._originalXHROpen = XMLHttpRequest.prototype.open;
+						window._originalXHRSend = XMLHttpRequest.prototype.send;
+						
+						XMLHttpRequest.prototype.open = function(method, url, ...args) {
+							const urlStr = typeof url === 'string' ? url : url.toString();
+							this._url = urlStr;
+							
+							// Add API key to URL if it's a Google tile request and key is not already present
+							if (urlStr.includes('tile.googleapis.com') && window._googleApiKey && !urlStr.includes('key=')) {
+								const separator = urlStr.includes('?') ? '&' : '?';
+								const urlWithKey = urlStr + separator + 'key=' + encodeURIComponent(window._googleApiKey);
+								console.log('[XHR] Adding key to URL:', urlStr.substring(0, 80), '->', urlWithKey.substring(0, 100));
+								return window._originalXHROpen.apply(this, [method, urlWithKey, ...args]);
+							}
+							
+							return window._originalXHROpen.apply(this, [method, url, ...args]);
+						};
+						
+						XMLHttpRequest.prototype.send = function(body) {
+							if (this._url && this._url.includes('tile.googleapis.com')) {
+								// Add header (Google may require both URL param and header)
+								if (window._googleApiKey && !this.getRequestHeader('X-Goog-Api-Key')) {
+									try {
+										this.setRequestHeader('X-Goog-Api-Key', window._googleApiKey);
+										console.log('[XHR] Added X-Goog-Api-Key header');
+									} catch (e) {
+										// Header might already be set, ignore
+									}
+								}
+								if (window._accessToken && !this.getRequestHeader('Authorization')) {
+									try {
+										this.setRequestHeader('Authorization', `Bearer ${window._accessToken}`);
+									} catch (e) {
+										// Header might already be set, ignore
+									}
+								}
+							}
+							return window._originalXHRSend.apply(this, [body]);
+						};
+					}
+				}
+
+				// Intercept the root.json fetch to modify tile URLs before the library processes them
+				// This is critical for Google Photorealistic 3D Tiles
+				let interceptedRootJson = null;
+				if (googleApiKey && url.includes('tile.googleapis.com')) {
+					const originalFetch = window.fetch;
+					window.fetch = function(input, init) {
+						const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+						
+						// Intercept root.json requests
+						if (urlStr && urlStr.includes('root.json') && urlStr.includes('tile.googleapis.com')) {
+							return originalFetch(input, init).then(async (response) => {
+								if (response.ok) {
+									const clonedResponse = response.clone();
+									const json = await clonedResponse.json();
+									
+									// Recursively modify all tile URLs in the JSON to include the API key
+									const modifyUrls = (obj) => {
+										if (typeof obj !== 'object' || obj === null) return;
+										
+										if (obj.content && obj.content.uri) {
+											const tileUrl = obj.content.uri;
+											if (tileUrl.includes('tile.googleapis.com') && !tileUrl.includes('key=')) {
+												const separator = tileUrl.includes('?') ? '&' : '?';
+												obj.content.uri = tileUrl + separator + 'key=' + encodeURIComponent(googleApiKey);
+												console.log('[root.json] Modified tile URL:', tileUrl.substring(0, 80), '->', obj.content.uri.substring(0, 100));
+											}
+										}
+										
+										// Recursively process all properties
+										for (const key in obj) {
+											if (Array.isArray(obj[key])) {
+												obj[key].forEach(item => modifyUrls(item));
+											} else {
+												modifyUrls(obj[key]);
+											}
+										}
+									};
+									
+									modifyUrls(json);
+									
+									// Return a new response with modified JSON
+									return new Response(JSON.stringify(json), {
+										status: response.status,
+										statusText: response.statusText,
+										headers: response.headers
+									});
+								}
+								return response;
+							});
+						}
+						
+						return originalFetch(input, init);
+					};
+				}
+				
+				// For Google Photorealistic 3D Tiles, intercept root.json to extract session
+				// and ensure all tile requests include both key and session parameters
+				let sessionToken = null;
+				if (googleApiKey && url.includes('tile.googleapis.com')) {
+					// First, fetch root.json to extract session token
+					fetch(url).then(async (response) => {
+						if (response.ok) {
+							const json = await response.json();
+							
+							// Extract session from first tile URL in root.json
+							const extractSession = (obj) => {
+								if (typeof obj !== 'object' || obj === null) return;
+								
+								if (obj.content && obj.content.uri) {
+									const tileUrl = obj.content.uri;
+									if (tileUrl.includes('session=') && !sessionToken) {
+										const match = tileUrl.match(/[?&]session=([^&]+)/);
+										if (match) {
+											sessionToken = match[1];
+											console.log('[Session] Extracted session token from root.json:', sessionToken.substring(0, 20) + '...');
+										}
+									}
+								}
+								
+								for (const key in obj) {
+									if (Array.isArray(obj[key])) {
+										obj[key].forEach(item => extractSession(item));
+									} else if (typeof obj[key] === 'object' && obj[key] !== null) {
+										extractSession(obj[key]);
+									}
+								}
+							};
+							
+							extractSession(json);
+						}
+					}).catch(e => console.error('[Session] Error extracting session:', e));
+				}
+				
+				// Update Service Worker with credentials before loading
+				if (googleApiKey && window._swRegistration) {
+					console.log('[loadTilesetWithToken] Updating Service Worker with API key...');
+					window._swUpdateCredentials(googleApiKey, accessToken);
+					
+					// Send credentials to service worker
+					if (window._swRegistration.active) {
+						window._swRegistration.active.postMessage({
+							type: 'UPDATE_CREDENTIALS',
+							googleApiKey: googleApiKey,
+							accessToken: accessToken
+						});
+					}
+				}
+				
+				// Create tiles renderer with custom fetchOptions that intercepts root.json
+				const fetchOptions = {
+					headers: {
+						...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {}),
+						...(googleApiKey ? { 'X-Goog-Api-Key': googleApiKey } : {})
+					},
+					fetch: async (input, init) => {
+						const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+						const headers = new Headers(init?.headers);
+						
+						// Add API key to URL for Google tiles (CRITICAL - must be in URL)
+						let finalInput = input;
+						if (urlStr && urlStr.includes('tile.googleapis.com') && googleApiKey && !urlStr.includes('key=')) {
+							const separator = urlStr.includes('?') ? '&' : '?';
+							const urlWithKey = urlStr + separator + 'key=' + encodeURIComponent(googleApiKey);
+							console.log('[fetchOptions.fetch] Adding key to URL:', urlStr.substring(0, 80), '->', urlWithKey.substring(0, 100));
+							finalInput = urlWithKey;
+						}
+						
+						// Add headers
+						if (accessToken && !headers.has('Authorization')) {
+							headers.set('Authorization', `Bearer ${accessToken}`);
+						}
+						if (googleApiKey && !headers.has('X-Goog-Api-Key')) {
+							headers.set('X-Goog-Api-Key', googleApiKey);
+						}
+						
+						// CRITICAL: Intercept root.json responses and modify tile URLs
+						if (urlStr && urlStr.includes('root.json') && urlStr.includes('tile.googleapis.com') && googleApiKey) {
+							console.log('[fetchOptions.fetch] Intercepting root.json response...');
+							const response = await fetch(finalInput, { ...init, headers: headers });
+							
+							if (response.ok) {
+								const clonedResponse = response.clone();
+								const json = await clonedResponse.json();
+								
+								// Recursively modify ALL tile URLs in the JSON
+								const modifyUrls = (obj, depth = 0) => {
+									if (typeof obj !== 'object' || obj === null) return;
+									if (depth > 20) return;
+									
+									if (obj.content && obj.content.uri) {
+										const tileUrl = obj.content.uri;
+										if (tileUrl.includes('tile.googleapis.com') && !tileUrl.includes('key=')) {
+											const separator = tileUrl.includes('?') ? '&' : '?';
+											obj.content.uri = tileUrl + separator + 'key=' + encodeURIComponent(googleApiKey);
+											console.log('[fetchOptions.fetch] Modified tile URL in root.json:', tileUrl.substring(0, 80));
+										}
+									}
+									
+									if (obj.uri && typeof obj.uri === 'string' && obj.uri.includes('tile.googleapis.com') && !obj.uri.includes('key=')) {
+										const separator = obj.uri.includes('?') ? '&' : '?';
+										obj.uri = obj.uri + separator + 'key=' + encodeURIComponent(googleApiKey);
+										console.log('[fetchOptions.fetch] Modified URI in root.json:', obj.uri.substring(0, 100));
+									}
+									
+									for (const key in obj) {
+										if (Array.isArray(obj[key])) {
+											obj[key].forEach(item => modifyUrls(item, depth + 1));
+										} else if (typeof obj[key] === 'object' && obj[key] !== null) {
+											modifyUrls(obj[key], depth + 1);
+										}
+									}
+								};
+								
+								modifyUrls(json);
+								console.log('[fetchOptions.fetch] Returning modified root.json with all tile URLs updated');
+								
+								// Return modified response
+								return new Response(JSON.stringify(json), {
+									status: response.status,
+									statusText: response.statusText,
+									headers: response.headers
+								});
+							}
+							
+							return response;
+						}
+						
+						return fetch(finalInput, { ...init, headers: headers });
+					}
+				};
+				
+				// Use original URL (not blob URL) - fetchOptions will intercept and modify root.json
+				tilesRenderer = new TilesRenderer(url, fetchOptions);
+				
+				// Override resolveUrl to append key and session to all Google tile URLs
+				if (googleApiKey && url.includes('tile.googleapis.com')) {
+					const originalResolveUrl = tilesRenderer.resolveUrl?.bind(tilesRenderer) || ((url) => url);
+					
+					tilesRenderer.resolveUrl = function(urlToResolve) {
+						let resolvedUrl = originalResolveUrl(urlToResolve);
+						
+						if (resolvedUrl && resolvedUrl.includes('tile.googleapis.com')) {
+							try {
+								const urlObj = new URL(resolvedUrl);
+								
+								// Extract session if present and we don't have it yet
+								if (urlObj.searchParams.has('session') && !sessionToken) {
+									sessionToken = urlObj.searchParams.get('session');
+									console.log('[resolveUrl] Extracted session:', sessionToken.substring(0, 20) + '...');
+								}
+								
+								// Add key if missing
+								if (!urlObj.searchParams.has('key')) {
+									urlObj.searchParams.set('key', googleApiKey);
+									console.log('[resolveUrl] Added key to:', resolvedUrl.substring(0, 80));
+								}
+								
+								// Add session if we have it and it's missing
+								if (sessionToken && !urlObj.searchParams.has('session')) {
+									urlObj.searchParams.set('session', sessionToken);
+									console.log('[resolveUrl] Added session to:', resolvedUrl.substring(0, 80));
+								}
+								
+								resolvedUrl = urlObj.toString();
+							} catch (e) {
+								// Fallback: string manipulation
+								if (!resolvedUrl.includes('key=')) {
+									const separator = resolvedUrl.includes('?') ? '&' : '?';
+									resolvedUrl = resolvedUrl + separator + 'key=' + encodeURIComponent(googleApiKey);
+									if (sessionToken && !resolvedUrl.includes('session=')) {
+										resolvedUrl = resolvedUrl + '&session=' + encodeURIComponent(sessionToken);
+									}
+									console.log('[resolveUrl] Added key via string manipulation');
+								}
+							}
+						}
+						
+						return resolvedUrl;
+					};
+				}
+
+				// Setup DRACO loader for compressed geometry
+				const dracoLoader = new DRACOLoader();
+				dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+				dracoLoader.setDecoderConfig({ type: 'wasm' });
+
+				// Setup GLTF loader
+				const gltfLoader = new GLTFLoader(tilesRenderer.manager);
+				gltfLoader.setDRACOLoader(dracoLoader);
+				tilesRenderer.manager.addHandler(/\.(gltf|glb)$/i, gltfLoader);
+				
+				// Patch FileLoader if it exists (Three.js uses FileLoader for URL-based loading)
+				// This is critical as GLTFLoader may use FileLoader internally
+				if (googleApiKey && THREE.FileLoader) {
+					const OriginalFileLoaderLoad = THREE.FileLoader.prototype.load;
+					THREE.FileLoader.prototype.load = function(url, onLoad, onProgress, onError) {
+						// Add API key to URL for Google tiles
+						if (url && url.includes && url.includes('tile.googleapis.com') && !url.includes('key=')) {
+							const separator = url.includes('?') ? '&' : '?';
+							url = url + separator + 'key=' + encodeURIComponent(googleApiKey);
+							console.log('[FileLoader] Adding key to URL:', url.substring(0, 100));
+						}
+						
+						// Call original load with modified URL
+						return OriginalFileLoaderLoad.call(this, url, onLoad, onProgress, onError);
+					};
+				}
+				
+				// Also configure the LoadingManager to use our custom fetch
+				// This ensures GLTFLoader and other loaders use the same authentication
+				if (googleApiKey || accessToken) {
+					const managerOriginalFetch = tilesRenderer.manager.fetch || fetch;
+					
+					tilesRenderer.manager.fetch = (input, init) => {
+						const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+						const headers = new Headers(init?.headers);
+						
+						// Add API key to URL for Google tiles (critical for authentication)
+						let finalInput = input;
+						if (url && url.includes('tile.googleapis.com') && googleApiKey && !url.includes('key=')) {
+							const separator = url.includes('?') ? '&' : '?';
+							const urlWithKey = url + separator + 'key=' + encodeURIComponent(googleApiKey);
+							console.log('[LoadingManager] Adding key to URL:', url.substring(0, 80), '->', urlWithKey.substring(0, 100));
+							finalInput = urlWithKey;
+						}
+						
+						if (accessToken && !headers.has('Authorization')) {
+							headers.set('Authorization', `Bearer ${accessToken}`);
+						}
+						
+						if (googleApiKey && !headers.has('X-Goog-Api-Key')) {
+							headers.set('X-Goog-Api-Key', googleApiKey);
+							console.log('[LoadingManager] Added X-Goog-Api-Key header');
+						}
+						
+						return managerOriginalFetch(finalInput, {
+							...init,
+							headers: headers
+						});
+					};
+				}
+
+				// Set authentication headers if token provided
+				// Cesium Ion requires the token in headers for authenticated requests
+				// Google Photorealistic 3D Tiles require X-Goog-Api-Key header
+				// Also need to ensure the token is passed to all subsequent tile requests
+				const existingHeaders = tilesRenderer.fetchOptions?.headers || {};
+				const mergedHeaders = { ...existingHeaders };
+				
+				if (accessToken) {
+					mergedHeaders.Authorization = `Bearer ${accessToken}`;
+				}
+				
+				if (googleApiKey) {
+					mergedHeaders['X-Goog-Api-Key'] = googleApiKey;
+				}
+				
+				// Always set up fetch options and custom fetch if we have any auth requirements
+				if (accessToken || googleApiKey || Object.keys(mergedHeaders).length > 0) {
+					// Set up fetch options with authentication
+					tilesRenderer.fetchOptions = {
+						...tilesRenderer.fetchOptions,
+						headers: mergedHeaders,
+						// Ensure credentials are included for CORS
+						credentials: 'omit'
+					};
+					
+					// Set up a custom fetch function to ensure headers are always included
+					// This is critical for Google Photorealistic 3D Tiles which require X-Goog-Api-Key on ALL requests
+					const originalFetch = tilesRenderer.fetchOptions.fetch || window.fetch || fetch;
+					const capturedAccessToken = accessToken; // Capture in closure
+					const capturedGoogleApiKey = googleApiKey; // Capture in closure
+					
+					tilesRenderer.fetchOptions.fetch = async (input, init) => {
+						const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+						const headers = new Headers(init?.headers);
+						
+						// Add API key to URL for Google tiles (critical - Google requires both URL param and header)
+						let finalInput = input;
+						if (urlStr && urlStr.includes('tile.googleapis.com') && capturedGoogleApiKey && !urlStr.includes('key=')) {
+							const separator = urlStr.includes('?') ? '&' : '?';
+							const urlWithKey = urlStr + separator + 'key=' + encodeURIComponent(capturedGoogleApiKey);
+							console.log('[fetchOptions.fetch] Adding key to URL:', urlStr.substring(0, 80), '->', urlWithKey.substring(0, 100));
+							finalInput = urlWithKey;
+						}
+						
+						// Always add Authorization header if we have a token
+						if (capturedAccessToken && !headers.has('Authorization')) {
+							headers.set('Authorization', `Bearer ${capturedAccessToken}`);
+						}
+						
+						// Always add X-Goog-Api-Key header if we have a Google API key
+						// This is required for ALL requests to Google Photorealistic 3D Tiles
+						if (capturedGoogleApiKey && !headers.has('X-Goog-Api-Key')) {
+							headers.set('X-Goog-Api-Key', capturedGoogleApiKey);
+							console.log('[fetchOptions.fetch] Added X-Goog-Api-Key header');
+						}
+						
+						// Intercept root.json responses to modify tile URLs
+						if (urlStr && urlStr.includes('root.json') && urlStr.includes('tile.googleapis.com')) {
+							const response = await originalFetch(finalInput, {
+								...init,
+								headers: headers
+							});
+							
+							if (response.ok) {
+								const clonedResponse = response.clone();
+								const json = await clonedResponse.json();
+								
+								// Recursively modify all tile URLs in the JSON to include the API key
+								const modifyUrls = (obj) => {
+									if (typeof obj !== 'object' || obj === null) return;
+									
+									// Check for content.uri (tile URLs)
+									if (obj.content && obj.content.uri) {
+										const tileUrl = obj.content.uri;
+										if (tileUrl.includes('tile.googleapis.com') && !tileUrl.includes('key=')) {
+											const separator = tileUrl.includes('?') ? '&' : '?';
+											obj.content.uri = tileUrl + separator + 'key=' + encodeURIComponent(capturedGoogleApiKey);
+											console.log('[root.json] Modified tile URL:', tileUrl.substring(0, 80), '->', obj.content.uri.substring(0, 100));
+										}
+									}
+									
+									// Also check for direct uri property
+									if (obj.uri && typeof obj.uri === 'string' && obj.uri.includes('tile.googleapis.com') && !obj.uri.includes('key=')) {
+										const separator = obj.uri.includes('?') ? '&' : '?';
+										obj.uri = obj.uri + separator + 'key=' + encodeURIComponent(capturedGoogleApiKey);
+										console.log('[root.json] Modified URI:', obj.uri.substring(0, 100));
+									}
+									
+									// Recursively process all properties
+									for (const key in obj) {
+										if (Array.isArray(obj[key])) {
+											obj[key].forEach(item => modifyUrls(item));
+										} else if (typeof obj[key] === 'object' && obj[key] !== null) {
+											modifyUrls(obj[key]);
+										}
+									}
+								};
+								
+								modifyUrls(json);
+								
+								// Return a new response with modified JSON
+								return new Response(JSON.stringify(json), {
+									status: response.status,
+									statusText: response.statusText,
+									headers: response.headers
+								});
+							}
+							
+							return response;
+						}
+						
+						return originalFetch(finalInput, {
+							...init,
+							headers: headers
+						});
+					};
+				}
+
+				// Intercept tile URL resolution to add API key
+				// The library may resolve relative URLs, so we need to intercept that
+				if (googleApiKey) {
+					const originalResolveUrl = tilesRenderer.resolveUrl;
+					if (originalResolveUrl) {
+						tilesRenderer.resolveUrl = function(url) {
+							const resolved = originalResolveUrl.call(this, url);
+							// Add API key to Google tile URLs
+							if (resolved && resolved.includes('tile.googleapis.com') && !resolved.includes('key=')) {
+								const separator = resolved.includes('?') ? '&' : '?';
+								const urlWithKey = resolved + separator + 'key=' + encodeURIComponent(googleApiKey);
+								console.log('[resolveUrl] Adding key:', resolved.substring(0, 80), '->', urlWithKey.substring(0, 100));
+								return urlWithKey;
+							}
+							return resolved;
+						};
+					}
+					
+					// Also try to patch the manager's resolveURL method
+					if (tilesRenderer.manager && tilesRenderer.manager.resolveURL) {
+						const originalManagerResolveURL = tilesRenderer.manager.resolveURL;
+						tilesRenderer.manager.resolveURL = function(url) {
+							const resolved = originalManagerResolveURL.call(this, url);
+							if (resolved && resolved.includes('tile.googleapis.com') && !resolved.includes('key=')) {
+								const separator = resolved.includes('?') ? '&' : '?';
+								const urlWithKey = resolved + separator + 'key=' + encodeURIComponent(googleApiKey);
+								console.log('[manager.resolveURL] Adding key:', resolved.substring(0, 80), '->', urlWithKey.substring(0, 100));
+								return urlWithKey;
+							}
+							return resolved;
+						};
+					}
+				}
+				
+				// Set camera and resolution
+				tilesRenderer.setCamera(camera);
+				tilesRenderer.setResolutionFromRenderer(camera, renderer);
+
+				// Add tileset group to scene
+				scene.add(tilesRenderer.group);
+
+				// Event listeners for stats
+				tilesRenderer.addEventListener('load-tile-set', () => {
+					console.log('Tileset loaded');
+					hideProgress();
+					loadBtn.disabled = false;
+					loadIonBtn.disabled = false;
+					clearBtn.disabled = false;
+
+					// Frame the tileset
+					const sphere = new THREE.Sphere();
+					if (tilesRenderer.getBoundingSphere(sphere)) {
+						const center = sphere.center;
+						const radius = sphere.radius;
+
+						// Position camera to view the tileset
+						const distance = radius * 2;
+						camera.position.set(
+							center.x + distance * 0.7,
+							center.y + distance * 0.5,
+							center.z + distance * 0.7
+						);
+						controls.target.copy(center);
+						controls.update();
+					}
+				});
+
+				tilesRenderer.addEventListener('dispose-tile', () => {
+					updateStats();
+				});
+
+				tilesRenderer.addEventListener('load-tile', () => {
+					stats.downloadedTiles++;
+					updateStats();
+				});
+
+				tilesRenderer.addEventListener('load-tile-error', () => {
+					stats.failedTiles++;
+					updateStats();
+				});
+
+				// Start loading
+				tilesRenderer.update();
+
+			} catch (error) {
+				console.error('Error loading tileset:', error);
+				showProgress('Error loading tileset: ' + error.message);
+				loadBtn.disabled = false;
+				loadIonBtn.disabled = false;
+			}
+		}
+		
+		// Expose function to window for debugging
+		window.loadTilesetWithToken = loadTilesetWithToken;
+		
+		async function loadTileset() {
+			const url = tilesUrlInput.value.trim();
+			if (!url) {
+				alert('Please enter a tileset URL');
+				return;
+			}
+			
+			// Extract Google API key from URL if present
+			let googleApiKey = null;
+			try {
+				const urlObj = new URL(url);
+				if (urlObj.searchParams.has('key')) {
+					googleApiKey = urlObj.searchParams.get('key');
+				}
+			} catch (e) {
+				// Invalid URL, continue without extracting key
+			}
+			
+			await loadTilesetWithToken(url, null, googleApiKey);
+		}
+
+		function clearTileset() {
+			if (tilesRenderer) {
+				scene.remove(tilesRenderer.group);
+				tilesRenderer.dispose();
+				tilesRenderer = null;
+
+				stats = {
+					activeTiles: 0,
+					visibleTiles: 0,
+					downloadedTiles: 0,
+					failedTiles: 0
+				};
+				updateStats();
+				clearBtn.disabled = true;
+			}
+		}
+
+		function updateStats() {
+			// Note: getActiveTiles and getVisibleTiles may not be available in all versions
+			// Using basic stats that are always available
+			if (tilesRenderer) {
+				try {
+					if (typeof tilesRenderer.getActiveTiles === 'function') {
+						stats.activeTiles = tilesRenderer.getActiveTiles().length;
+					}
+					if (typeof tilesRenderer.getVisibleTiles === 'function') {
+						stats.visibleTiles = tilesRenderer.getVisibleTiles().length;
+					}
+				} catch (e) {
+					// Methods not available, keep current values
+				}
+			}
+
+			document.getElementById('activeTiles').textContent = stats.activeTiles;
+			document.getElementById('visibleTiles').textContent = stats.visibleTiles;
+			document.getElementById('downloadedTiles').textContent = stats.downloadedTiles;
+			document.getElementById('failedTiles').textContent = stats.failedTiles;
+		}
+
+		function onWindowResize() {
+			const w = window.innerWidth;
+			const h = window.innerHeight;
+
+			camera.aspect = w / h;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize(w, h);
+
+			if (tilesRenderer) {
+				tilesRenderer.setResolutionFromRenderer(camera, renderer);
+			}
+		}
+
+		function animate() {
+			requestAnimationFrame(animate);
+
+			if (controls) {
+				controls.update();
+			}
+
+			if (tilesRenderer) {
+				tilesRenderer.update();
+				updateStats();
+			}
+
+			renderer.render(scene, camera);
+		}
+
+		function showProgress(message) {
+			progressDiv.innerText = message;
+			progressDiv.style.display = 'block';
+		}
+
+		function hideProgress() {
+			progressDiv.style.display = 'none';
+		}
+	</script>
+</body>
+</html>
+

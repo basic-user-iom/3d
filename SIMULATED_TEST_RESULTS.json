@@ -1,0 +1,220 @@
+{
+  "timestamp": "2025-12-13T20:15:00.000Z",
+  "totalTests": 4,
+  "passedTests": 3,
+  "failedTests": 1,
+  "results": [
+    {
+      "timestamp": "2025-12-13T20:15:01.000Z",
+      "testName": "Standard to Weather GL",
+      "fromSystem": "standard",
+      "toSystem": "csm",
+      "beforeState": {},
+      "afterState": {},
+      "lightStates": {
+        "before": [
+          {
+            "uuid": "477f87d5-f204-4b9b-829d-318ffba01d6a",
+            "name": "Sun Light",
+            "position": { "x": 0.0, "y": 10.0, "z": 0.0 },
+            "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "intensity": 1.0,
+            "visible": true,
+            "castShadow": true,
+            "userData": {
+              "_originalPositionSaved": false
+            }
+          }
+        ],
+        "after": [
+          {
+            "uuid": "477f87d5-f204-4b9b-829d-318ffba01d6a",
+            "name": "Sun Light",
+            "position": { "x": 0.0, "y": 10.0, "z": 0.0 },
+            "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "intensity": 1.0,
+            "visible": true,
+            "castShadow": false,
+            "userData": {
+              "_originalPositionSaved": true,
+              "_originalPosition": { "x": 0.0, "y": 10.0, "z": 0.0 },
+              "_originalTargetPosition": { "x": 0.0, "y": 0.0, "z": 0.0 },
+              "_originalIntensity": 1.0,
+              "_originalCastShadow": true,
+              "_originalVisible": true
+            }
+          }
+        ],
+        "restored": []
+      },
+      "shadowPlaneState": {
+        "before": {
+          "visible": true,
+          "position": { "x": 0, "y": -0.001, "z": 0 },
+          "receiveShadow": true,
+          "castShadow": false
+        },
+        "after": {
+          "visible": true,
+          "position": { "x": 0, "y": -0.001, "z": 0 },
+          "receiveShadow": true,
+          "castShadow": false
+        }
+      },
+      "systemState": {
+        "before": {
+          "currentSystem": "standard",
+          "csmActive": false,
+          "standardActive": true,
+          "csmLightsInScene": 0,
+          "standardLightsInScene": 1
+        },
+        "after": {
+          "currentSystem": "csm",
+          "csmActive": true,
+          "standardActive": false,
+          "csmLightsInScene": 3,
+          "standardLightsInScene": 1
+        }
+      },
+      "errors": [],
+      "warnings": [],
+      "success": true
+    },
+    {
+      "timestamp": "2025-12-13T20:15:02.500Z",
+      "testName": "Weather GL to Standard",
+      "fromSystem": "csm",
+      "toSystem": "standard",
+      "beforeState": {},
+      "afterState": {},
+      "lightStates": {
+        "before": [
+          {
+            "uuid": "477f87d5-f204-4b9b-829d-318ffba01d6a",
+            "name": "Sun Light",
+            "position": { "x": 0.0, "y": 10.0, "z": 0.0 },
+            "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "intensity": 1.0,
+            "visible": true,
+            "castShadow": false,
+            "userData": {
+              "_originalPositionSaved": true,
+              "_originalPosition": { "x": 0.0, "y": 10.0, "z": 0.0 }
+            }
+          }
+        ],
+        "after": [
+          {
+            "uuid": "477f87d5-f204-4b9b-829d-318ffba01d6a",
+            "name": "Sun Light",
+            "position": { "x": 0.0, "y": 10.0, "z": 0.0 },
+            "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "intensity": 1.0,
+            "visible": true,
+            "castShadow": true,
+            "userData": {
+              "_originalPositionSaved": true,
+              "_originalPosition": { "x": 0.0, "y": 10.0, "z": 0.0 }
+            }
+          }
+        ],
+        "restored": [true]
+      },
+      "shadowPlaneState": {
+        "before": {
+          "visible": true,
+          "position": { "x": 0, "y": -0.001, "z": 0 }
+        },
+        "after": {
+          "visible": true,
+          "position": { "x": 0, "y": -0.001, "z": 0 }
+        }
+      },
+      "systemState": {
+        "before": {
+          "currentSystem": "csm",
+          "csmActive": true,
+          "csmLightsInScene": 3,
+          "standardLightsInScene": 1
+        },
+        "after": {
+          "currentSystem": "standard",
+          "csmActive": false,
+          "csmLightsInScene": 0,
+          "standardLightsInScene": 1
+        }
+      },
+      "errors": [],
+      "warnings": [],
+      "success": true
+    },
+    {
+      "timestamp": "2025-12-13T20:15:04.000Z",
+      "testName": "Standard to Weather GL (Round Trip)",
+      "fromSystem": "standard",
+      "toSystem": "csm",
+      "success": true,
+      "lightStates": {
+        "restored": []
+      },
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "timestamp": "2025-12-13T20:15:05.500Z",
+      "testName": "Weather GL to Standard (Round Trip)",
+      "fromSystem": "csm",
+      "toSystem": "standard",
+      "success": true,
+      "lightStates": {
+        "restored": [true]
+      },
+      "errors": [],
+      "warnings": []
+    }
+  ],
+  "summary": {
+    "lightPositionRestoration": {
+      "success": 2,
+      "failed": 0
+    },
+    "shadowCameraRestoration": {
+      "success": 2,
+      "failed": 0
+    },
+    "shadowPlaneRestoration": {
+      "success": 4,
+      "failed": 0
+    },
+    "materialStatePreservation": {
+      "success": 4,
+      "failed": 0
+    },
+    "systemStateConsistency": {
+      "success": 4,
+      "failed": 0
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

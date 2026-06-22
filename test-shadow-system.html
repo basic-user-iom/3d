@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadow System Tests</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1a1a1a;
+            color: #fff;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #4CAF50;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background: #2a2a2a;
+        }
+        .status.waiting {
+            background: #ff9800;
+            color: #000;
+        }
+        .status.ready {
+            background: #4CAF50;
+            color: #000;
+        }
+        .status.error {
+            background: #f44336;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .log {
+            background: #000;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            margin: 2px 0;
+        }
+        .log-entry.info {
+            color: #2196F3;
+        }
+        .log-entry.success {
+            color: #4CAF50;
+        }
+        .log-entry.error {
+            color: #f44336;
+        }
+        .log-entry.warn {
+            color: #ff9800;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Shadow System Tests</h1>
+        
+        <div id="status" class="status waiting">
+            ⏳ Waiting for viewer to initialize...
+        </div>
+        
+        <div>
+            <button id="runTests" onclick="runTests()" disabled>Run All Tests</button>
+            <button id="testStandardToCSM" onclick="testTransition('standard', 'csm')" disabled>Test: Standard → Weather GL</button>
+            <button id="testCSMToStandard" onclick="testTransition('csm', 'standard')" disabled>Test: Weather GL → Standard</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let testSuite = null;
+        let viewer = null;
+        let checkInterval = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function updateStatus(message, className) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${className}`;
+        }
+
+        function checkForTests() {
+            // Check if tests are available
+            if (window.shadowSystemTests) {
+                testSuite = window.shadowSystemTests;
+                updateStatus('✅ Tests ready! Click "Run All Tests" to start.', 'ready');
+                document.getElementById('runTests').disabled = false;
+                document.getElementById('testStandardToCSM').disabled = false;
+                document.getElementById('testCSMToStandard').disabled = false;
+                
+                // Try to get viewer reference
+                viewer = window.__viewer || window.sharedViewer;
+                if (viewer) {
+                    log('✅ Viewer found', 'success');
+                } else {
+                    log('⚠️ Viewer not found in expected locations', 'warn');
+                }
+                
+                clearInterval(checkInterval);
+                return true;
+            }
+            return false;
+        }
+
+        async function runTests() {
+            if (!testSuite) {
+                log('❌ Test suite not available', 'error');
+                return;
+            }
+
+            log('🚀 Starting comprehensive shadow system tests...', 'info');
+            updateStatus('⏳ Running tests...', 'waiting');
+            
+            try {
+                // Override console.log to capture test output
+                const originalLog = console.log;
+                console.log = function(...args) {
+                    originalLog.apply(console, args);
+                    const message = args.join(' ');
+                    if (message.includes('[ShadowDebug]') || 
+                        message.includes('[LightDebug]') || 
+                        message.includes('[SystemDebug]') ||
+                        message.includes('[ShadowPlaneDebug]') ||
+                        message.includes('TEST:') ||
+                        message.includes('✅') ||
+                        message.includes('❌')) {
+                        log(message, message.includes('✅') ? 'success' : message.includes('❌') ? 'error' : 'info');
+                    }
+                };
+
+                await testSuite.runAll();
+                
+                console.log = originalLog;
+                updateStatus('✅ Tests completed! Check console and log for details.', 'ready');
+                log('✅ All tests completed!', 'success');
+            } catch (error) {
+                log(`❌ Test error: ${error.message}`, 'error');
+                updateStatus('❌ Tests failed. Check console for details.', 'error');
+            }
+        }
+
+        async function testTransition(from, to) {
+            if (!testSuite) {
+                log('❌ Test suite not available', 'error');
+                return;
+            }
+
+            const testName = `${from} → ${to}`;
+            log(`🧪 Testing transition: ${testName}`, 'info');
+            updateStatus(`⏳ Testing ${testName}...`, 'waiting');
+
+            try {
+                await testSuite.testSwitch(from, to, testName);
+                updateStatus('✅ Transition test completed!', 'ready');
+                log(`✅ Transition test completed: ${testName}`, 'success');
+            } catch (error) {
+                log(`❌ Transition test error: ${error.message}`, 'error');
+                updateStatus('❌ Transition test failed.', 'error');
+            }
+        }
+
+        // Start checking for tests
+        checkInterval = setInterval(() => {
+            if (!checkForTests()) {
+                log('⏳ Waiting for shadow system tests to initialize...', 'info');
+            }
+        }, 500);
+
+        // Also check immediately
+        checkForTests();
+
+        // Auto-run tests after 3 seconds if available
+        setTimeout(() => {
+            if (testSuite) {
+                log('🚀 Auto-running tests in 2 seconds...', 'info');
+                setTimeout(() => {
+                    if (testSuite) {
+                        runTests();
+                    }
+                }, 2000);
+            }
+        }, 3000);
+    </script>
+</body>
+</html>

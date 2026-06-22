@@ -1,0 +1,45 @@
+@import "../../styles/common.scss";
+
+.modal {
+	position: absolute;
+	max-height: calc(100% - 192px);
+	padding: 20px 24px;
+	border: 1px solid #eee;
+	width: 600px;
+	font-size: 14px;
+	user-select: none; // Prevent text selection while dragging
+	@extend %panel-bg;
+	@extend %panel-border;
+	@extend %panel-border-radius;
+
+	&__header {
+		font-size: 24px;
+		font-weight: 600;
+		margin: 0 0 16px 0;
+		position: relative;
+		width: 90%;
+		cursor: grab; // Show grab cursor on header
+		
+		&:active {
+			cursor: grabbing; // Show grabbing cursor when dragging
+		}
+	}
+
+	&__body {
+		margin: 0;
+		user-select: text; // Allow text selection in body
+		cursor: default; // Default cursor in body
+	}
+
+	&__close {
+		position: absolute;
+		top: 16px;
+		right: 16px;
+	}
+}
+
+@include themify($themes) {
+	.modal {
+		color: themed('text-color');
+	}
+}

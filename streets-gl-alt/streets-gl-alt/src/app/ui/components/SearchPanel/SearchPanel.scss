@@ -1,0 +1,15 @@
+@import "../../styles/common.scss";
+
+.search {
+	position: absolute;
+	bottom: 16px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 350px;
+}
+
+@include themify($themes) {
+	.search {
+		color: themed('text-color');
+	}
+}

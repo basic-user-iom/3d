@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>Three.js Path Tracer Demo - three-gpu-pathtracer</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+			color: #444;
+			background-color: #1a1a1a;
+			overflow: hidden;
+		}
+
+		#info {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 10px 15px;
+			border-radius: 5px;
+			font-size: 14px;
+			z-index: 100;
+			line-height: 1.6;
+		}
+
+		#info a {
+			color: #4a9eff;
+			text-decoration: none;
+		}
+
+		#info a:hover {
+			text-decoration: underline;
+		}
+
+		#progress {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			color: #fff;
+			font-size: 24px;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 20px 40px;
+			border-radius: 10px;
+			z-index: 200;
+			display: none;
+		}
+
+		.checkerboard {
+			background-image:
+				linear-gradient(45deg, #ddd 25%, transparent 25%),
+				linear-gradient(-45deg, #ddd 25%, transparent 25%),
+				linear-gradient(45deg, transparent 75%, #ddd 75%),
+				linear-gradient(-45deg, transparent 75%, #ddd 75%);
+			background-size: 20px 20px;
+			background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+		}
+
+		canvas {
+			display: block;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="info">
+		<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> pathtracer - 
+		<a href="https://github.com/gkjohnson/three-gpu-pathtracer" target="_blank" rel="noopener">three-gpu-pathtracer</a><br/>
+		Use mouse to orbit, scroll to zoom. Path tracing renders progressively.
+	</div>
+
+	<div id="progress">Loading...</div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+				"three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.22/build/index.module.js",
+				"three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.4/build/index.module.js"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { WebGLPathTracer, BlurredEnvMapGenerator, GradientEquirectTexture } from 'three-gpu-pathtracer';
+
+		let camera, scene, renderer, controls;
+		let pathTracer, floor, gradientMap;
+		let progressDiv = document.getElementById('progress');
+		let samplesEl;
+
+		// Error handling
+		window.addEventListener('error', (e) => {
+			console.error('Global error:', e.error);
+			showProgress('Error: ' + (e.error?.message || 'Unknown error'));
+		});
+
+		window.addEventListener('unhandledrejection', (e) => {
+			console.error('Unhandled promise rejection:', e.reason);
+			showProgress('Error: ' + (e.reason?.message || 'Unknown error'));
+		});
+
+		const params = {
+			enable: true,
+			toneMapping: true,
+			pause: false,
+			tiles: 3,
+			transparentBackground: false,
+			resolutionScale: 1,
+			download: () => {
+				const link = document.createElement('a');
+				link.download = 'pathtraced-render.png';
+				link.href = renderer.domElement.toDataURL().replace('image/png', 'image/octet-stream');
+				link.click();
+			},
+			roughness: 0.15,
+			metalness: 0.9,
+		};
+
+		init();
+
+		function init() {
+			try {
+				console.log('Initializing path tracer demo...');
+				
+				camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+				camera.position.set(5, 5, 10);
+
+				// Initialize the renderer
+				renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+				renderer.setPixelRatio(window.devicePixelRatio);
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.toneMapping = THREE.ACESFilmicToneMapping;
+				document.body.appendChild(renderer.domElement);
+
+				console.log('Renderer created, WebGL context:', renderer.getContext());
+
+				gradientMap = new GradientEquirectTexture();
+				gradientMap.topColor.set(0xeeeeee);
+				gradientMap.bottomColor.set(0xeaeaea);
+				gradientMap.update();
+
+				// Initialize the pathtracer
+				console.log('Creating WebGLPathTracer...');
+				pathTracer = new WebGLPathTracer(renderer);
+				pathTracer.filterGlossyFactor = 1;
+				pathTracer.minSamples = 3;
+				pathTracer.renderScale = params.resolutionScale;
+				pathTracer.tiles.set(params.tiles, params.tiles);
+				console.log('WebGLPathTracer created successfully');
+
+				// Scene
+				scene = new THREE.Scene();
+				scene.background = gradientMap;
+
+				controls = new OrbitControls(camera, renderer.domElement);
+				controls.addEventListener('change', () => {
+					if (pathTracer) {
+						pathTracer.updateCamera();
+					}
+				});
+
+				window.addEventListener('resize', onWindowResize);
+				onWindowResize();
+
+				createGUI();
+				loadModel();
+			} catch (error) {
+				console.error('Error in init:', error);
+				showProgress('Initialization error: ' + error.message);
+			}
+		}
+
+		async function loadModel() {
+			showProgress('Loading model...');
+
+			// Create a simple test scene with geometric objects positioned near origin
+			const group = new THREE.Group();
+
+			// Add a sphere - positioned closer to origin
+			const sphereGeometry = new THREE.SphereGeometry(1, 32, 32);
+			const sphereMaterial = new THREE.MeshStandardMaterial({
+				color: 0xff6b6b,
+				roughness: 0.3,
+				metalness: 0.7
+			});
+			const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+			sphere.position.set(-2, 1, 0);
+			group.add(sphere);
+
+			// Add a box
+			const boxGeometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+			const boxMaterial = new THREE.MeshStandardMaterial({
+				color: 0x4ecdc4,
+				roughness: 0.2,
+				metalness: 0.8
+			});
+			const box = new THREE.Mesh(boxGeometry, boxMaterial);
+			box.position.set(2, 0.75, 0);
+			group.add(box);
+
+			// Add a torus
+			const torusGeometry = new THREE.TorusGeometry(0.8, 0.4, 16, 100);
+			const torusMaterial = new THREE.MeshStandardMaterial({
+				color: 0x95e1d3,
+				roughness: 0.1,
+				metalness: 0.9
+			});
+			const torus = new THREE.Mesh(torusGeometry, torusMaterial);
+			torus.position.set(0, 1.2, -2);
+			group.add(torus);
+
+			// Add a cylinder
+			const cylinderGeometry = new THREE.CylinderGeometry(0.6, 0.6, 2, 32);
+			const cylinderMaterial = new THREE.MeshStandardMaterial({
+				color: 0xf38181,
+				roughness: 0.4,
+				metalness: 0.6
+			});
+			const cylinder = new THREE.Mesh(cylinderGeometry, cylinderMaterial);
+			cylinder.position.set(-2, 1, -2);
+			group.add(cylinder);
+
+			// Add some lights
+			const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+			scene.add(ambientLight);
+
+			const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+			directionalLight.position.set(5, 10, 5);
+			scene.add(directionalLight);
+
+			const pointLight = new THREE.PointLight(0xffffff, 0.8);
+			pointLight.position.set(-5, 8, 5);
+			scene.add(pointLight);
+
+			// Create environment map from gradient
+			const envMapGenerator = new BlurredEnvMapGenerator(renderer);
+			const blurredEnvMap = envMapGenerator.generate(gradientMap, 0);
+			scene.environment = blurredEnvMap;
+
+			// Add the model first
+			scene.add(group);
+
+			// Calculate bounding box and set up floor
+			const bbox = new THREE.Box3().setFromObject(group);
+			const center = bbox.getCenter(new THREE.Vector3());
+			const size = bbox.getSize(new THREE.Vector3());
+			const maxDim = Math.max(size.x, size.y, size.z);
+			
+			// Add floor
+			const floorGeometry = new THREE.PlaneGeometry(1, 1);
+			const floorTexture = generateRadialFloorTexture(1024);
+			floor = new THREE.Mesh(
+				floorGeometry,
+				new THREE.MeshStandardMaterial({
+					side: THREE.DoubleSide,
+					roughness: params.roughness,
+					metalness: params.metalness,
+					map: floorTexture,
+					transparent: true,
+				}),
+			);
+			floor.scale.setScalar(maxDim * 10);
+			floor.rotation.x = -Math.PI / 2;
+			floor.position.y = bbox.min.y - 0.01;
+			scene.add(floor);
+
+			// Adjust camera to look at the scene
+			const radius = maxDim * 3;
+			controls.target0.copy(center);
+			controls.position0.set(radius * 0.7, radius * 0.5, radius * 0.7);
+			controls.reset();
+			
+			// Update camera immediately
+			camera.position.copy(controls.position0);
+			camera.lookAt(controls.target0);
+			controls.update();
+
+			hideProgress();
+
+			// Reset the progress bar to display BVH generation
+			showProgress('Generating BVH...');
+
+			// Use setTimeout to ensure scene is ready
+			setTimeout(() => {
+				try {
+					console.log('Setting scene on path tracer...');
+					console.log('Scene objects:', scene.children.length);
+					console.log('Camera position:', camera.position);
+					console.log('Camera target:', controls.target);
+					
+					// First render a normal frame to ensure everything is set up
+					renderer.render(scene, camera);
+					
+					pathTracer.setScene(scene, camera);
+					console.log('Scene set successfully');
+					
+					// Update environment and lights
+					pathTracer.updateEnvironment();
+					pathTracer.updateLights();
+					pathTracer.updateMaterials();
+					
+					hideProgress();
+					document.body.classList.add('checkerboard');
+					renderer.setAnimationLoop(animate);
+					console.log('Animation loop started');
+				} catch (error) {
+					console.error('Error setting scene:', error);
+					showProgress('Error setting scene: ' + error.message);
+				}
+			}, 200);
+		}
+
+		function onWindowResize() {
+			const w = window.innerWidth;
+			const h = window.innerHeight;
+			const dpr = window.devicePixelRatio;
+
+			renderer.setSize(w, h);
+			renderer.setPixelRatio(dpr);
+
+			const aspect = w / h;
+			camera.aspect = aspect;
+			camera.updateProjectionMatrix();
+
+			pathTracer.updateCamera();
+		}
+
+		function createGUI() {
+			// Create a simple GUI using DOM elements
+			const guiContainer = document.createElement('div');
+			guiContainer.style.cssText = `
+				position: absolute;
+				top: 10px;
+				right: 10px;
+				background: rgba(0, 0, 0, 0.7);
+				padding: 15px;
+				border-radius: 5px;
+				color: #fff;
+				font-size: 12px;
+				z-index: 100;
+				min-width: 200px;
+			`;
+			document.body.appendChild(guiContainer);
+
+			// Enable checkbox
+			const enableDiv = document.createElement('div');
+			enableDiv.style.marginBottom = '10px';
+			const enableLabel = document.createElement('label');
+			enableLabel.style.cssText = 'display: flex; align-items: center; cursor: pointer;';
+			const enableCheckbox = document.createElement('input');
+			enableCheckbox.type = 'checkbox';
+			enableCheckbox.checked = params.enable;
+			enableCheckbox.onchange = (e) => { params.enable = e.target.checked; };
+			enableLabel.appendChild(enableCheckbox);
+			enableLabel.appendChild(document.createTextNode(' Enable Path Tracing'));
+			enableDiv.appendChild(enableLabel);
+			guiContainer.appendChild(enableDiv);
+
+			// Pause checkbox
+			const pauseDiv = document.createElement('div');
+			pauseDiv.style.marginBottom = '10px';
+			const pauseLabel = document.createElement('label');
+			pauseLabel.style.cssText = 'display: flex; align-items: center; cursor: pointer;';
+			const pauseCheckbox = document.createElement('input');
+			pauseCheckbox.type = 'checkbox';
+			pauseCheckbox.checked = params.pause;
+			pauseCheckbox.onchange = (e) => { params.pause = e.target.checked; };
+			pauseLabel.appendChild(pauseCheckbox);
+			pauseLabel.appendChild(document.createTextNode(' Pause'));
+			pauseDiv.appendChild(pauseLabel);
+			guiContainer.appendChild(pauseDiv);
+
+			// Samples display
+			samplesEl = document.createElement('div');
+			samplesEl.style.cssText = 'margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2);';
+			samplesEl.innerText = 'samples: 0';
+			guiContainer.appendChild(samplesEl);
+
+			// Download button
+			const downloadBtn = document.createElement('button');
+			downloadBtn.textContent = 'Download Image';
+			downloadBtn.style.cssText = `
+				margin-top: 10px;
+				padding: 8px 16px;
+				background: #4a9eff;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+				width: 100%;
+			`;
+			downloadBtn.onclick = params.download;
+			guiContainer.appendChild(downloadBtn);
+		}
+
+		function animate() {
+			try {
+				if (!pathTracer) return;
+				
+				renderer.toneMapping = params.toneMapping ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+
+				const samples = Math.floor(pathTracer.samples || 0);
+				if (samplesEl) {
+					samplesEl.innerText = `samples: ${samples}`;
+				}
+
+				pathTracer.enablePathTracing = params.enable;
+				pathTracer.pausePathTracing = params.pause;
+				pathTracer.renderSample();
+			} catch (error) {
+				console.error('Error in animate:', error);
+			}
+		}
+
+		function showProgress(message) {
+			progressDiv.innerText = message;
+			progressDiv.style.display = 'block';
+		}
+
+		function hideProgress() {
+			progressDiv.style.display = 'none';
+		}
+
+		function generateRadialFloorTexture(dim) {
+			const data = new Uint8Array(dim * dim * 4);
+
+			for (let x = 0; x < dim; x++) {
+				for (let y = 0; y < dim; y++) {
+					const xNorm = x / (dim - 1);
+					const yNorm = y / (dim - 1);
+
+					const xCent = 2.0 * (xNorm - 0.5);
+					const yCent = 2.0 * (yNorm - 0.5);
+					let a = Math.max(Math.min(1.0 - Math.sqrt(xCent ** 2 + yCent ** 2), 1.0), 0.0);
+					a = a ** 1.5;
+					a = a * 1.5;
+					a = Math.min(a, 1.0);
+
+					const i = y * dim + x;
+					data[i * 4 + 0] = 255;
+					data[i * 4 + 1] = 255;
+					data[i * 4 + 2] = 255;
+					data[i * 4 + 3] = a * 255;
+				}
+			}
+
+			const tex = new THREE.DataTexture(data, dim, dim);
+			tex.format = THREE.RGBAFormat;
+			tex.type = THREE.UnsignedByteType;
+			tex.minFilter = THREE.LinearFilter;
+			tex.magFilter = THREE.LinearFilter;
+			tex.wrapS = THREE.RepeatWrapping;
+			tex.wrapT = THREE.RepeatWrapping;
+			tex.needsUpdate = true;
+			return tex;
+		}
+	</script>
+</body>
+</html>
+

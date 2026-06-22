@@ -1,0 +1,237 @@
+.streets-gl-controls {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999; /* Below toolbar (1000) but above iframe (10) */
+  pointer-events: none; /* Allow clicks to pass through except on controls */
+  padding: 16px;
+  background: transparent; /* Remove gradient background */
+}
+
+.streets-gl-controls-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: auto; /* Make controls clickable */
+}
+
+.streets-gl-search-container {
+  flex: 0 0 auto;
+  width: 350px;
+  position: relative; /* For dropdown positioning */
+}
+
+/* Search Bar - matches Streets GL original design */
+.streets-gl-search-bar {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  font-size: 16px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.92);
+  border: 1px solid #ffffff;
+  box-shadow: 0 1px 2px 0 rgba(16, 24, 40, 0.1);
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+.streets-gl-search-icon {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  margin-right: 8px;
+  color: #222;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.streets-gl-search-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.streets-gl-search-input {
+  display: block;
+  margin: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 18px;
+  flex: 1;
+  min-width: 0;
+  color: #222;
+  outline: none;
+}
+
+.streets-gl-search-input::placeholder {
+  color: #222;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.streets-gl-search-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.streets-gl-search-clear {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  margin-left: 8px;
+  color: #222;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.streets-gl-search-clear svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Action Buttons - matches Streets GL original design */
+.streets-gl-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.streets-gl-action-button {
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+  border: 1px solid #ffffff;
+  background-color: rgba(255, 255, 255, 0.92);
+  color: #222;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px 0 rgba(16, 24, 40, 0.1);
+  transition: all 0.2s;
+  flex-shrink: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.streets-gl-action-button svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.streets-gl-action-button:hover {
+  background-color: rgba(255, 255, 255, 1);
+  box-shadow: 0 2px 4px 0 rgba(16, 24, 40, 0.15);
+}
+
+.streets-gl-action-button:active {
+  transform: scale(0.95);
+}
+
+.streets-gl-action-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.streets-gl-action-button-loading {
+  cursor: progress;
+}
+
+.streets-gl-spinner {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Search Results Dropdown - matches Streets GL original design */
+.streets-gl-search-results {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  font-size: 16px;
+  margin: 0;
+  background-color: rgba(255, 255, 255, 0.92);
+  border: 1px solid #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.streets-gl-search-results-item {
+  padding: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  transition: background-color 0.2s;
+}
+
+.streets-gl-search-results-item:last-child {
+  border-bottom: none;
+}
+
+.streets-gl-search-results-item:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.streets-gl-search-results-item-name {
+  font-size: 16px;
+  margin: 0 0 4px 0;
+  font-weight: 600;
+  color: #222;
+}
+
+.streets-gl-search-results-item-name-small {
+  font-size: 14px;
+}
+
+.streets-gl-search-results-item-type {
+  font-size: 12px;
+  color: #666;
+}
+
+@media (max-width: 768px) {
+  .streets-gl-controls {
+    bottom: 8px;
+    left: 8px;
+    right: 8px;
+  }
+  
+  .streets-gl-controls-content {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  
+  .streets-gl-search-container {
+    width: 100%;
+  }
+  
+  .streets-gl-actions {
+    justify-content: flex-start;
+  }
+}
+

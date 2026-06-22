@@ -1,0 +1,117 @@
+﻿=== REVIT CONNECTION - COMPLETE LOG REPORT ===
+Generated: 2026-01-21 02:40:21
+Computer: DESKTOP-2MEL9AM
+User: Mirjan
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+1. SERVER STATUS
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+Server Health: OK
+Clients Connected: 1
+Active Sessions: 0
+
+Active Sessions:
+  (no active sessions)
+
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+2. PORT STATUS
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+Port 3000 : LISTENING
+  PID: 22140
+  Process: node
+
+Port 3002 : LISTENING
+  PID: 19584
+  Process: node
+
+Port 3003 : LISTENING
+  PID: 19584
+  Process: node
+
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+3. REVIT JOURNAL FILES
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+Latest Journal: journal.0038.txt
+Last Modified: 01/21/2026 02:32:30
+Size: 0 KB
+
+=== RELEVANT ERRORS IN JOURNAL ===
+
+Found: RevitToWebExporter
+  Line 1256: ' 0:< API_ERROR { : Assembly version conflict in some references in RevitToWebExporter.dll assembly
+  Line 1263: 'Web, class: RevitToWebExporter.ExportCommand, assembly: D:\ai-cursor\3d-test-software\revit-addin\RevitToWebExporter\bin\Release\RevitToWebExporter.dll, parentId: CustomCtrl_%Revit to Web%Export }
+  Line 1264: ' 0:< API_SUCCESS { Added pushbutton Id: 6418, name: Settings, text: Settings, class: RevitToWebExporter.SettingsCommand, assembly: D:\ai-cursor\3d-test-software\revit-addin\RevitToWebExporter\bin\Release\RevitToWebExporter.dll, parentId: CustomCtrl_%Revit to Web%Export }
+  Line 1266: 'Link, class: RevitToWebExporter.DirectLinkCommand, assembly: D:\ai-cursor\3d-test-software\revit-addin\RevitToWebExporter\bin\Release\RevitToWebExporter.dll, parentId: CustomCtrl_%Revit to Web%Export }
+  Line 1267: ' 0:< API_SUCCESS { Starting External Application: Revit to Web Exporter, Class: RevitToWebExporter.RevitToWebExporter, Vendor : YourCompany(Your Company Name), Assembly: D:\ai-cursor\3d-test-software\revit-addin\RevitToWebExporter\bin\Release\RevitToWebExporter.dll,  Assembly Version: 1.0.0.0 }
+
+Found: DirectLink
+  Line 1265: ' 0:< API_SUCCESS { Added pushbutton Id: 6419, name: DirectLink, text: Direct
+  Line 1266: 'Link, class: RevitToWebExporter.DirectLinkCommand, assembly: D:\ai-cursor\3d-test-software\revit-addin\RevitToWebExporter\bin\Release\RevitToWebExporter.dll, parentId: CustomCtrl_%Revit to Web%Export }
+  Line 1895: Jrn.RibbonEvent "Execute external command:CustomCtrl_%CustomCtrl_%Revit to Web%Export%DirectLink:RevitToWebExporter.DirectLinkCommand"
+
+Found: IFC export
+  Line 198: ' 0:< API_SUCCESS { Registered an external service: Name(IFC Export Service); VendorId(ADSK); ServiceId(d8b95737-f943-414c-9ad7-86785bf1acbc) }
+  Line 199: ' 0:< API_SUCCESS { Registered an external server: Name(Revit IFC Exporter); VendorId(ADSK); ServerId(ef8d0493-7f36-42b5-b9aa-8aaac716482b); ServiceId(d8b95737-f943-414c-9ad7-86785bf1acbc) }
+
+Found: exception
+  Line 1931: 'ApplicationException is being thrown on behalf of the function <bool __cdecl ADocument::exportToIFC(class AString &,class AString &,const class IFCExportOptions *)>. Dump file: C:\Users\Mirjan\AppData\Local\Autodesk\Revit\Autodesk Revit 2026\Journals\journal.0038.0001.dmp: line 982 of F:\Ship\2026_px64\Source\Revit\RevitDB\gensrc\Document.gen.cpp.
+
+Found: ApplicationException
+  Line 1931: 'ApplicationException is being thrown on behalf of the function <bool __cdecl ADocument::exportToIFC(class AString &,class AString &,const class IFCExportOptions *)>. Dump file: C:\Users\Mirjan\AppData\Local\Autodesk\Revit\Autodesk Revit 2026\Journals\journal.0038.0001.dmp: line 982 of F:\Ship\2026_px64\Source\Revit\RevitDB\gensrc\Document.gen.cpp.
+
+Found: assembly version conflict
+  Line 751: ' 0:< API_ERROR { : Assembly version conflict in some references in Autodesk.Precast.Application.dll assembly
+  Line 829: ' 0:< API_ERROR { : Assembly version conflict in some references in Autodesk.ResultsBuilder.DBApplication.dll assembly
+  Line 833: ' 0:< API_ERROR { : Assembly version conflict in some references in Autodesk.ResultsExplorer.Application.dll assembly
+  Line 1011: ' 0:< API_ERROR { : Assembly version conflict in some references in Autodesk.StructuralRibbon.Application.dll assembly
+  Line 1016: ' 0:< API_ERROR { : Assembly version conflict in some references in Autodesk.TotalCarbonAnalysis.Application.dll assembly
+
+Found: exportToIFC
+  Line 1931: 'ApplicationException is being thrown on behalf of the function <bool __cdecl ADocument::exportToIFC(class AString &,class AString &,const class IFCExportOptions *)>. Dump file: C:\Users\Mirjan\AppData\Local\Autodesk\Revit\Autodesk Revit 2026\Journals\journal.0038.0001.dmp: line 982 of F:\Ship\2026_px64\Source\Revit\RevitDB\gensrc\Document.gen.cpp.
+
+Full Journal Path: C:\Users\Mirjan\AppData\Local\Autodesk\Revit\Autodesk Revit 2026\Journals\journal.0038.txt
+
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+4. RUNNING PROCESSES
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+node processes:
+  PID: 19584 | CPU: 0.5625 | Memory: 86.3 MB
+  PID: 21176 | CPU: 0.09375 | Memory: 45.54 MB
+  PID: 22140 | CPU: 33.515625 | Memory: 225.59 MB
+
+Revit processes:
+  PID: 23172 | CPU: 16.6875 | Memory: 940.59 MB
+
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+5. FILE SYSTEM CHECKS
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+âœ… revit-addin\RevitToWebExporter\bin\Release\RevitToWebExporter.dll
+   Size: 48 KB
+   Modified: 01/21/2026 02:30:52
+
+âœ… revit-addin\RevitToWebExporter\bin\Release\RevitToWebExporter.dll.config
+   Size: 1.68 KB
+   Modified: 01/21/2026 02:24:11
+
+âœ… server-revit-sync\server.js
+   Size: 15.29 KB
+   Modified: 01/20/2026 17:36:57
+
+âœ… package.json
+   Size: 3.31 KB
+   Modified: 01/21/2026 01:10:14
+
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+END OF REPORT
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+NEXT STEPS:
+1. Open COLLECT_ALL_LOGS.html in your browser
+2. Click 'Collect Browser Logs' and 'Collect Server Status'
+3. Copy the complete report from the HTML tool
+4. Combine with this report for complete analysis
+

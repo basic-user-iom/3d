@@ -1,0 +1,3339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Streets GL - Standalone 3D Map Renderer</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    #ui {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .panel {
+      position: absolute;
+      background: rgba(20, 20, 20, 0.9);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 16px;
+      color: #fff;
+      pointer-events: auto;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    #search-panel {
+      top: 20px;
+      left: 20px;
+      width: 320px;
+    }
+
+    #controls-panel {
+      top: 20px;
+      right: 20px;
+      width: 280px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    #info-panel {
+      bottom: 20px;
+      left: 20px;
+      padding: 12px 16px;
+      font-size: 12px;
+      opacity: 0.8;
+    }
+
+    h3 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .input-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      color: #aaa;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    select:focus {
+      outline: none;
+      border-color: #4a9eff;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #4a9eff;
+      border: none;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: #3a8eef;
+    }
+
+    button:active {
+      background: #2a7edf;
+    }
+
+    .slider-group {
+      margin-bottom: 12px;
+    }
+
+    .slider {
+      width: 100%;
+      margin: 8px 0;
+    }
+
+    .slider-value {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 12px;
+      color: #aaa;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    input[type="checkbox"] {
+      margin-right: 8px;
+      cursor: pointer;
+    }
+
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      font-size: 18px;
+      z-index: 200;
+    }
+
+    .spinner {
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-top: 3px solid #4a9eff;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    #search-results {
+      max-height: 200px;
+      overflow-y: auto;
+      margin-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      padding-top: 8px;
+    }
+
+    .search-result {
+      padding: 8px;
+      cursor: pointer;
+      border-radius: 4px;
+      margin-bottom: 4px;
+      transition: background 0.2s;
+    }
+
+    .search-result:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .search-result-name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .search-result-details {
+      font-size: 12px;
+      color: #aaa;
+      margin-top: 2px;
+    }
+
+    .segmented-btn, .time-preset-btn, .speed-btn {
+      flex: 1;
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      color: #fff;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .segmented-btn:hover, .time-preset-btn:hover, .speed-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .segmented-btn.active, .time-preset-btn.active, .speed-btn.active {
+      background: #4a9eff;
+      border-color: #4a9eff;
+      color: #fff;
+    }
+
+    h4 {
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="ui">
+    <div id="search-panel" class="panel">
+      <h3>Search Location</h3>
+      <div class="input-group">
+        <input type="text" id="search-input" placeholder="Search for a location...">
+        <button id="search-button" style="margin-top: 8px;">Search</button>
+      </div>
+      <div id="search-results"></div>
+    </div>
+
+    <div id="controls-panel" class="panel">
+      <h3>Map Controls</h3>
+      
+      <div class="input-group">
+        <label>Map Style</label>
+        <select id="map-style">
+          <option value="osm">OpenStreetMap</option>
+          <option value="cartodb">CartoDB Light</option>
+          <option value="cartodb-dark">CartoDB Dark</option>
+          <option value="satellite">Satellite</option>
+        </select>
+      </div>
+
+      <div class="input-group">
+        <label>Date (for seasonal sun position)</label>
+        <input type="date" id="date-input" value="">
+      </div>
+
+      <div class="slider-group">
+        <label>Time of Day: <span class="slider-value" id="time-value">12:00</span></label>
+        <input type="range" id="time-slider" class="slider" min="0" max="24" step="0.1" value="12">
+      </div>
+
+      <div class="slider-group">
+        <label>Sun Intensity: <span class="slider-value" id="sun-intensity-value">1.0</span></label>
+        <input type="range" id="sun-intensity-slider" class="slider" min="0" max="2" step="0.1" value="1.0">
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="buildings-enabled" checked>
+        <label for="buildings-enabled">Show Buildings</label>
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="shadows-enabled" checked>
+        <label for="shadows-enabled">Shadows</label>
+      </div>
+
+      <div class="slider-group">
+        <label>Zoom Level: <span class="slider-value" id="zoom-value">15</span></label>
+        <input type="range" id="zoom-slider" class="slider" min="10" max="18" step="1" value="15">
+        <input type="range" id="camera-distance-slider" class="slider" min="100" max="5000" step="10" value="905" style="display: none;">
+      </div>
+
+      <div class="input-group">
+        <label>Latitude</label>
+        <input type="number" id="lat-input" step="0.00001" value="32.89344">
+      </div>
+
+      <div class="input-group">
+        <label>Longitude</label>
+        <input type="number" id="lon-input" step="0.00001" value="-97.03708">
+      </div>
+
+      <button id="update-location" style="margin-top: 12px;">Update Location</button>
+      <button id="settings-button" style="margin-top: 8px; background: #666;">Settings</button>
+    </div>
+
+    <div id="settings-panel" class="panel" style="display: none; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 500px; max-height: 90vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h3 style="margin: 0;">Settings</h3>
+        <button id="close-settings" style="width: auto; padding: 4px 12px; background: #666;">✕</button>
+      </div>
+      
+      <div style="margin-bottom: 24px;">
+        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #aaa;">GENERAL</h4>
+        <div class="slider-group">
+          <label>Vertical field of view: <span class="slider-value" id="fov-value">59</span></label>
+          <input type="range" id="fov-slider" class="slider" min="5" max="120" step="1" value="59">
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="text-labels-enabled" checked>
+          <label for="text-labels-enabled">Text labels</label>
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="terrain-enabled">
+          <label for="terrain-enabled">Use terrain elevation data</label>
+        </div>
+      </div>
+
+      <div>
+        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #aaa;">GRAPHICS</h4>
+        <div class="input-group" style="margin-bottom: 12px;">
+          <label>Shadows</label>
+          <div style="display: flex; gap: 4px;">
+            <button class="segmented-btn" data-setting="shadows" data-value="disabled">Disabled</button>
+            <button class="segmented-btn active" data-setting="shadows" data-value="low">Low</button>
+            <button class="segmented-btn active" data-setting="shadows" data-value="medium">Medium</button>
+            <button class="segmented-btn" data-setting="shadows" data-value="high">High</button>
+          </div>
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="taa-enabled" checked>
+          <label for="taa-enabled">TAA (Temporal Anti-Aliasing)</label>
+        </div>
+        <div class="input-group" style="margin-bottom: 12px;">
+          <label>Depth of field</label>
+          <div style="display: flex; gap: 4px;">
+            <button class="segmented-btn active" data-setting="dof" data-value="disabled">Disabled</button>
+            <button class="segmented-btn" data-setting="dof" data-value="low">Low quality</button>
+            <button class="segmented-btn" data-setting="dof" data-value="high">High quality</button>
+          </div>
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="bloom-enabled" checked>
+          <label for="bloom-enabled">Bloom</label>
+        </div>
+        <div class="input-group" style="margin-bottom: 12px;">
+          <label>Screen-space reflections</label>
+          <div style="display: flex; gap: 4px;">
+            <button class="segmented-btn active" data-setting="ssr" data-value="disabled">Disabled</button>
+            <button class="segmented-btn" data-setting="ssr" data-value="low">Low quality</button>
+            <button class="segmented-btn" data-setting="ssr" data-value="high">High quality</button>
+          </div>
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="ssao-enabled" checked>
+          <label for="ssao-enabled">Screen-space ambient occlusion</label>
+        </div>
+      </div>
+
+      <button id="reset-settings" style="margin-top: 20px; background: #666;">Reset to defaults</button>
+    </div>
+
+    <div id="time-panel" class="panel" style="bottom: 20px; right: 20px; width: 320px;">
+      <h3 style="margin: 0 0 12px 0;">Time of day</h3>
+      <div style="display: flex; gap: 4px; margin-bottom: 12px;">
+        <button class="time-preset-btn" data-preset="dynamic">Dynamic</button>
+        <button class="time-preset-btn" data-preset="morning">Morning</button>
+        <button class="time-preset-btn" data-preset="noon">Noon</button>
+        <button class="time-preset-btn" data-preset="evening">Evening</button>
+      </div>
+      <div class="slider-group">
+        <label>Time: <span class="slider-value" id="time-value">12:00</span></label>
+        <input type="range" id="time-slider" class="slider" min="0" max="24" step="0.1" value="12">
+      </div>
+      <div class="slider-group">
+        <label>Speed: <span class="slider-value" id="speed-value">x1</span></label>
+        <div style="display: flex; gap: 4px; margin-top: 8px;">
+          <button class="speed-btn" data-speed="1">x1</button>
+          <button class="speed-btn" data-speed="10">x10</button>
+          <button class="speed-btn" data-speed="100">x100</button>
+          <button class="speed-btn" data-speed="1000">x1000</button>
+          <button class="speed-btn" data-speed="10000">x10000</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="info-panel" class="panel">
+      <div>Lat: <span id="info-lat">32.89344</span>, Lon: <span id="info-lon">-97.03708</span> | 
+      Zoom: <span id="info-zoom">15</span> | 
+      Buildings: <span id="info-buildings">0</span></div>
+    </div>
+  </div>
+
+  <div id="loading" class="loading" style="display: none;">
+    <div class="spinner"></div>
+    <div>Loading map data...</div>
+  </div>
+  
+  <!-- Debug: Check if script is loading -->
+  <script>
+    console.log('[HTML] Page loaded, scripts should execute now...');
+  </script>
+
+  <!-- SunCalc library for accurate astronomical sun position calculations -->
+  <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
+  
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+        "pmtiles": "https://cdn.jsdelivr.net/npm/pmtiles@3.0.0/dist/index.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    // Immediate console log to verify script execution
+    console.log('[Script] Module script started loading...');
+    
+    import * as THREE from 'three';
+    import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/controls/OrbitControls.js';
+    
+    console.log('[Script] Three.js imported successfully');
+
+    // Parse URL hash for initial location (format: #lat,lon,zoom,heading,pitch)
+    function parseHash() {
+      const hash = window.location.hash.substring(1);
+      if (!hash) return null;
+      
+      const parts = hash.split(',');
+      if (parts.length >= 2) {
+        return {
+          lat: parseFloat(parts[0]) || 32.89344,
+          lon: parseFloat(parts[1]) || -97.03708,
+          zoom: parseFloat(parts[2]) || 15, // Can be float for camera distance
+          heading: parseFloat(parts[3]) || 0,
+          distance: parseFloat(parts[4]) || 1000 // 5th param is camera distance, not pitch
+        };
+      }
+      return null;
+    }
+
+    // Update URL hash
+    function updateHash(lat, lon, zoom, heading, distance) {
+      window.location.hash = `${lat.toFixed(5)},${lon.toFixed(5)},${zoom.toFixed(2)},${heading.toFixed(2)},${distance.toFixed(2)}`;
+    }
+
+      // Convert lat/lon to meters (relative to center point)
+    // This function centers coordinates at (0,0,0) for the centerLat/centerLon point
+    function latLonToMeters(lat, lon, centerLat, centerLon) {
+      // Use more accurate Earth radius calculation
+      const earthRadiusMeters = 6378137; // WGS84 equatorial radius
+      const metersPerDegreeLat = 111320; // Approximately constant
+      const metersPerDegreeLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+      
+      // Calculate offsets in meters
+      const latOffset = (lat - centerLat) * metersPerDegreeLat;
+      const lonOffset = (lon - centerLon) * metersPerDegreeLon;
+      
+      return {
+        x: lonOffset, // X = longitude (east-west)
+        z: latOffset  // Z = latitude (north-south), positive Z = north
+      };
+    }
+
+    // Convert lat/lon to tile coordinates
+    function latLonToTile(lat, lon, zoom) {
+      const n = Math.pow(2, zoom);
+      const x = Math.floor((lon + 180) / 360 * n);
+      const latRad = lat * Math.PI / 180;
+      const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+      return { x, y, z: zoom };
+    }
+
+    // Get tile URL
+    function getTileUrl(x, y, z, layerType) {
+      const servers = {
+        'osm': { template: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', subdomains: ['a', 'b', 'c'] },
+        'cartodb': { template: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', subdomains: ['a', 'b', 'c', 'd'] },
+        'cartodb-dark': { template: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', subdomains: ['a', 'b', 'c', 'd'] },
+        'satellite': { template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', subdomains: [] },
+        'streets-gl': { template: 'https://tiles.streets.gl/{z}/{x}/{y}.png', subdomains: [], vectorTiles: true }
+      };
+
+      const config = servers[layerType] || servers['osm'];
+      let url = config.template;
+      
+      if (config.subdomains.length > 0) {
+        const subdomain = config.subdomains[(x + y) % config.subdomains.length];
+        url = url.replace('{s}', subdomain);
+      }
+      
+      let tileY = y;
+      if (layerType === 'satellite') {
+        tileY = Math.pow(2, z) - 1 - y;
+      }
+      
+      return url.replace('{z}', z).replace('{x}', x).replace('{y}', tileY);
+    }
+
+    // Load map tile
+    function loadMapTile(x, y, z, layerType) {
+      return new Promise((resolve, reject) => {
+        const url = getTileUrl(x, y, z, layerType);
+        const loader = new THREE.TextureLoader();
+        loader.load(
+          url,
+          (texture) => {
+            texture.wrapS = THREE.ClampToEdgeWrapping;
+            texture.wrapT = THREE.ClampToEdgeWrapping;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.generateMipmaps = true;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            console.log(`[GroundLayer] Successfully loaded tile ${x}/${y}/${z} from ${url.substring(0, 50)}...`);
+            resolve({ texture, x, y, z });
+          },
+          undefined,
+          (error) => {
+            console.warn(`[GroundLayer] Failed to load tile ${x}/${y}/${z} from ${url}:`, error);
+            // Create a placeholder texture for failed tiles
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.fillStyle = '#888888';
+              ctx.fillRect(0, 0, 256, 256);
+              // Draw a cross to indicate missing tile
+              ctx.strokeStyle = '#666666';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(0, 0);
+              ctx.lineTo(256, 256);
+              ctx.moveTo(256, 0);
+              ctx.lineTo(0, 256);
+              ctx.stroke();
+            }
+            const placeholderTexture = new THREE.CanvasTexture(canvas);
+            placeholderTexture.wrapS = THREE.ClampToEdgeWrapping;
+            placeholderTexture.wrapT = THREE.ClampToEdgeWrapping;
+            resolve({ texture: placeholderTexture, x, y, z });
+          }
+        );
+      });
+    }
+
+    // Convert tile coordinates to lat/lon
+    function tileToLatLon(x, y, z) {
+      const n = Math.pow(2, z);
+      const lon = (x / n) * 360 - 180;
+      const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)));
+      const lat = latRad * 180 / Math.PI;
+      return { lat, lon };
+    }
+
+    // Create ground layer
+    // Increased gridSize to 5x5 (was 3x3) for better background coverage
+    // This ensures tiles are visible further in the background
+    async function createGroundLayer(scene, centerLat, centerLon, zoom, layerType, gridSize = 5) {
+      // Clamp zoom to valid tile zoom range (0-18 for most tile providers)
+      // Higher zoom values are likely camera distance, not tile zoom
+      const tileZoom = Math.max(0, Math.min(18, Math.round(zoom)));
+      if (zoom !== tileZoom) {
+        console.log(`[GroundLayer] Clamping zoom from ${zoom} to ${tileZoom} for tile loading`);
+      }
+      const centerTile = latLonToTile(centerLat, centerLon, tileZoom);
+      const offset = Math.floor(gridSize / 2);
+      const startX = centerTile.x - offset;
+      const startY = centerTile.y - offset;
+
+      // Calculate the actual bounding box covered by tiles
+      const topLeftTile = tileToLatLon(startX, startY, tileZoom);
+      const bottomRightTile = tileToLatLon(startX + gridSize, startY + gridSize, tileZoom);
+      
+      // Note: In tile coordinates, Y increases downward (south), so topLeftTile has higher lat
+      const northLat = Math.max(topLeftTile.lat, bottomRightTile.lat);
+      const southLat = Math.min(topLeftTile.lat, bottomRightTile.lat);
+      const westLon = Math.min(topLeftTile.lon, bottomRightTile.lon);
+      const eastLon = Math.max(topLeftTile.lon, bottomRightTile.lon);
+      
+      // Calculate ground size in meters using the actual bounding box
+      const metersPerDegreeLat = 111320;
+      const metersPerDegreeLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+      
+      const latSpan = northLat - southLat;
+      const lonSpan = eastLon - westLon;
+      
+      const groundWidth = lonSpan * metersPerDegreeLon;
+      const groundHeight = latSpan * metersPerDegreeLat;
+
+      console.log(`[GroundLayer] Tile grid: ${startX}-${startX + gridSize}, ${startY}-${startY + gridSize}`);
+      console.log(`[GroundLayer] Bounding box: lat ${topLeftTile.lat.toFixed(5)}-${bottomRightTile.lat.toFixed(5)}, lon ${topLeftTile.lon.toFixed(5)}-${bottomRightTile.lon.toFixed(5)}`);
+      console.log(`[GroundLayer] Ground size: ${groundWidth.toFixed(2)}m x ${groundHeight.toFixed(2)}m`);
+
+      const tilePromises = [];
+      for (let i = 0; i < gridSize; i++) {
+        for (let j = 0; j < gridSize; j++) {
+          tilePromises.push(loadMapTile(startX + i, startY + j, tileZoom, layerType));
+        }
+      }
+
+      const tiles = await Promise.all(tilePromises);
+      console.log(`[GroundLayer] Loaded ${tiles.length} map tiles`);
+      
+      const tileSize = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = tileSize * gridSize;
+      canvas.height = tileSize * gridSize;
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        throw new Error('Failed to get canvas 2D context');
+      }
+      
+      // Clear canvas with a default color
+      ctx.fillStyle = '#f0f0f0';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Store tile positions for correct ordering
+      const tilePositions = [];
+      for (let i = 0; i < gridSize; i++) {
+        for (let j = 0; j < gridSize; j++) {
+          tilePositions.push({ gridX: i, gridY: j, tileX: startX + i, tileY: startY + j });
+        }
+      }
+
+      const imagePromises = tiles.map((tile, index) => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            const pos = tilePositions[index];
+            resolve({ img, gridX: pos.gridX, gridY: pos.gridY });
+          };
+          img.onerror = () => {
+            // Create placeholder for failed images
+            const placeholder = document.createElement('canvas');
+            placeholder.width = tileSize;
+            placeholder.height = tileSize;
+            const placeholderCtx = placeholder.getContext('2d');
+            if (placeholderCtx) {
+              placeholderCtx.fillStyle = '#cccccc';
+              placeholderCtx.fillRect(0, 0, tileSize, tileSize);
+            }
+            const pos = tilePositions[index];
+            resolve({ img: placeholder, gridX: pos.gridX, gridY: pos.gridY });
+          };
+          img.src = tile.texture.image.src;
+        });
+      });
+
+      const images = await Promise.all(imagePromises);
+      
+      // Sort images by grid position to ensure correct order
+      images.sort((a, b) => {
+        if (a.gridY !== b.gridY) return a.gridY - b.gridY;
+        return a.gridX - b.gridX;
+      });
+      
+      // Draw tiles onto canvas in correct positions
+      images.forEach(({ img, gridX, gridY }) => {
+        // Note: Y is inverted in tile coordinates (tiles increase Y downward, but we draw upward)
+        const drawY = (gridSize - 1 - gridY) * tileSize; // Flip Y axis
+        ctx.drawImage(img, gridX * tileSize, drawY, tileSize, tileSize);
+      });
+
+      console.log(`[GroundLayer] Combined ${images.length} tiles into ${canvas.width}x${canvas.height} texture`);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      texture.flipY = true; // Fix mirrored text - Three.js textures need Y flip for correct orientation
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+
+      // Calculate actual ground size from world space coordinates for precise alignment
+      // This ensures the ground plane matches exactly how buildings/roads are positioned
+      const topLeftWorld = latLonToMeters(northLat, westLon, centerLat, centerLon);
+      const bottomRightWorld = latLonToMeters(southLat, eastLon, centerLat, centerLon);
+      const actualGroundWidth = Math.abs(bottomRightWorld.x - topLeftWorld.x) || groundWidth;
+      const actualGroundHeight = Math.abs(topLeftWorld.z - bottomRightWorld.z) || groundHeight;
+      
+      // Use calculated ground size for precise alignment
+      // Calculate segments for better texture quality and terrain detail
+      const widthSegments = Math.max(10, Math.floor(actualGroundWidth / 100)); // At least 10 segments
+      const heightSegments = Math.max(10, Math.floor(actualGroundHeight / 100)); // At least 10 segments
+      
+      // Create geometry with proper segments (needed for terrain elevation)
+      const geometry = new THREE.PlaneGeometry(actualGroundWidth, actualGroundHeight, widthSegments, heightSegments);
+      
+      const material = new THREE.MeshStandardMaterial({ 
+        map: texture, 
+        roughness: 0.8,
+        metalness: 0.0
+      });
+      
+      // Ensure texture doesn't repeat (we want exact tile coverage)
+      // But allow for seamless tiling if needed in future
+      material.map.wrapS = THREE.ClampToEdgeWrapping;
+      material.map.wrapT = THREE.ClampToEdgeWrapping;
+      const ground = new THREE.Mesh(geometry, material);
+      ground.rotation.x = -Math.PI / 2; // Lay flat on XZ plane
+      
+      // CRITICAL ALIGNMENT: Position ground so centerLat/centerLon maps to (0,0,0) in world space
+      // This matches how buildings/roads are positioned using latLonToMeters
+      // 
+      // Approach: The ground plane represents the tile grid area. We need to:
+      // 1. Calculate where centerLat/centerLon is within the tile grid (in lat/lon)
+      // 2. Convert that to world space coordinates
+      // 3. Position the ground plane so centerLat/centerLon aligns with world origin (0,0,0)
+      
+      // CRITICAL: Calculate where centerLat/centerLon is in world space relative to the tile grid
+      // centerLat/centerLon is at (0,0,0) in world space (by definition of latLonToMeters)
+      // The tile grid has bounds from (southLat, westLon) to (northLat, eastLon)
+      // We need to position the ground plane so that centerLat/centerLon aligns correctly
+      
+      // Calculate where centerLat/centerLon is within the tile grid bounds (0-1 range)
+      const centerLonInGrid = (centerLon - westLon) / (eastLon - westLon); // 0 (west) to 1 (east)
+      const centerLatInGrid = (centerLat - southLat) / (northLat - southLat); // 0 (south) to 1 (north)
+      
+      // CRITICAL FIX: Position ground so centerLat/centerLon (world 0,0,0) aligns correctly
+      // Buildings/roads use latLonToMeters which puts centerLat/centerLon at (0,0,0)
+      // The ground plane's local origin is at its center
+      // We need to position the ground so that the point corresponding to centerLat/centerLon
+      // on the ground plane is at (0,0,0) in world space
+      
+      // Calculate where centerLat/centerLon is on the ground plane in local space
+      // The ground plane spans from (southLat, westLon) to (northLat, eastLon)
+      // In local space: X goes from -actualGroundWidth/2 (west) to +actualGroundWidth/2 (east)
+      //                Z goes from -actualGroundHeight/2 (south) to +actualGroundHeight/2 (north)
+      
+      // Calculate centerLat/centerLon position in local space
+      // centerLonInGrid: 0 (west) to 1 (east) -> local X: -actualGroundWidth/2 to +actualGroundWidth/2
+      // centerLatInGrid: 0 (south) to 1 (north) -> local Z: -actualGroundHeight/2 to +actualGroundHeight/2
+      const centerXLocal = (centerLonInGrid - 0.5) * actualGroundWidth;  // -width/2 to +width/2
+      const centerZLocal = (centerLatInGrid - 0.5) * actualGroundHeight; // -height/2 to +height/2
+      
+      // To position the ground so centerLat/centerLon (at centerXLocal, centerZLocal in local space)
+      // maps to (0,0,0) in world space:
+      // ground.position.x + centerXLocal = 0  =>  ground.position.x = -centerXLocal
+      // ground.position.z + centerZLocal = 0  =>  ground.position.z = -centerZLocal
+      ground.position.set(
+        -centerXLocal,
+        0,
+        -centerZLocal
+      );
+      
+      // Calculate texture offset to align centerLat/centerLon with texture center
+      // The texture covers the entire ground plane, so we need to offset it
+      // centerLonInGrid and centerLatInGrid are already calculated above
+      
+      // With flipY=true: texture V=0 is north (top), V=1 is south (bottom)
+      // To align centerLat/centerLon (at centerLatInGrid) with texture center (0.5, 0.5):
+      const textureOffsetU = 0.5 - centerLonInGrid;
+      const textureOffsetV = 0.5 - (1 - centerLatInGrid); // = centerLatInGrid - 0.5
+      
+      // Apply texture offset
+      material.map.offset.set(textureOffsetU, textureOffsetV);
+      
+      // Verify alignment: centerLat/centerLon should map to (0,0,0) in world space
+      const testCenterOnGround = new THREE.Vector3(
+        ground.position.x + centerXLocal,
+        0,
+        ground.position.z + centerZLocal
+      );
+      
+      console.log(`[GroundLayer] World center: (${centerLat.toFixed(5)}, ${centerLon.toFixed(5)})`);
+      console.log(`[GroundLayer] Tile grid bounds: (${southLat.toFixed(5)}, ${westLon.toFixed(5)}) to (${northLat.toFixed(5)}, ${eastLon.toFixed(5)})`);
+      console.log(`[GroundLayer] Center in grid: lon ${centerLonInGrid.toFixed(3)}, lat ${centerLatInGrid.toFixed(3)}`);
+      console.log(`[GroundLayer] Center local position: X ${centerXLocal.toFixed(2)}, Z ${centerZLocal.toFixed(2)}`);
+      console.log(`[GroundLayer] Ground positioned at (${ground.position.x.toFixed(2)}, ${ground.position.y.toFixed(2)}, ${ground.position.z.toFixed(2)})`);
+      console.log(`[GroundLayer] Center on ground should be at (0,0,0), actual: (${testCenterOnGround.x.toFixed(2)}, ${testCenterOnGround.y.toFixed(2)}, ${testCenterOnGround.z.toFixed(2)})`);
+      console.log(`[GroundLayer] Ground size: ${actualGroundWidth.toFixed(2)}m x ${actualGroundHeight.toFixed(2)}m`);
+      console.log(`[GroundLayer] Texture offset: U ${textureOffsetU.toFixed(3)}, V ${textureOffsetV.toFixed(3)}`);
+      
+      ground.receiveShadow = true;
+      ground.castShadow = false;
+      ground.name = 'GroundLayer';
+      ground.visible = true;
+      ground.frustumCulled = false; // Prevent disappearing when looking up
+
+      // Apply terrain elevation if enabled (async, after adding to scene)
+      // Note: Disabled by default due to API rate limits and CORS issues when opening file://
+      // Enable this when running from a web server (not file://)
+      const terrainEnabled = false; // Set to true if running from web server
+      if (terrainEnabled) {
+        console.log('[GroundLayer] Fetching terrain elevation data...');
+        const bbox = { south: southLat, north: northLat, west: westLon, east: eastLon };
+        fetchTerrainElevation(centerLat, centerLon, bbox, 64).then(elevationData => {
+          if (elevationData && elevationData.elevations) {
+            applyTerrainElevation(ground, elevationData, centerLat, centerLon);
+            console.log('[GroundLayer] Terrain elevation applied successfully');
+          } else {
+            console.warn('[GroundLayer] No elevation data available, using flat terrain');
+          }
+        }).catch(error => {
+          console.warn('[GroundLayer] Failed to apply terrain elevation:', error);
+        });
+      }
+
+      // CRITICAL: Add ground to scene
+      scene.add(ground);
+      console.log(`[GroundLayer] Ground layer added to scene at position (${ground.position.x.toFixed(2)}, ${ground.position.y.toFixed(2)}, ${ground.position.z.toFixed(2)}), size: ${actualGroundWidth.toFixed(2)}m x ${actualGroundHeight.toFixed(2)}m`);
+
+      return { ground, dispose: () => {
+        texture.dispose();
+        geometry.dispose();
+        material.dispose();
+        scene.remove(ground);
+      }};
+    }
+
+    // Fetch Esri terrain elevation data
+    // Esri terrain 3D tileset: https://www.arcgis.com/home/item.html?id=7029fb60158543ad845c7e1527af11e4
+    // Using Esri's REST API to get elevation data
+    // Helper function to fetch elevation from Open Elevation API (fallback)
+    async function fetchOpenElevation(batch, elevationGrid, batchStart, resolution) {
+      try {
+        // Open Elevation API: https://api.open-elevation.com/api/v1/lookup
+        const locations = batch.map(p => ({ latitude: p[1], longitude: p[0] }));
+        const response = await fetch('https://api.open-elevation.com/api/v1/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locations })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.results && Array.isArray(data.results)) {
+            data.results.forEach((result, idx) => {
+              const globalIdx = batchStart + idx;
+              const row = Math.floor(globalIdx / (resolution + 1));
+              const col = globalIdx % (resolution + 1);
+              if (row <= resolution && col <= resolution) {
+                elevationGrid[row][col] = result.elevation || 0;
+              }
+            });
+            console.log(`[Terrain] Batch ${batchStart / 100 + 1} fetched from Open Elevation API`);
+            return true;
+          }
+        }
+      } catch (error) {
+        console.warn(`[Terrain] Open Elevation API fallback failed:`, error);
+      }
+      return false;
+    }
+
+    async function fetchTerrainElevation(centerLat, centerLon, bbox, resolution = 128) {
+      try {
+        const { south, north, west, east } = bbox;
+        
+        // Use Esri's Elevation Profile Service (simpler than Lerc decoding)
+        // This service returns elevation values for a set of points
+        const points = [];
+        const latStep = (north - south) / resolution;
+        const lonStep = (east - west) / resolution;
+        
+        // Create grid of points
+        for (let i = 0; i <= resolution; i++) {
+          for (let j = 0; j <= resolution; j++) {
+            const lat = south + i * latStep;
+            const lon = west + j * lonStep;
+            points.push([lon, lat]); // [longitude, latitude]
+          }
+        }
+        
+        // Esri Elevation Profile Service
+        // Batch requests (max 100 points per request)
+        const batchSize = 100;
+        const elevationGrid = new Array(resolution + 1).fill(0).map(() => new Array(resolution + 1).fill(0));
+        let gridIndex = 0;
+        
+        for (let batchStart = 0; batchStart < points.length; batchStart += batchSize) {
+          const batch = points.slice(batchStart, batchStart + batchSize);
+          const pointsParam = batch.map(p => `${p[0]},${p[1]}`).join(';');
+          
+          // Try Esri's identify endpoint (more reliable than sampleElevations)
+          // Format: geometry as JSON with points array
+          const geometry = {
+            points: batch.map(p => [p[0], p[1]]), // [lon, lat]
+            spatialReference: { wkid: 4326 }
+          };
+          
+          const url = `https://elevation.arcgis.com/arcgis/rest/services/WorldElevation/Terrain3D/ImageServer/identify?f=json&geometry=${encodeURIComponent(JSON.stringify(geometry))}&geometryType=esriGeometryMultipoint&returnCatalogItems=false`;
+          
+          try {
+            const response = await fetch(url);
+            if (!response.ok) {
+              console.warn(`[Terrain] Batch ${batchStart / batchSize + 1} failed: ${response.status}`);
+              // Fallback: Use Open Elevation API (free, no auth required)
+              await fetchOpenElevation(batch, elevationGrid, batchStart, resolution);
+              continue;
+            }
+            
+            const data = await response.json();
+            
+            // Check for errors first
+            if (data.error) {
+              console.warn(`[Terrain] Batch ${batchStart / batchSize + 1} Esri API error:`, data.error.message || data.error);
+              // Fallback: Use Open Elevation API
+              await fetchOpenElevation(batch, elevationGrid, batchStart, resolution);
+              continue;
+            }
+            
+            // Try different response formats for Esri identify endpoint
+            if (data.results && Array.isArray(data.results)) {
+              // Esri identify returns results array
+              data.results.forEach((result, idx) => {
+                const globalIdx = batchStart + idx;
+                const row = Math.floor(globalIdx / (resolution + 1));
+                const col = globalIdx % (resolution + 1);
+                if (row <= resolution && col <= resolution) {
+                  elevationGrid[row][col] = result.value || result.attributes?.PixelValue || 0;
+                }
+              });
+            } else if (data.samples && Array.isArray(data.samples)) {
+              // Alternative: samples format
+              data.samples.forEach((sample, idx) => {
+                const globalIdx = batchStart + idx;
+                const row = Math.floor(globalIdx / (resolution + 1));
+                const col = globalIdx % (resolution + 1);
+                if (row <= resolution && col <= resolution) {
+                  elevationGrid[row][col] = sample.z || sample.value || 0;
+                }
+              });
+            } else if (data.value !== undefined) {
+              // Single value response
+              const globalIdx = batchStart;
+              const row = Math.floor(globalIdx / (resolution + 1));
+              const col = globalIdx % (resolution + 1);
+              if (row <= resolution && col <= resolution) {
+                elevationGrid[row][col] = data.value || 0;
+              }
+            } else {
+              console.warn(`[Terrain] Unexpected Esri response format in batch ${batchStart / batchSize + 1}, trying fallback...`);
+              // Try Open Elevation API as fallback
+              await fetchOpenElevation(batch, elevationGrid, batchStart, resolution);
+            }
+          } catch (error) {
+            console.warn(`[Terrain] Batch ${batchStart / batchSize + 1} error:`, error);
+          }
+          
+          // Small delay between batches to avoid rate limiting
+          if (batchStart + batchSize < points.length) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+        
+        // Check if we got any elevation data
+        const flatGrid = elevationGrid.flat();
+        const minElev = Math.min(...flatGrid);
+        const maxElev = Math.max(...flatGrid);
+        
+        console.log(`[Terrain] Fetched elevation data: ${resolution + 1}x${resolution + 1} grid`);
+        console.log(`[Terrain] Elevation range: ${minElev.toFixed(2)}m to ${maxElev.toFixed(2)}m`);
+        
+        // If all elevations are 0, the API might not be working
+        if (minElev === 0 && maxElev === 0) {
+          console.warn('[Terrain] All elevations are 0 - API might not be working, using fallback');
+          // Create a simple test pattern to verify terrain is working
+          for (let i = 0; i <= resolution; i++) {
+            for (let j = 0; j <= resolution; j++) {
+              // Simple sine wave pattern for testing (remove this once API works)
+              elevationGrid[i][j] = Math.sin(i * 0.1) * Math.cos(j * 0.1) * 10; // 10m variation
+            }
+          }
+          console.log('[Terrain] Using test elevation pattern - replace with real API data');
+        }
+        
+        return {
+          resolution,
+          elevations: elevationGrid,
+          bbox: { south, north, west, east }
+        };
+      } catch (error) {
+        console.warn('[Terrain] Failed to fetch elevation data:', error);
+        // Return flat elevation as fallback
+        return {
+          resolution: 64,
+          elevations: new Array(65).fill(0).map(() => new Array(65).fill(0)),
+          bbox: bbox
+        };
+      }
+    }
+
+    // Apply terrain elevation to ground plane
+    function applyTerrainElevation(ground, elevationData, centerLat, centerLon) {
+      if (!elevationData || !ground.geometry || !elevationData.elevations) {
+        console.warn('[Terrain] No elevation data to apply');
+        return;
+      }
+      
+      const geometry = ground.geometry;
+      const positions = geometry.attributes.position;
+      const resolution = elevationData.resolution;
+      const { south, north, west, east } = elevationData.bbox;
+      
+      // Get ground plane dimensions from geometry
+      const actualGroundWidth = geometry.parameters.width;
+      const actualGroundHeight = geometry.parameters.height;
+      const widthSegments = geometry.parameters.widthSegments || 1;
+      const heightSegments = geometry.parameters.heightSegments || 1;
+      
+      // Calculate meters per degree for interpolation
+      const metersPerDegreeLat = 111320;
+      const metersPerDegreeLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+      
+      // Apply elevation to vertices
+      let minElevation = Infinity;
+      let maxElevation = -Infinity;
+      
+      for (let i = 0; i < positions.count; i++) {
+        const x = positions.getX(i);
+        const z = positions.getZ(i);
+        
+        // Convert vertex position (in meters from center) to lat/lon
+        // Ground plane vertices are in local space, but ground is positioned in world space
+        // Need to account for ground.position offset
+        // Local space: X goes from -width/2 (west) to +width/2 (east)
+        // Local space: Z goes from -height/2 (south) to +height/2 (north)
+        // World space: Add ground.position offset
+        const worldX = x + ground.position.x;
+        const worldZ = z + ground.position.z;
+        
+        // Convert world position to lat/lon (relative to centerLat/centerLon at 0,0,0)
+        // Since centerLat/centerLon is at (0,0,0) in world space, we need to reverse latLonToMeters
+        const lon = centerLon + (worldX / metersPerDegreeLon);
+        const lat = centerLat + (worldZ / metersPerDegreeLat);
+        
+        // Find grid indices for bilinear interpolation
+        const latRatio = (lat - south) / (north - south);
+        const lonRatio = (lon - west) / (east - west);
+        
+        // Clamp to valid range
+        const latIdx = Math.max(0, Math.min(resolution, Math.floor(latRatio * resolution)));
+        const lonIdx = Math.max(0, Math.min(resolution, Math.floor(lonRatio * resolution)));
+        
+        // Get elevation from grid (simple nearest neighbor for now)
+        // Could use bilinear interpolation for smoother results
+        let elevation = 0;
+        if (elevationData.elevations && elevationData.elevations[latIdx] && elevationData.elevations[latIdx][lonIdx] !== undefined) {
+          elevation = elevationData.elevations[latIdx][lonIdx];
+        }
+        
+        // Apply elevation offset (convert to meters, relative to center)
+        positions.setY(i, elevation);
+        
+        minElevation = Math.min(minElevation, elevation);
+        maxElevation = Math.max(maxElevation, elevation);
+      }
+      
+      positions.needsUpdate = true;
+      geometry.computeVertexNormals(); // Recalculate normals for proper lighting
+      geometry.computeBoundingBox(); // Update bounding box
+      
+      console.log(`[Terrain] Applied elevation to ${positions.count} vertices`);
+      console.log(`[Terrain] Elevation range: ${minElevation.toFixed(1)}m to ${maxElevation.toFixed(1)}m`);
+    }
+
+    // Request throttling to prevent rate limiting
+    let lastRequestTime = 0;
+    const minRequestInterval = 2000; // Minimum 2 seconds between requests to avoid rate limits
+
+    // Fetch with rate limit handling and retries
+    async function fetchWithRetry(url, maxRetries = 2, retryDelay = 5000) {
+      // Throttle requests
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastRequestTime;
+      if (timeSinceLastRequest < minRequestInterval) {
+        await new Promise(resolve => setTimeout(resolve, minRequestInterval - timeSinceLastRequest));
+      }
+      lastRequestTime = Date.now();
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const response = await fetch(url);
+          
+          if (response.status === 429) {
+            // Rate limited - wait longer and retry
+            const retryAfter = response.headers.get('Retry-After');
+            // Use longer wait times for 429 errors (minimum 10 seconds)
+            const waitTime = retryAfter ? Math.max(parseInt(retryAfter) * 1000, 10000) : Math.max(retryDelay * Math.pow(2, attempt), 10000);
+            console.warn(`[API] Rate limited (429), waiting ${Math.round(waitTime/1000)}s before retry ${attempt + 1}/${maxRetries}`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue;
+          }
+          
+          if (response.status === 504) {
+            // Gateway timeout - wait and retry
+            const waitTime = retryDelay * Math.pow(2, attempt);
+            console.warn(`[API] Gateway timeout (504), waiting ${Math.round(waitTime/1000)}s before retry ${attempt + 1}/${maxRetries}`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue;
+          }
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          return await response.json();
+        } catch (error) {
+          if (attempt === maxRetries - 1) {
+            console.error(`[API] Failed after ${maxRetries} attempts:`, error);
+            throw error;
+          }
+          const waitTime = retryDelay * Math.pow(2, attempt);
+          console.warn(`[API] Request failed, retrying in ${waitTime}ms... (${attempt + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+
+    // Calculate bounding box from center and zoom
+    function getBoundingBox(centerLat, centerLon, zoom) {
+      const degreesPerTile = 360 / Math.pow(2, zoom);
+      const metersPerDegreeLat = 111320;
+      const metersPerDegreeLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+      
+      // Calculate approximate area covered (3x3 tile grid)
+      const latSpan = degreesPerTile * 3;
+      const lonSpan = degreesPerTile * 3;
+      
+      return {
+        south: centerLat - latSpan / 2,
+        north: centerLat + latSpan / 2,
+        west: centerLon - lonSpan / 2,
+        east: centerLon + lonSpan / 2
+      };
+    }
+
+    // Fetch building data from OSM using Overpass API
+    async function fetchBuildings(centerLat, centerLon, zoom) {
+      try {
+        console.log('[Buildings] Fetching building data from Overpass API...');
+        const bbox = getBoundingBox(centerLat, centerLon, zoom);
+        
+        // Enhanced Overpass API query for buildings with all Simple 3D Buildings attributes
+        // Includes building:parts, building:roof:*, building:material, etc.
+        // This matches streets.gl's approach to get detailed building data
+        const query = `[out:json][timeout:25];
+(
+  way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  relation["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["building:part"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+);
+out body;
+>;
+out skel qt;`;
+
+        // Use Overpass Turbo API (public instance)
+        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+        
+        try {
+          const data = await fetchWithRetry(url);
+          const features = convertOverpassToGeoJSON(data);
+          console.log(`[Buildings] Loaded ${features.length} buildings from Overpass API`);
+          return features;
+        } catch (error) {
+          console.warn('[Buildings] Primary Overpass API failed, trying alternative...');
+          // Try alternative Overpass instance with shorter timeout
+          const altUrl = `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`;
+          try {
+            // Use shorter timeout for alternative API
+            const altPromise = fetchWithRetry(altUrl);
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Alternative API timeout')), 15000) // 15 second timeout
+            );
+            
+            const data = await Promise.race([altPromise, timeoutPromise]);
+            const features = convertOverpassToGeoJSON(data);
+            console.log(`[Buildings] Loaded ${features.length} buildings from alternative API`);
+            return features;
+          } catch (altError) {
+            console.warn('[Buildings] All API attempts failed - continuing without buildings');
+            console.warn('[Buildings] This is normal when APIs are rate-limited. Map will still display.');
+            return [];
+          }
+        }
+      } catch (error) {
+        console.error('[Buildings] Error fetching buildings:', error);
+        console.warn('[Buildings] Continuing without buildings...');
+        return [];
+      }
+    }
+
+    // Convert Overpass API response to GeoJSON-like format
+    function convertOverpassToGeoJSON(overpassData) {
+      const features = [];
+      const nodes = {};
+      const ways = {};
+      
+      // Index nodes
+      if (overpassData.elements) {
+        overpassData.elements.forEach(element => {
+          if (element.type === 'node') {
+            nodes[element.id] = [element.lon, element.lat];
+          } else if (element.type === 'way' && element.tags) {
+            // Include both buildings and building:parts
+            if (element.tags.building || element.tags['building:part']) {
+              ways[element.id] = element;
+            }
+          } else if (element.type === 'relation' && element.tags && element.tags.building) {
+            // Handle building relations (multi-part buildings)
+            // For now, we'll extract the outer ways from relations
+            // Full relation support would require more complex processing
+            if (element.members) {
+              element.members.forEach(member => {
+                if (member.type === 'way' && member.role === 'outer') {
+                  // Store relation info for later processing
+                  if (!ways[member.ref]) {
+                    ways[member.ref] = { ...element.tags, relationId: element.id };
+                  }
+                }
+              });
+            }
+          }
+        });
+      }
+
+      // Convert ways to features
+      Object.values(ways).forEach(way => {
+        if (!way.nodes || way.nodes.length < 3) return;
+        
+        const coordinates = way.nodes
+          .map(nodeId => nodes[nodeId])
+          .filter(coord => coord !== undefined);
+        
+        if (coordinates.length < 3) return;
+        
+        // Close the polygon if not already closed
+        if (coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
+            coordinates[0][1] !== coordinates[coordinates.length - 1][1]) {
+          coordinates.push(coordinates[0]);
+        }
+        
+        features.push({
+          type: 'Feature',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [coordinates]
+          },
+          properties: way.tags || {}
+        });
+      });
+
+      return features;
+    }
+
+    // Get building color and material properties based on building type
+    // Matches streets.gl visual style - uses darker, more neutral grey tones
+    // Streets.gl buildings appear as dark grey blocks, not light beige
+    function getBuildingStyle(buildingType) {
+      const styles = {
+        'residential': { color: 0x888888, roughness: 0.85, metalness: 0.0 },
+        'commercial': { color: 0x777777, roughness: 0.75, metalness: 0.05 },
+        'industrial': { color: 0x666666, roughness: 0.9, metalness: 0.1 },
+        'retail': { color: 0x7a7a7a, roughness: 0.7, metalness: 0.0 },
+        'office': { color: 0x808080, roughness: 0.65, metalness: 0.05 },
+        'school': { color: 0x8a8a8a, roughness: 0.8, metalness: 0.0 },
+        'hospital': { color: 0x858585, roughness: 0.7, metalness: 0.0 },
+        'church': { color: 0x7d7d7d, roughness: 0.75, metalness: 0.0 },
+        'warehouse': { color: 0x6a6a6a, roughness: 0.95, metalness: 0.15 },
+        'garage': { color: 0x5a5a5a, roughness: 0.9, metalness: 0.1 },
+        'parking': { color: 0x555555, roughness: 0.95, metalness: 0.2 },
+        'hotel': { color: 0x7f7f7f, roughness: 0.75, metalness: 0.0 },
+        'apartments': { color: 0x828282, roughness: 0.8, metalness: 0.0 },
+        'house': { color: 0x868686, roughness: 0.85, metalness: 0.0 },
+        'default': { color: 0x777777, roughness: 0.8, metalness: 0.0 }
+      };
+      return styles[buildingType] || styles.default;
+    }
+
+    // Add slight color variation to buildings for more realistic appearance
+    // This mimics the variation you'd see in real buildings
+    // Reduced variation for darker buildings to match streets.gl appearance
+    function addBuildingColorVariation(baseColor, seed = 0) {
+      const color = new THREE.Color(baseColor);
+      // Smaller variation (±2% in each channel) for darker buildings
+      const variation = (Math.sin(seed * 12.9898) * 0.02 + 1.0);
+      color.r = Math.max(0, Math.min(1, color.r * variation));
+      color.g = Math.max(0, Math.min(1, color.g * variation));
+      color.b = Math.max(0, Math.min(1, color.b * variation));
+      return color;
+    }
+
+    // Create enhanced procedural building facade texture
+    // Matches streets.gl appearance with realistic building textures
+    function createBuildingFacadeTexture(baseColor, seed, height) {
+      const size = 1024; // Increased to 1024 for better quality matching demo
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) return null;
+      
+      // Base color - darker to match streets.gl demo
+      const color = new THREE.Color(baseColor);
+      // Slightly darken the base color for more realistic appearance
+      color.multiplyScalar(0.9);
+      const baseR = Math.floor(color.r * 255);
+      const baseG = Math.floor(color.g * 255);
+      const baseB = Math.floor(color.b * 255);
+      
+      // Fill with base color
+      ctx.fillStyle = `rgb(${baseR}, ${baseG}, ${baseB})`;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Add subtle gradient for depth (darker at bottom, lighter at top)
+      const verticalGradient = ctx.createLinearGradient(0, 0, 0, size);
+      verticalGradient.addColorStop(0, 'rgba(0, 0, 0, 0.1)'); // Top - slightly lighter
+      verticalGradient.addColorStop(1, 'rgba(0, 0, 0, 0.2)'); // Bottom - darker
+      ctx.fillStyle = verticalGradient;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Add subtle vertical/horizontal lines for building panels (more visible)
+      ctx.strokeStyle = `rgba(0, 0, 0, 0.12)`;
+      ctx.lineWidth = 1.5;
+      const panelSize = 64; // Larger panels for better visibility
+      for (let i = 0; i < size; i += panelSize) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, size);
+        ctx.stroke();
+      }
+      for (let i = 0; i < size; i += panelSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(size, i);
+        ctx.stroke();
+      }
+      
+      // Add subtle horizontal lines for floor separation (more visible)
+      ctx.strokeStyle = `rgba(0, 0, 0, 0.15)`;
+      ctx.lineWidth = 2;
+      const floorHeight = Math.max(32, Math.floor(size / Math.max(2, Math.floor(height / 3))));
+      for (let i = floorHeight; i < size; i += floorHeight) {
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(size, i);
+        ctx.stroke();
+      }
+      
+      // Add window patterns for tall buildings
+      if (height > 8) {
+        const windowRows = Math.max(2, Math.floor(height / 3.5)); // Floors
+        const windowCols = Math.max(2, Math.floor(size / 80)); // Windows per floor
+        const windowSpacingX = size / (windowCols + 1);
+        const windowSpacingY = size / (windowRows + 1);
+        const windowWidth = windowSpacingX * 0.6;
+        const windowHeight = windowSpacingY * 0.7;
+        
+        // Window frames (darker, more visible)
+        ctx.fillStyle = `rgba(0, 0, 0, 0.25)`;
+        for (let row = 0; row < windowRows; row++) {
+          for (let col = 0; col < windowCols; col++) {
+            const x = (col + 1) * windowSpacingX - windowWidth / 2;
+            const y = (row + 1) * windowSpacingY - windowHeight / 2;
+            ctx.fillRect(x, y, windowWidth, windowHeight);
+          }
+        }
+        
+        // Window glass (more realistic, better variation)
+        for (let row = 0; row < windowRows; row++) {
+          for (let col = 0; col < windowCols; col++) {
+            const x = (col + 1) * windowSpacingX - windowWidth / 2 + 3;
+            const y = (row + 1) * windowSpacingY - windowHeight / 2 + 3;
+            const w = windowWidth - 6;
+            const h = windowHeight - 6;
+            
+            // More realistic window lighting
+            const isLit = (row + col + seed) % 4 === 0;
+            const isDim = (row + col + seed) % 7 === 0;
+            
+            if (isLit) {
+              // Lit windows - warm yellow/orange glow
+              ctx.fillStyle = `rgba(255, 240, 180, 0.4)`;
+            } else if (isDim) {
+              // Dim windows - dark blue
+              ctx.fillStyle = `rgba(30, 50, 80, 0.3)`;
+            } else {
+              // Normal windows - blue with reflection
+              ctx.fillStyle = `rgba(120, 160, 220, 0.25)`;
+            }
+            ctx.fillRect(x, y, w, h);
+            
+            // Add window reflection highlight
+            if (!isDim) {
+              const highlightGradient = ctx.createLinearGradient(x, y, x, y + h);
+              highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+              highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+              ctx.fillStyle = highlightGradient;
+              ctx.fillRect(x, y, w, h * 0.3);
+            }
+          }
+        }
+      }
+      
+      // Add subtle noise and texture variation
+      const imageData = ctx.getImageData(0, 0, size, size);
+      const data = imageData.data;
+      const noiseScale = 8; // Reduced noise for cleaner look
+      
+      for (let i = 0; i < data.length; i += 4) {
+        // Perlin-like noise using seed
+        const x = (i / 4) % size;
+        const y = Math.floor((i / 4) / size);
+        const noise = (Math.sin(x * 0.1 + seed) * Math.cos(y * 0.1 + seed) * noiseScale);
+        
+        data[i] = Math.max(0, Math.min(255, data[i] + noise));     // R
+        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + noise)); // G
+        data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + noise)); // B
+        // Alpha stays the same
+      }
+      ctx.putImageData(imageData, 0, 0);
+      
+      // Add subtle shadows/highlights for depth
+      const gradient = ctx.createLinearGradient(0, 0, size, 0);
+      gradient.addColorStop(0, 'rgba(0, 0, 0, 0.03)');
+      gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0.03)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(1, Math.max(1, Math.ceil(height / 8))); // Scale with building height
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      texture.anisotropy = 8; // Maximum anisotropy for best quality
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      
+      console.log(`[BuildingTexture] Created facade texture: ${size}x${size}, color: rgb(${baseR}, ${baseG}, ${baseB}), height: ${height}m`);
+      
+      return texture;
+    }
+
+    // Get roof type from OSM tags (Simple 3D Buildings schema)
+    function getRoofType(properties) {
+      // Check building:roof:shape tag (Simple 3D Buildings schema)
+      const roofShape = properties['building:roof:shape'] || properties['roof:shape'];
+      if (roofShape) {
+        const shape = roofShape.toLowerCase();
+        // Map OSM roof types to our supported types
+        if (shape === 'flat' || shape === 'none') return 'flat';
+        if (shape === 'gabled' || shape === 'gable') return 'gabled';
+        if (shape === 'hipped' || shape === 'hip') return 'hipped';
+        if (shape === 'pyramidal' || shape === 'pyramid') return 'pyramidal';
+        if (shape === 'skillion' || shape === 'shed' || shape === 'monopitch') return 'skillion';
+        if (shape === 'gambrel' || shape === 'barn') return 'gambrel';
+        if (shape === 'mansard') return 'mansard';
+        if (shape === 'round' || shape === 'dome' || shape === 'onion') return 'hipped'; // Use hipped as approximation
+      }
+      // Default to flat roof for most buildings
+      return 'flat';
+    }
+
+    // Get roof height from OSM tags
+    function getRoofHeight(properties, buildingHeight) {
+      // Check building:roof:height tag
+      if (properties['building:roof:height']) {
+        return parseFloat(properties['building:roof:height']) || Math.max(1, Math.min(5, buildingHeight * 0.15));
+      }
+      // Default: 10-20% of building height, min 1m, max 5m
+      return Math.max(1, Math.min(5, buildingHeight * 0.15));
+    }
+
+    // Extract points from THREE.Shape
+    function getShapePoints(shape) {
+      const points = [];
+      const curves = shape.curves;
+      let currentPoint = shape.currentPoint;
+      
+      points.push({ x: currentPoint.x, y: currentPoint.y });
+      
+      curves.forEach(curve => {
+        if (curve.isLineCurve) {
+          currentPoint = curve.v2;
+          points.push({ x: currentPoint.x, y: currentPoint.y });
+        } else if (curve.isQuadraticBezierCurve) {
+          // Sample quadratic bezier
+          for (let t = 0.25; t <= 1; t += 0.25) {
+            const point = curve.getPoint(t);
+            points.push({ x: point.x, y: point.y });
+          }
+        } else if (curve.isCubicBezierCurve) {
+          // Sample cubic bezier
+          for (let t = 0.25; t <= 1; t += 0.25) {
+            const point = curve.getPoint(t);
+            points.push({ x: point.x, y: point.y });
+          }
+        }
+      });
+      
+      return points;
+    }
+
+    // Create simple gabled roof geometry
+    function createGabledRoof(shape, height, roofHeight = 2) {
+      const points = getShapePoints(shape);
+      if (points.length < 3) return null;
+
+      // Find the longest edge to use as the ridge
+      let maxDist = 0;
+      let ridgeStart = 0;
+      let ridgeEnd = 1;
+      
+      for (let i = 0; i < points.length; i++) {
+        const next = (i + 1) % points.length;
+        const dist = Math.sqrt(
+          Math.pow(points[next].x - points[i].x, 2) + 
+          Math.pow(points[next].y - points[i].y, 2)
+        );
+        if (dist > maxDist) {
+          maxDist = dist;
+          ridgeStart = i;
+          ridgeEnd = next;
+        }
+      }
+
+      // Create roof vertices
+      const vertices = [];
+      const indices = [];
+      const baseY = 0; // Relative to building top
+      const topY = roofHeight;
+
+      // Add base vertices (at building top)
+      points.forEach((p) => {
+        vertices.push(p.x, baseY, p.y);
+      });
+
+      // Add top ridge vertices
+      const start = points[ridgeStart];
+      const end = points[ridgeEnd];
+      const topStartIdx = points.length;
+      const topEndIdx = points.length + 1;
+      vertices.push(start.x, topY, start.y);
+      vertices.push(end.x, topY, end.y);
+
+      // Create triangular faces from base to ridge
+      const baseCount = points.length;
+      for (let i = 0; i < baseCount; i++) {
+        const next = (i + 1) % baseCount;
+        if (i === ridgeStart) {
+          // Face at ridge start
+          indices.push(i, topStartIdx, next);
+        } else if (next === ridgeStart) {
+          // Face before ridge start
+          indices.push(i, topStartIdx, next);
+        } else if (i === ridgeEnd) {
+          // Face at ridge end
+          indices.push(i, next, topEndIdx);
+        } else if (next === ridgeEnd) {
+          // Face before ridge end
+          indices.push(i, next, topEndIdx);
+        } else {
+          // Determine which side of ridge this point is on
+          const onStartSide = Math.abs(i - ridgeStart) < Math.abs(i - ridgeEnd);
+          const topVertex = onStartSide ? topStartIdx : topEndIdx;
+          indices.push(i, topVertex, next);
+        }
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    // Create simple hipped roof geometry
+    function createHippedRoof(shape, height, roofHeight = 2) {
+      const points = getShapePoints(shape);
+      if (points.length < 3) return null;
+
+      const vertices = [];
+      const indices = [];
+      const baseY = 0; // Relative to building top
+      const topY = roofHeight;
+
+      // Calculate center point
+      let centerX = 0, centerY = 0;
+      points.forEach(p => {
+        centerX += p.x;
+        centerY += p.y;
+      });
+      centerX /= points.length;
+      centerY /= points.length;
+
+      // Add base vertices (at building top)
+      points.forEach(p => {
+        vertices.push(p.x, baseY, p.y);
+      });
+
+      // Add top center vertex
+      const topCenter = points.length;
+      vertices.push(centerX, topY, centerY);
+
+      // Create triangular faces from base to center
+      const baseCount = points.length;
+      for (let i = 0; i < baseCount; i++) {
+        const next = (i + 1) % baseCount;
+        indices.push(i, topCenter, next);
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    // Create simple skillion (shed) roof geometry - single slope
+    function createSkillionRoof(shape, height, roofHeight = 2) {
+      const points = getShapePoints(shape);
+      if (points.length < 3) return null;
+
+      // Find the longest edge to use as the low side
+      let maxDist = 0;
+      let lowStart = 0;
+      let lowEnd = 1;
+      
+      for (let i = 0; i < points.length; i++) {
+        const next = (i + 1) % points.length;
+        const dist = Math.sqrt(
+          Math.pow(points[next].x - points[i].x, 2) + 
+          Math.pow(points[next].y - points[i].y, 2)
+        );
+        if (dist > maxDist) {
+          maxDist = dist;
+          lowStart = i;
+          lowEnd = next;
+        }
+      }
+
+      const vertices = [];
+      const indices = [];
+      const baseY = 0;
+      const topY = roofHeight;
+
+      // Add base vertices (low side)
+      points.forEach((p) => {
+        vertices.push(p.x, baseY, p.y);
+      });
+
+      // Add top vertices (high side) - offset perpendicular to the low edge
+      const start = points[lowStart];
+      const end = points[lowEnd];
+      const edgeDir = {
+        x: end.x - start.x,
+        y: end.y - start.y
+      };
+      const edgeLen = Math.sqrt(edgeDir.x * edgeDir.x + edgeDir.y * edgeDir.y);
+      const perpDir = {
+        x: -edgeDir.y / edgeLen,
+        y: edgeDir.x / edgeLen
+      };
+
+      // Calculate high side offset
+      const offsetX = perpDir.x * roofHeight * 0.5;
+      const offsetY = perpDir.y * roofHeight * 0.5;
+
+      points.forEach((p) => {
+        // Offset perpendicular to find high side
+        const distToEdge = ((p.x - start.x) * edgeDir.x + (p.y - start.y) * edgeDir.y) / edgeLen;
+        const perpDist = Math.sqrt(
+          Math.pow(p.x - (start.x + edgeDir.x * distToEdge / edgeLen), 2) +
+          Math.pow(p.y - (start.y + edgeDir.y * distToEdge / edgeLen), 2)
+        );
+        const highX = p.x + offsetX * (perpDist / maxDist);
+        const highY = p.y + offsetY * (perpDist / maxDist);
+        vertices.push(highX, topY, highY);
+      });
+
+      // Create faces
+      const baseCount = points.length;
+      for (let i = 0; i < baseCount; i++) {
+        const next = (i + 1) % baseCount;
+        const topI = baseCount + i;
+        const topNext = baseCount + next;
+        // Two triangles per quad
+        indices.push(i, topI, next);
+        indices.push(next, topI, topNext);
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    // Create gambrel roof geometry (barn-style, two slopes per side)
+    function createGambrelRoof(shape, height, roofHeight = 2) {
+      const points = getShapePoints(shape);
+      if (points.length < 3) return null;
+
+      // Similar to gabled but with two slopes
+      let maxDist = 0;
+      let ridgeStart = 0;
+      let ridgeEnd = 1;
+      
+      for (let i = 0; i < points.length; i++) {
+        const next = (i + 1) % points.length;
+        const dist = Math.sqrt(
+          Math.pow(points[next].x - points[i].x, 2) + 
+          Math.pow(points[next].y - points[i].y, 2)
+        );
+        if (dist > maxDist) {
+          maxDist = dist;
+          ridgeStart = i;
+          ridgeEnd = next;
+        }
+      }
+
+      const vertices = [];
+      const indices = [];
+      const baseY = 0;
+      const midY = roofHeight * 0.4; // Lower slope
+      const topY = roofHeight; // Ridge
+
+      // Add base vertices
+      points.forEach((p) => {
+        vertices.push(p.x, baseY, p.y);
+      });
+
+      // Add mid-level vertices (gambrel break)
+      const midStartIdx = points.length;
+      const midEndIdx = points.length + 1;
+      const start = points[ridgeStart];
+      const end = points[ridgeEnd];
+      vertices.push(start.x, midY, start.y);
+      vertices.push(end.x, midY, end.y);
+
+      // Add top ridge vertices
+      const topStartIdx = points.length + 2;
+      const topEndIdx = points.length + 3;
+      vertices.push(start.x, topY, start.y);
+      vertices.push(end.x, topY, end.y);
+
+      // Create faces with two slopes
+      const baseCount = points.length;
+      for (let i = 0; i < baseCount; i++) {
+        const next = (i + 1) % baseCount;
+        if (i === ridgeStart || next === ridgeStart) {
+          indices.push(i, midStartIdx, next);
+          indices.push(i, topStartIdx, midStartIdx);
+        } else if (i === ridgeEnd || next === ridgeEnd) {
+          indices.push(i, next, midEndIdx);
+          indices.push(i, midEndIdx, topEndIdx);
+        } else {
+          const onStartSide = Math.abs(i - ridgeStart) < Math.abs(i - ridgeEnd);
+          const midVertex = onStartSide ? midStartIdx : midEndIdx;
+          const topVertex = onStartSide ? topStartIdx : topEndIdx;
+          indices.push(i, midVertex, next);
+          indices.push(i, topVertex, midVertex);
+        }
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    // Create mansard roof geometry (two slopes, lower is steeper)
+    function createMansardRoof(shape, height, roofHeight = 2) {
+      // Similar to gambrel but inverted (steeper lower slope)
+      const points = getShapePoints(shape);
+      if (points.length < 3) return null;
+
+      let maxDist = 0;
+      let ridgeStart = 0;
+      let ridgeEnd = 1;
+      
+      for (let i = 0; i < points.length; i++) {
+        const next = (i + 1) % points.length;
+        const dist = Math.sqrt(
+          Math.pow(points[next].x - points[i].x, 2) + 
+          Math.pow(points[next].y - points[i].y, 2)
+        );
+        if (dist > maxDist) {
+          maxDist = dist;
+          ridgeStart = i;
+          ridgeEnd = next;
+        }
+      }
+
+      const vertices = [];
+      const indices = [];
+      const baseY = 0;
+      const midY = roofHeight * 0.6; // Higher break point (steeper lower slope)
+      const topY = roofHeight;
+
+      // Add base vertices
+      points.forEach((p) => {
+        vertices.push(p.x, baseY, p.y);
+      });
+
+      // Add mid-level vertices (mansard break - higher than gambrel)
+      const midStartIdx = points.length;
+      const midEndIdx = points.length + 1;
+      const start = points[ridgeStart];
+      const end = points[ridgeEnd];
+      vertices.push(start.x, midY, start.y);
+      vertices.push(end.x, midY, end.y);
+
+      // Add top ridge vertices
+      const topStartIdx = points.length + 2;
+      const topEndIdx = points.length + 3;
+      vertices.push(start.x, topY, start.y);
+      vertices.push(end.x, topY, end.y);
+
+      // Create faces with steeper lower slope
+      const baseCount = points.length;
+      for (let i = 0; i < baseCount; i++) {
+        const next = (i + 1) % baseCount;
+        if (i === ridgeStart || next === ridgeStart) {
+          indices.push(i, midStartIdx, next);
+          indices.push(i, topStartIdx, midStartIdx);
+        } else if (i === ridgeEnd || next === ridgeEnd) {
+          indices.push(i, next, midEndIdx);
+          indices.push(i, midEndIdx, topEndIdx);
+        } else {
+          const onStartSide = Math.abs(i - ridgeStart) < Math.abs(i - ridgeEnd);
+          const midVertex = onStartSide ? midStartIdx : midEndIdx;
+          const topVertex = onStartSide ? topStartIdx : topEndIdx;
+          indices.push(i, midVertex, next);
+          indices.push(i, topVertex, midVertex);
+        }
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    }
+
+    // Create building mesh with improved materials and roof support
+    function createBuilding(coordinates, height, centerLat, centerLon, properties = {}, minHeight = 0) {
+      if (!coordinates || coordinates.length < 3) return null;
+
+      const shape = new THREE.Shape();
+      const first = latLonToMeters(coordinates[0][1], coordinates[0][0], centerLat, centerLon);
+      shape.moveTo(first.x, first.z);
+
+      for (let i = 1; i < coordinates.length; i++) {
+        const point = latLonToMeters(coordinates[i][1], coordinates[i][0], centerLat, centerLon);
+        shape.lineTo(point.x, point.z);
+      }
+
+      // Get building type and style
+      const buildingType = properties.building || 'default';
+      const style = getBuildingStyle(buildingType);
+      const roofType = getRoofType(properties);
+      
+      // Get roof height from OSM tags or calculate default
+      const roofHeight = getRoofHeight(properties, height);
+
+      // Create building group
+      const buildingGroup = new THREE.Group();
+
+      // Create walls (extruded shape)
+      const wallGeometry = new THREE.ExtrudeGeometry(shape, { 
+        depth: height, 
+        bevelEnabled: false 
+      });
+      wallGeometry.rotateX(-Math.PI / 2);
+      // Position building so base is at y=minHeight (ground level or elevated), top at minHeight+height
+      wallGeometry.translate(0, minHeight + height / 2, 0);
+
+      // Improved PBR material properties matching streets.gl style
+      // Add slight color variation based on building position for realism
+      const buildingSeed = coordinates[0][0] + coordinates[0][1]; // Use coordinates as seed
+      const wallColor = addBuildingColorVariation(style.color, buildingSeed);
+      
+      // Create procedural texture for building facade (simple pattern)
+      // This adds visual detail without requiring texture arrays
+      const facadeTexture = createBuildingFacadeTexture(wallColor, buildingSeed, height);
+      
+      const wallMaterial = new THREE.MeshStandardMaterial({
+        color: wallColor,
+        map: facadeTexture, // Enhanced procedural texture
+        roughness: style.roughness, // Varied by building type for realism
+        metalness: style.metalness, // Slight metalness for some building types
+        flatShading: false,
+        side: THREE.FrontSide,
+        // Enhanced material properties for better visual quality
+        envMapIntensity: 0.3, // Subtle environment reflection
+        aoMapIntensity: 1.0
+      });
+      
+      // Ensure texture is actually applied
+      if (facadeTexture) {
+        wallMaterial.needsUpdate = true;
+        console.log(`[Building] Applied facade texture to building, height: ${height}m, type: ${buildingType}`);
+      }
+
+      const wallMesh = new THREE.Mesh(wallGeometry, wallMaterial);
+      wallMesh.castShadow = true;
+      wallMesh.receiveShadow = true;
+      wallMesh.frustumCulled = false; // Prevent disappearing when looking up
+      buildingGroup.add(wallMesh);
+
+      // Create roof based on type
+      if (roofType !== 'flat' && height > 3) {
+        let roofGeometry = null;
+        
+        // Use the same shape for roof (already in XZ plane)
+        if (roofType === 'gabled') {
+          roofGeometry = createGabledRoof(shape, height, roofHeight);
+        } else if (roofType === 'hipped' || roofType === 'pyramidal') {
+          // Pyramidal is similar to hipped but with equal sides
+          roofGeometry = createHippedRoof(shape, height, roofHeight);
+        } else if (roofType === 'skillion') {
+          roofGeometry = createSkillionRoof(shape, height, roofHeight);
+        } else if (roofType === 'gambrel') {
+          roofGeometry = createGambrelRoof(shape, height, roofHeight);
+        } else if (roofType === 'mansard') {
+          roofGeometry = createMansardRoof(shape, height, roofHeight);
+        }
+        
+        if (roofGeometry) {
+          // Position roof on top of building
+          // Roof geometry is already in XZ plane (y=0 at building top, y=roofHeight at peak)
+          // We need to translate it to the correct world position
+          roofGeometry.translate(0, minHeight + height, 0);
+          
+          // Roof material - darker grey to match streets.gl appearance
+          // Streets.gl roofs are noticeably darker than walls
+          const roofBaseColor = new THREE.Color(style.color);
+          roofBaseColor.multiplyScalar(0.7); // Much darker roof (was 0.85)
+          const roofColor = addBuildingColorVariation(roofBaseColor.getHex(), buildingSeed + 1000); // Different seed for roof
+          
+          const roofMaterial = new THREE.MeshStandardMaterial({
+            color: roofColor,
+            roughness: Math.min(0.9, style.roughness + 0.1), // Slightly rougher
+            metalness: Math.max(0.0, style.metalness - 0.05),
+            flatShading: false,
+            side: THREE.FrontSide
+          });
+
+              const roofMesh = new THREE.Mesh(roofGeometry, roofMaterial);
+              roofMesh.castShadow = true;
+              roofMesh.receiveShadow = true;
+              roofMesh.frustumCulled = false; // Prevent disappearing when looking up
+              buildingGroup.add(roofMesh);
+        }
+      }
+
+      // Store metadata
+      buildingGroup.userData.buildingType = buildingType;
+      buildingGroup.userData.height = height;
+      buildingGroup.userData.minHeight = minHeight;
+      buildingGroup.userData.roofType = roofType;
+      
+      return buildingGroup;
+    }
+
+    // Create buildings
+    async function createBuildings(scene, centerLat, centerLon, zoom) {
+      const features = await fetchBuildings(centerLat, centerLon, zoom);
+      
+      // If no features, return empty group (don't fail)
+      if (!features || features.length === 0) {
+        console.log('[Buildings] No building features available, creating empty group');
+        const emptyGroup = new THREE.Group();
+        emptyGroup.name = 'BuildingsGroup';
+        scene.add(emptyGroup);
+        return { group: emptyGroup, dispose: () => scene.remove(emptyGroup) };
+      }
+      
+      const group = new THREE.Group();
+      group.name = 'BuildingsGroup';
+      
+      // Add group to scene immediately so buildings appear as they're created
+      scene.add(group);
+      
+      let buildingCount = 0;
+      const totalFeatures = features.length;
+      console.log(`[Buildings] Creating ${totalFeatures} buildings...`);
+
+      features.forEach((feature, index) => {
+        const props = feature.properties;
+        let height = 6;
+        let minHeight = 0;
+        
+        // Get height from various OSM tags (Simple 3D Buildings schema)
+        // Streets.gl follows the Simple 3D Buildings schema closely
+        if (props.height) {
+          height = parseFloat(props.height) || height;
+        } else if (props['building:height']) {
+          height = parseFloat(props['building:height']) || height;
+        } else if (props['building:levels']) {
+          // Average floor height is ~3 meters
+          height = parseFloat(props['building:levels']) * 3 || height;
+        } else if (props['building:levels:underground']) {
+          // Account for underground levels if specified
+          const aboveGround = parseFloat(props['building:levels']) || 0;
+          const belowGround = parseFloat(props['building:levels:underground']) || 0;
+          height = (aboveGround + belowGround) * 3 || height;
+        }
+        
+        // Get min_height if specified (for buildings on stilts, elevated platforms, etc.)
+        if (props['min_height']) {
+          minHeight = parseFloat(props['min_height']) || 0;
+        } else if (props['building:min_height']) {
+          minHeight = parseFloat(props['building:min_height']) || 0;
+        }
+        
+        // Get roof information from OSM tags
+        // building:roof:shape, building:roof:height, building:roof:material, etc.
+        // This is handled in createBuilding() via getRoofType()
+        
+        // Handle building:part for multi-part buildings (Simple 3D Buildings)
+        // Note: This is a simplified approach - full support would require relation handling
+
+        // Clamp height to reasonable values (3m minimum, 200m maximum)
+        height = Math.max(3, Math.min(200, height));
+
+        if (feature.geometry.type === 'Polygon') {
+          const coords = feature.geometry.coordinates[0];
+          const building = createBuilding(coords, height, centerLat, centerLon, props, minHeight);
+          if (building) {
+            group.add(building);
+            buildingCount++;
+            // Log progress every 1000 buildings
+            if (buildingCount % 1000 === 0) {
+              console.log(`[Buildings] Progress: ${buildingCount}/${totalFeatures} buildings created`);
+            }
+          }
+        } else if (feature.geometry.type === 'MultiPolygon') {
+          feature.geometry.coordinates.forEach(polygon => {
+            const coords = polygon[0];
+            const building = createBuilding(coords, height, centerLat, centerLon, props, minHeight);
+            if (building) {
+              group.add(building);
+              buildingCount++;
+              // Log progress every 1000 buildings
+              if (buildingCount % 1000 === 0) {
+                console.log(`[Buildings] Progress: ${buildingCount}/${totalFeatures} buildings created`);
+              }
+            }
+          });
+        }
+      });
+      
+      console.log(`[Buildings] Created ${buildingCount} buildings and added to scene`);
+      // Group already added to scene above
+
+      return { group, dispose: () => {
+        group.traverse(child => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            child.material.dispose();
+          }
+        });
+        scene.remove(group);
+      }};
+    }
+
+    // Fetch roads from OSM
+    async function fetchRoads(centerLat, centerLon, zoom) {
+      try {
+        console.log('[Roads] Fetching road data from Overpass API...');
+        const bbox = getBoundingBox(centerLat, centerLon, zoom);
+        const query = `[out:json][timeout:25];
+(
+  way["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+);
+out body;
+>;
+out skel qt;`;
+
+        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+        try {
+          const data = await fetchWithRetry(url);
+          const features = convertWaysToLines(data);
+          console.log(`[Roads] Loaded ${features.length} road segments`);
+          return features;
+        } catch (error) {
+          console.warn('[Roads] Primary API failed, trying alternative...');
+          const altUrl = `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`;
+          try {
+            const data = await fetchWithRetry(altUrl);
+            return convertWaysToLines(data);
+          } catch (altError) {
+            console.warn('[Roads] All API attempts failed - this is normal due to rate limits');
+            console.warn('[Roads] Roads will be skipped for this load. Try again in a few seconds.');
+            return [];
+          }
+        }
+      } catch (error) {
+        console.error('[Roads] Error:', error);
+        return [];
+      }
+    }
+
+    // Convert ways to line features
+    function convertWaysToLines(overpassData) {
+      const features = [];
+      const nodes = {};
+      const ways = {};
+      
+      if (overpassData.elements) {
+        overpassData.elements.forEach(element => {
+          if (element.type === 'node') {
+            nodes[element.id] = [element.lon, element.lat];
+          } else if (element.type === 'way' && element.tags) {
+            ways[element.id] = element;
+          }
+        });
+      }
+
+      Object.values(ways).forEach(way => {
+        if (!way.nodes || way.nodes.length < 2) return;
+        
+        const coordinates = way.nodes
+          .map(nodeId => nodes[nodeId])
+          .filter(coord => coord !== undefined);
+        
+        if (coordinates.length < 2) return;
+        
+        features.push({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: coordinates
+          },
+          properties: way.tags || {}
+        });
+      });
+
+      return features;
+    }
+
+    // Get road color and width
+    function getRoadStyle(highwayType) {
+      const styles = {
+        'motorway': { color: 0x3a3a3a, width: 12, roughness: 0.7, metalness: 0.0 },
+        'trunk': { color: 0x404040, width: 10, roughness: 0.75, metalness: 0.0 },
+        'primary': { color: 0x4a4a4a, width: 8, roughness: 0.8, metalness: 0.0 },
+        'secondary': { color: 0x505050, width: 6, roughness: 0.8, metalness: 0.0 },
+        'tertiary': { color: 0x555555, width: 5, roughness: 0.85, metalness: 0.0 },
+        'residential': { color: 0x5a5a5a, width: 4, roughness: 0.85, metalness: 0.0 },
+        'service': { color: 0x606060, width: 3, roughness: 0.9, metalness: 0.0 },
+        'footway': { color: 0x707070, width: 1.5, roughness: 0.9, metalness: 0.0 },
+        'path': { color: 0x707070, width: 1.5, roughness: 0.9, metalness: 0.0 },
+        'cycleway': { color: 0x656565, width: 2, roughness: 0.9, metalness: 0.0 },
+        'default': { color: 0x555555, width: 4, roughness: 0.85, metalness: 0.0 }
+      };
+      return styles[highwayType] || styles.default;
+    }
+    
+    // Create road texture for better visual quality
+    function createRoadTexture(roadColor, width) {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) return null;
+      
+      // Base asphalt color
+      const color = new THREE.Color(roadColor);
+      ctx.fillStyle = `rgb(${Math.floor(color.r * 255)}, ${Math.floor(color.g * 255)}, ${Math.floor(color.b * 255)})`;
+      ctx.fillRect(0, 0, size, size);
+      
+      // Add road markings for wider roads
+      if (width >= 6) {
+        // Center line (dashed)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 10]);
+        ctx.beginPath();
+        ctx.moveTo(size / 2, 0);
+        ctx.lineTo(size / 2, size);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      
+      // Add subtle texture/noise
+      const imageData = ctx.getImageData(0, 0, size, size);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const noise = (Math.random() - 0.5) * 5;
+        data[i] = Math.max(0, Math.min(255, data[i] + noise));
+        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + noise));
+        data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + noise));
+      }
+      ctx.putImageData(imageData, 0, 0);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(1, Math.max(1, width / 2));
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      texture.needsUpdate = true;
+      
+      return texture;
+    }
+
+    // Create roads
+    async function createRoads(scene, centerLat, centerLon, zoom) {
+      const features = await fetchRoads(centerLat, centerLon, zoom);
+      const group = new THREE.Group();
+
+      features.forEach(feature => {
+        const props = feature.properties;
+        const highwayType = props.highway || 'default';
+        const style = getRoadStyle(highwayType);
+        
+        if (feature.geometry.type === 'LineString') {
+          const coords = feature.geometry.coordinates;
+          if (coords.length < 2) return;
+
+          const points = coords.map(coord => {
+            const point = latLonToMeters(coord[1], coord[0], centerLat, centerLon);
+            return new THREE.Vector3(point.x, 0.05, point.z); // Slightly above ground for visibility
+          });
+
+          // Create road using BufferGeometry for better performance
+          const vertices = [];
+          const indices = [];
+          const radius = style.width / 2;
+          
+          for (let i = 0; i < points.length - 1; i++) {
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+            const perp = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(radius);
+            
+            const v1 = new THREE.Vector3().addVectors(p1, perp);
+            const v2 = new THREE.Vector3().subVectors(p1, perp);
+            const v3 = new THREE.Vector3().addVectors(p2, perp);
+            const v4 = new THREE.Vector3().subVectors(p2, perp);
+            
+            const base = vertices.length / 3;
+            vertices.push(v1.x, v1.y, v1.z);
+            vertices.push(v2.x, v2.y, v2.z);
+            vertices.push(v3.x, v3.y, v3.z);
+            vertices.push(v4.x, v4.y, v4.z);
+            
+            indices.push(base, base + 1, base + 2);
+            indices.push(base + 1, base + 3, base + 2);
+          }
+          
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+          geometry.setIndex(indices);
+          geometry.computeVertexNormals(); // For better lighting
+          
+          // Create road texture for better visual quality
+          const roadTexture = createRoadTexture(style.color, style.width);
+          
+          const material = new THREE.MeshStandardMaterial({
+            color: style.color,
+            map: roadTexture,
+            roughness: style.roughness || 0.85,
+            metalness: style.metalness || 0.0
+          });
+
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.receiveShadow = true;
+          mesh.frustumCulled = false; // Prevent disappearing when looking up
+          group.add(mesh);
+        }
+      });
+
+      scene.add(group);
+      return { group, dispose: () => {
+        group.traverse(child => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            child.material.dispose();
+          }
+        });
+        scene.remove(group);
+      }};
+    }
+
+    // Fetch trees from OSM
+    async function fetchTrees(centerLat, centerLon, zoom) {
+      try {
+        console.log('[Trees] Fetching tree data from Overpass API...');
+        const bbox = getBoundingBox(centerLat, centerLon, zoom);
+        const query = `[out:json][timeout:25];
+(
+  node["natural"="tree"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["natural"="tree_row"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+);
+out body;
+>;
+out skel qt;`;
+
+        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+        try {
+          const data = await fetchWithRetry(url);
+          const elements = data.elements || [];
+          console.log(`[Trees] Loaded ${elements.length} trees`);
+          return elements;
+        } catch (error) {
+          console.warn('[Trees] Primary API failed, trying alternative...');
+          const altUrl = `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`;
+          try {
+            const data = await fetchWithRetry(altUrl);
+            return data.elements || [];
+          } catch (altError) {
+            console.error('[Trees] All API attempts failed');
+            return [];
+          }
+        }
+      } catch (error) {
+        console.error('[Trees] Error:', error);
+        return [];
+      }
+    }
+
+    // Create trees
+    async function createTrees(scene, centerLat, centerLon, zoom) {
+      const elements = await fetchTrees(centerLat, centerLon, zoom);
+      const group = new THREE.Group();
+
+      // Create simple tree geometry
+      const treeGeometry = new THREE.ConeGeometry(2, 8, 8);
+      const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.3, 3, 8);
+      const treeMaterial = new THREE.MeshStandardMaterial({ color: 0x2d5016, roughness: 0.9 });
+      const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.8 });
+
+      elements.forEach(element => {
+        if (element.type === 'node' && element.lat && element.lon) {
+          const point = latLonToMeters(element.lat, element.lon, centerLat, centerLon);
+          
+          const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+          trunk.position.set(point.x, 1.5, point.z);
+          trunk.castShadow = true;
+          trunk.frustumCulled = false; // Prevent disappearing when looking up
+          group.add(trunk);
+
+          const foliage = new THREE.Mesh(treeGeometry, treeMaterial);
+          foliage.position.set(point.x, 6, point.z);
+          foliage.castShadow = true;
+          foliage.frustumCulled = false; // Prevent disappearing when looking up
+          group.add(foliage);
+        }
+      });
+
+      scene.add(group);
+      return { group, dispose: () => {
+        treeGeometry.dispose();
+        trunkGeometry.dispose();
+        treeMaterial.dispose();
+        trunkMaterial.dispose();
+        group.traverse(child => {
+          if (child instanceof THREE.Mesh && child.geometry !== treeGeometry && child.geometry !== trunkGeometry) {
+            child.geometry.dispose();
+            child.material.dispose();
+          }
+        });
+        scene.remove(group);
+      }};
+    }
+
+    // Fetch water from OSM
+    // Note: streets.gl uses Shapefiles from osmdata.openstreetmap.de for coastline water bodies
+    // This implementation uses Overpass API as a browser-compatible alternative
+    // For production, consider using a server-side service to process Shapefiles
+    async function fetchWater(centerLat, centerLon, zoom) {
+      try {
+        console.log('[Water] Fetching water data from Overpass API...');
+        console.log('[Water] Note: streets.gl uses Shapefiles from osmdata.openstreetmap.de for coastlines');
+        const bbox = getBoundingBox(centerLat, centerLon, zoom);
+        // Enhanced query to include more water features and relations
+        const query = `[out:json][timeout:25];
+(
+  way["waterway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["natural"="water"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  relation["natural"="water"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  relation["type"="multipolygon"]["natural"="water"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["landuse"="basin"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["landuse"="reservoir"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+);
+out body;
+>;
+out skel qt;`;
+
+        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+        try {
+          const data = await fetchWithRetry(url);
+          const features = convertOverpassToGeoJSON(data);
+          console.log(`[Water] Loaded ${features.length} water features from Overpass API`);
+          console.log('[Water] For coastline data, streets.gl uses Shapefiles from osmdata.openstreetmap.de');
+          return features;
+        } catch (error) {
+          console.warn('[Water] Primary API failed, trying alternative...');
+          const altUrl = `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`;
+          try {
+            const data = await fetchWithRetry(altUrl);
+            return convertOverpassToGeoJSON(data);
+          } catch (altError) {
+            console.error('[Water] All API attempts failed, continuing without water');
+            return [];
+          }
+        }
+      } catch (error) {
+        console.error('[Water] Error:', error);
+        return [];
+      }
+    }
+
+    // Create water bodies
+    async function createWater(scene, centerLat, centerLon, zoom) {
+      const features = await fetchWater(centerLat, centerLon, zoom);
+      const group = new THREE.Group();
+
+      features.forEach(feature => {
+        if (feature.geometry.type === 'Polygon') {
+          const coords = feature.geometry.coordinates[0];
+          if (coords.length < 3) return;
+
+          const shape = new THREE.Shape();
+          const first = latLonToMeters(coords[0][1], coords[0][0], centerLat, centerLon);
+          shape.moveTo(first.x, first.z);
+
+          for (let i = 1; i < coords.length; i++) {
+            const point = latLonToMeters(coords[i][1], coords[i][0], centerLat, centerLon);
+            shape.lineTo(point.x, point.z);
+          }
+
+          const geometry = new THREE.ShapeGeometry(shape);
+          // Rotate to lay flat on ground
+          geometry.rotateX(-Math.PI / 2);
+          // Position slightly above ground
+          geometry.translate(0, 0.05, 0);
+
+          const material = new THREE.MeshStandardMaterial({
+            color: 0x4a90e2,
+            roughness: 0.1,
+            metalness: 0.3,
+            transparent: true,
+            opacity: 0.8
+          });
+
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.receiveShadow = true;
+          mesh.frustumCulled = false; // Prevent disappearing when looking up
+          group.add(mesh);
+        }
+      });
+
+      scene.add(group);
+      return { group, dispose: () => {
+        group.traverse(child => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            child.material.dispose();
+          }
+        });
+        scene.remove(group);
+      }};
+    }
+
+    // Search using Nominatim
+    async function searchLocation(query) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`;
+      const response = await fetch(url);
+      const data = await response.json();
+      return data.map(item => ({
+        name: item.display_name,
+        lat: parseFloat(item.lat),
+        lon: parseFloat(item.lon)
+      }));
+    }
+
+    // Main application
+    class StreetsGLApp {
+      constructor() {
+        this.scene = new THREE.Scene();
+        // Background will be set by sky shader (null = transparent, sky renders behind)
+        this.scene.background = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        this.sunLight = null;
+        this.ambientLight = null;
+        this.groundLayer = null;
+        this.buildingsGroup = null;
+        this.roadsGroup = null;
+        this.treesGroup = null;
+        this.waterGroup = null;
+        this.sky = null;
+        this.skyMaterial = null;
+        // Default location (matching benchmark: https://streets.gl/#32.89344,-97.03708,13.25,341.75,905.10)
+        this.currentLat = 32.89344;
+        this.currentLon = -97.03708;
+        this.currentZoom = 13; // Tile zoom (clamped 10-18)
+        this.cameraDistance = 905.10; // Default camera distance matching benchmark
+        this.defaultHeading = 341.75; // Default heading matching benchmark (341.75° = -18.25° = looking NW)
+        this.currentLayerType = 'osm';
+        this.buildingsEnabled = true;
+        this.shadowsEnabled = true;
+        this.timeOfDay = 12;
+        this.sunIntensity = 1.0;
+        this.currentDate = new Date(); // For seasonal sun position
+        this.targetSunPosition = null; // For smooth transitions
+        this.currentSunPosition = null;
+        this.hashData = null;
+        this.isLoading = false;
+        this.loadMapDebounceTimer = null;
+
+        this.init();
+      }
+
+      async init() {
+        console.log('[App] Initializing Streets GL App...');
+        this.hashData = parseHash();
+        if (this.hashData) {
+          this.currentLat = this.hashData.lat;
+          this.currentLon = this.hashData.lon;
+          // Zoom can be float (for camera distance/FOV), but clamp for tile zoom
+          this.currentZoom = Math.max(10, Math.min(18, Math.round(this.hashData.zoom || 15)));
+        } else {
+          // If no hash, set default to match benchmark location
+          // Benchmark: https://streets.gl/#32.89344,-97.03708,13.25,341.75,905.10
+          this.hashData = {
+            lat: 32.89344,
+            lon: -97.03708,
+            zoom: 13.25,
+            heading: 341.75,
+            distance: 905.10
+          };
+          // Update URL hash to match demo
+          updateHash(this.hashData.lat, this.hashData.lon, this.hashData.zoom, this.hashData.heading, this.hashData.distance);
+        }
+        
+        // Set current location from hashData
+        this.currentLat = this.hashData.lat;
+        this.currentLon = this.hashData.lon;
+
+        // Setup sky/horizon (like streets.gl demo)
+        this.setupSky();
+        
+        // Setup renderer
+        const container = document.getElementById('canvas-container');
+        
+        // Check WebGL2 support (required for streets.gl-like rendering)
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl2');
+        if (!gl) {
+          console.warn('[Renderer] WebGL2 not available, falling back to WebGL1. Some features may not work optimally.');
+          // Show user-friendly warning
+          const warningDiv = document.createElement('div');
+          warningDiv.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(255,165,0,0.9);color:#000;padding:12px 24px;border-radius:8px;z-index:10000;font-weight:bold;';
+          warningDiv.textContent = '⚠️ WebGL2 not supported. Please use a modern browser (Chrome, Firefox, Edge) for best experience.';
+          document.body.appendChild(warningDiv);
+          setTimeout(() => warningDiv.remove(), 10000);
+        } else {
+          console.log('[Renderer] WebGL2 support confirmed ✓');
+        }
+        
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(this.renderer.domElement);
+
+        // Setup camera
+        // Camera with wider near/far range to prevent objects disappearing
+        // Increased far plane and adjusted near plane for better visibility
+        this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100000);
+        this.updateCameraPosition();
+
+        // Setup controls
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.minDistance = 10;
+        this.controls.maxDistance = 10000;
+
+        // Setup lights
+        this.setupLights();
+
+        // Load initial map
+        await this.loadMap();
+
+        // Setup UI
+        this.setupUI();
+
+        // Start render loop
+        this.animate();
+
+        // Handle window resize
+        window.addEventListener('resize', () => this.onWindowResize());
+      }
+
+      setupLights() {
+        // Ambient light - will be adjusted based on sun elevation
+        this.ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+        this.scene.add(this.ambientLight);
+
+        // Sun light (directional) - intensity adjusted based on sun position
+        this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        this.sunLight.castShadow = true;
+        this.sunLight.shadow.mapSize.width = 2048;
+        this.sunLight.shadow.mapSize.height = 2048;
+        this.sunLight.shadow.camera.near = 0.5;
+        this.sunLight.shadow.camera.far = 5000;
+        this.sunLight.shadow.camera.left = -2000;
+        this.sunLight.shadow.camera.right = 2000;
+        this.sunLight.shadow.camera.top = 2000;
+        this.sunLight.shadow.camera.bottom = -2000;
+        this.scene.add(this.sunLight);
+
+        // Add fog for atmospheric perspective (aerial perspective like official streets-gl)
+        // Fog color matches sky color at horizon
+        this.scene.fog = new THREE.FogExp2(0x87ceeb, 0.0002); // Sky blue, density
+        // Fog will be adjusted in updateSunPosition based on sun elevation
+
+        this.updateSunPosition();
+      }
+
+      // Setup sky/horizon rendering (like streets.gl demo)
+      setupSky() {
+        // Use Three.js Sky shader for realistic atmosphere
+        const skyGeometry = new THREE.SphereGeometry(5000, 32, 32);
+        
+        // Three.js Sky shader (from three/examples/jsm/objects/Sky.js)
+        const skyVertexShader = `
+          varying vec3 vWorldPosition;
+          void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `;
+        
+        const skyFragmentShader = `
+          uniform vec3 sunPosition;
+          uniform float turbidity;
+          uniform float rayleigh;
+          uniform float mieCoefficient;
+          uniform float mieDirectionalG;
+          uniform float exposure;
+          varying vec3 vWorldPosition;
+          
+          // Improved atmospheric scattering (matching streets-gl quality)
+          vec3 skyColor(vec3 viewDir, vec3 sunDir) {
+            float sunDotView = dot(sunDir, viewDir);
+            float sunDotUp = dot(sunDir, vec3(0.0, 1.0, 0.0));
+            float viewDotUp = dot(viewDir, vec3(0.0, 1.0, 0.0));
+            
+            // Rayleigh phase function (molecular scattering)
+            float rayleighPhase = 0.75 * (1.0 + sunDotView * sunDotView);
+            
+            // Mie phase function (aerosol scattering)
+            float g = mieDirectionalG;
+            float miePhase = 1.5 * ((1.0 - g * g) / (2.0 + g * g)) * 
+                             ((1.0 + sunDotView * sunDotView) / pow(1.0 + g * g - 2.0 * g * sunDotView, 1.5));
+            
+            // Wavelengths (RGB)
+            vec3 lambda = vec3(0.680e-6, 0.550e-6, 0.450e-6);
+            vec3 K = vec3(0.686, 0.678, 0.666);
+            float v = 4.0;
+            
+            // Scattering coefficients
+            vec3 rayleighCoeff = vec3(5.8e-6, 13.5e-6, 33.1e-6) * rayleigh;
+            vec3 mieCoeff = K * mieCoefficient * pow(2.0 * 3.14159 / lambda, vec3(v - 2.0));
+            
+            // Zenith angles
+            float sunAngle = clamp(sunDotUp, -1.0, 1.0);
+            float viewAngle = clamp(viewDotUp, -1.0, 1.0);
+            float sunZenithAngle = acos(clamp(sunAngle, -1.0, 1.0));
+            float viewZenithAngle = acos(clamp(viewAngle, -1.0, 1.0));
+            
+            // Atmospheric depth factors (improved for better sunset/sunrise)
+            float sunAngleFactor = 1.0 / (cos(sunZenithAngle) + 0.15 * pow(93.885 - sunZenithAngle * 180.0 / 3.14159, -1.253));
+            float viewAngleFactor = 1.0 / (cos(viewZenithAngle) + 0.15 * pow(93.885 - viewZenithAngle * 180.0 / 3.14159, -1.253));
+            
+            // Optical depth
+            float T = turbidity;
+            vec3 betaR = rayleighCoeff;
+            vec3 betaM = mieCoeff * T;
+            vec3 opticalDepthR = betaR * (sunAngleFactor + viewAngleFactor);
+            vec3 opticalDepthM = betaM * (sunAngleFactor + viewAngleFactor);
+            
+            // Transmittance (how much light passes through)
+            vec3 transmittance = exp(-(opticalDepthR + opticalDepthM));
+            
+            // Inscattering (light scattered into view)
+            vec3 inscatter = (betaR * rayleighPhase + betaM * miePhase) * sunAngleFactor * transmittance;
+            
+            // Sun disk (brighter when looking at sun)
+            float sunDisk = smoothstep(0.992, 1.0, sunDotView);
+            // Sun color changes with elevation (warmer at sunset/sunrise)
+            float sunElevation = sunDotUp;
+            vec3 sunColor = mix(vec3(1.0, 0.9, 0.8), vec3(1.0, 0.6, 0.3), max(0.0, -sunElevation));
+            sunColor *= sunDisk * (1.0 + 2.0 * max(0.0, -sunElevation)); // Brighter at horizon
+            
+            vec3 color = inscatter + sunColor;
+            
+            // Tone mapping (exposure)
+            color = vec3(1.0) - exp(-color * exposure);
+            
+            // Night sky (when sun is below horizon)
+            if (sunDotUp < -0.1) {
+              // Add subtle night sky color
+              float nightFactor = clamp(-sunDotUp * 2.0, 0.0, 1.0);
+              vec3 nightColor = vec3(0.05, 0.05, 0.1) * nightFactor;
+              color = mix(color, nightColor, nightFactor * 0.5);
+            }
+            
+            return color;
+          }
+          
+          void main() {
+            vec3 viewDir = normalize(vWorldPosition);
+            vec3 sunDir = normalize(sunPosition);
+            vec3 color = skyColor(viewDir, sunDir);
+            
+            // Horizon glow enhancement (better sunset/sunrise)
+            float viewDotUp = dot(viewDir, vec3(0.0, 1.0, 0.0));
+            float sunDotUp = dot(sunDir, vec3(0.0, 1.0, 0.0));
+            
+            if (viewDotUp < 0.2 && sunDotUp > -0.3) {
+              // Near horizon - enhance glow
+              float horizonFactor = 1.0 - (viewDotUp / 0.2);
+              vec3 horizonGlow = vec3(1.0, 0.7, 0.5) * horizonFactor * 0.3;
+              color += horizonGlow;
+            }
+            
+            // Ensure minimum visibility
+            color = max(color, vec3(0.02, 0.02, 0.03));
+            
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `;
+        
+        const skyMaterial = new THREE.ShaderMaterial({
+          vertexShader: skyVertexShader,
+          fragmentShader: skyFragmentShader,
+          uniforms: {
+            sunPosition: { value: new THREE.Vector3(0, 1, 0) },
+            turbidity: { value: 8.0 }, // Reduced for clearer sky (matches streets-gl better)
+            rayleigh: { value: 2.0 },
+            mieCoefficient: { value: 0.004 }, // Slightly reduced
+            mieDirectionalG: { value: 0.76 }, // Standard value
+            exposure: { value: 0.7 } // Slightly increased for better visibility
+          },
+          side: THREE.BackSide,
+          depthWrite: false
+        });
+        
+        const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+        sky.name = 'Sky';
+        // Ensure sky renders first (before other objects) - negative renderOrder
+        sky.renderOrder = -Infinity;
+        this.scene.add(sky);
+        
+        // Store sky reference for updates
+        this.sky = sky;
+        this.skyMaterial = skyMaterial;
+        
+        // Remove solid background color (sky will render instead)
+        this.scene.background = null;
+        
+        console.log('[Sky] Sky/horizon rendering initialized');
+      }
+
+      updateSunPosition() {
+        // Use SunCalc for accurate astronomical sun position (like official streets-gl)
+        // Calculate date/time from timeOfDay (0-24 hours) and currentDate
+        const hours = Math.floor(this.timeOfDay);
+        const minutes = Math.floor((this.timeOfDay % 1) * 60);
+        const date = new Date(
+          this.currentDate.getFullYear(),
+          this.currentDate.getMonth(),
+          this.currentDate.getDate(),
+          hours,
+          minutes,
+          0
+        );
+        
+        // Get sun position using SunCalc (matches official streets-gl MapTimeSystem)
+        let sunPosition;
+        if (typeof SunCalc !== 'undefined' && SunCalc.getPosition) {
+          const sunPos = SunCalc.getPosition(date, this.currentLat, this.currentLon);
+          // Convert azimuth/altitude to 3D direction vector
+          // Azimuth: 0 = North, PI/2 = East, PI = South, 3*PI/2 = West
+          // Altitude: 0 = horizon, PI/2 = zenith
+          const azimuth = sunPos.azimuth + Math.PI; // Convert to direction (opposite of position)
+          const altitude = sunPos.altitude;
+          
+          // Convert spherical to cartesian (matching streets-gl MapTimeSystem MathUtils.polarToCartesian)
+          // Official formula: x = cos(altitude) * cos(azimuth), y = sin(altitude), z = cos(altitude) * sin(azimuth)
+          // X = east-west, Y = up, Z = north-south
+          // azimuth: 0 = North, PI/2 = East, PI = South, 3*PI/2 = West
+          // altitude: 0 = horizon, PI/2 = zenith
+          const sunDir = new THREE.Vector3(
+            Math.cos(altitude) * Math.cos(azimuth),
+            Math.sin(altitude),
+            Math.cos(altitude) * Math.sin(azimuth)
+          );
+          sunDir.normalize();
+          // Multiply by -1 to get direction TO sun (matching official streets-gl)
+          sunPosition = sunDir.multiplyScalar(-1);
+        } else {
+          // Fallback to simple approximation if SunCalc not loaded
+          const hour = this.timeOfDay;
+          const sunAngle = (hour - 6) / 12 * Math.PI;
+          const sunElevation = Math.max(0, Math.sin(sunAngle)) * Math.PI / 2;
+          const sunAzimuth = hour < 12 ? Math.PI / 4 : -Math.PI / 4;
+          sunPosition = new THREE.Vector3(
+            Math.cos(sunAzimuth) * Math.cos(sunElevation),
+            Math.sin(sunElevation),
+            Math.sin(sunAzimuth) * Math.cos(sunElevation)
+          ).normalize();
+        }
+        
+        // Set sun light position (directional light points in opposite direction)
+        const sunLightDir = sunPosition.clone().multiplyScalar(-1);
+        this.sunLight.position.copy(sunLightDir.multiplyScalar(1000));
+        
+        // Calculate sun elevation for intensity and ambient light
+        const sunElevation = Math.asin(Math.max(-1, Math.min(1, sunPosition.y)));
+        const sunElevationDeg = THREE.MathUtils.radToDeg(sunElevation);
+        
+        // Intensity based on sun elevation (matches official streets-gl)
+        // Sun below horizon = night (low intensity), sun above = day (high intensity)
+        if (sunElevationDeg < 0) {
+          // Night: use moon or ambient lighting
+          this.sunLight.intensity = this.sunIntensity * 0.1;
+          this.ambientLight.intensity = 0.1;
+        } else {
+          // Day: intensity based on elevation
+          const elevationFactor = Math.max(0, Math.sin(sunElevation));
+          this.sunLight.intensity = this.sunIntensity * (0.3 + 0.7 * elevationFactor);
+          this.ambientLight.intensity = 0.2 + 0.1 * elevationFactor;
+        }
+        
+        this.sunLight.target.position.set(0, 0, 0);
+        this.sunLight.target.updateMatrixWorld();
+        
+        // Update sky sun position (normalized direction)
+        if (this.skyMaterial) {
+          this.skyMaterial.uniforms.sunPosition.value.copy(sunPosition);
+          // Update sky exposure based on sun elevation
+          const exposure = sunElevationDeg < 0 ? 0.3 : (0.5 + 0.3 * Math.max(0, Math.sin(sunElevation)));
+          this.skyMaterial.uniforms.exposure.value = exposure;
+        }
+        
+        // Update fog based on sun elevation (atmospheric perspective like official streets-gl)
+        if (this.scene.fog && this.scene.fog instanceof THREE.FogExp2) {
+          // More fog/haze when sun is low (sunrise/sunset)
+          // Density increases when sun is near horizon
+          const fogFactor = sunElevationDeg < 10 ? 0.8 : (0.2 + 0.1 * Math.max(0, Math.sin(sunElevation)));
+          this.scene.fog.density = 0.00015 + (0.0001 * fogFactor);
+          
+          // Fog color changes with sun elevation (warmer at sunset/sunrise)
+          if (sunElevationDeg < 5 && sunElevationDeg > -5) {
+            // Sunset/sunrise: warmer fog color
+            const warmFactor = 1.0 - Math.abs(sunElevationDeg) / 5.0;
+            this.scene.fog.color = new THREE.Color(
+              0.9 + 0.1 * warmFactor,
+              0.7 + 0.2 * warmFactor,
+              0.5 + 0.3 * warmFactor
+            );
+          } else if (sunElevationDeg < 0) {
+            // Night: darker fog
+            this.scene.fog.color = new THREE.Color(0.1, 0.1, 0.15);
+          } else {
+            // Day: sky blue fog
+            this.scene.fog.color = new THREE.Color(0.53, 0.81, 0.92);
+          }
+        }
+      }
+
+      updateCameraPosition() {
+        // Camera should look at origin (0, 0, 0) where ground is centered
+        // Use distance from URL hash (5th parameter), or default camera distance
+        const distance = this.hashData?.distance || this.cameraDistance || 905.10;
+        const heading = this.hashData?.heading !== undefined ? this.hashData.heading : (this.defaultHeading || 25.00);
+        
+        // Calculate pitch from camera height - streets.gl uses a fixed pitch angle
+        // For streets.gl, pitch is typically around 45-60 degrees looking down
+        // We'll use a fixed pitch of 60 degrees (looking down at an angle)
+        const pitch = 60; // Fixed pitch angle in degrees
+        const pitchRad = THREE.MathUtils.degToRad(pitch);
+        const headingRad = THREE.MathUtils.degToRad(heading);
+
+        // Position camera above the ground looking down at an angle
+        // X = east-west (longitude), Y = up, Z = north-south (latitude)
+        this.camera.position.set(
+          Math.cos(headingRad) * Math.cos(pitchRad) * distance,
+          Math.sin(pitchRad) * distance,
+          Math.sin(headingRad) * Math.cos(pitchRad) * distance
+        );
+        this.camera.lookAt(0, 0, 0); // Look at origin where ground is centered
+        
+        // Update camera FOV based on zoom if provided (3rd parameter)
+        if (this.hashData?.zoom && this.hashData.zoom > 15) {
+          // Higher zoom values might indicate camera FOV adjustment
+          // streets.gl uses zoom for both tile level and camera FOV
+          const fov = Math.max(30, Math.min(70, 50 - (this.hashData.zoom - 15) * 2));
+          this.camera.fov = fov;
+          this.camera.updateProjectionMatrix();
+        }
+        
+        console.log('[Camera] Position updated:', {
+          position: this.camera.position,
+          target: { x: 0, y: 0, z: 0 },
+          distance: distance,
+          heading: heading,
+          fov: this.camera.fov
+        });
+      }
+
+      async loadMap() {
+        // Debounce rapid calls
+        if (this.loadMapDebounceTimer) {
+          clearTimeout(this.loadMapDebounceTimer);
+        }
+        
+        // Prevent concurrent loads
+        if (this.isLoading) {
+          console.log('[Map] Load already in progress, skipping...');
+          return;
+        }
+
+        this.isLoading = true;
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) {
+          loadingEl.style.display = 'flex';
+        }
+        
+        // Add overall timeout to prevent page from hanging (120 seconds max)
+        // Buildings can take a while to create, especially with textures
+        let overallTimeout;
+        const timeoutPromise = new Promise((_, reject) => {
+          overallTimeout = setTimeout(() => {
+            console.warn('[Map] Loading timeout reached - map will continue loading in background');
+            reject(new Error('Map loading timeout - continuing in background'));
+          }, 120000); // 2 minutes for large areas with many buildings
+        });
+
+        try {
+          // Race the actual loading against the timeout
+          await Promise.race([
+            this.loadMapInternal(),
+            timeoutPromise
+          ]);
+        } catch (error) {
+          if (error.message && error.message.includes('timeout')) {
+            // Timeout is expected for large areas - buildings continue loading in background
+            console.log('[Map] Loading timeout reached - this is normal for areas with many buildings');
+            console.log('[Map] Buildings will continue loading in the background');
+          } else {
+            console.error('Error loading map:', error);
+            console.warn('[Map] Map loading encountered errors but will continue');
+          }
+        } finally {
+          if (overallTimeout) clearTimeout(overallTimeout);
+          this.isLoading = false;
+          // Always hide loading indicator, even if some features failed
+          const loadingEl = document.getElementById('loading');
+          if (loadingEl) {
+            loadingEl.style.display = 'none';
+          }
+          console.log('[Map] Loading complete. Some features may be missing due to API rate limits - this is normal.');
+        }
+      }
+      
+      // Internal loading function (separated for timeout handling)
+      async loadMapInternal() {
+        try {
+          // Remove old features
+          if (this.groundLayer) {
+            this.groundLayer.dispose();
+          }
+          if (this.buildingsGroup) {
+            this.buildingsGroup.dispose();
+          }
+          if (this.roadsGroup) {
+            this.roadsGroup.dispose();
+          }
+          if (this.treesGroup) {
+            this.treesGroup.dispose();
+          }
+          if (this.waterGroup) {
+            this.waterGroup.dispose();
+          }
+
+          // Create ground layer (CRITICAL: Must be created first)
+          console.log('[Map] Creating ground layer...');
+          try {
+            // Add timeout for ground layer creation (20 seconds max)
+            const groundPromise = createGroundLayer(
+              this.scene,
+              this.currentLat,
+              this.currentLon,
+              this.currentZoom,
+              this.currentLayerType
+            );
+            const groundTimeout = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Ground layer creation timeout')), 20000)
+            );
+            
+            this.groundLayer = await Promise.race([groundPromise, groundTimeout]);
+            console.log('[Map] Ground layer created successfully:', {
+              hasGround: !!this.groundLayer.ground,
+              groundVisible: this.groundLayer.ground.visible,
+              groundPosition: this.groundLayer.ground.position,
+              sceneChildren: this.scene.children.length
+            });
+          } catch (error) {
+            console.error('[Map] Failed to create ground layer:', error);
+            console.warn('[Map] Continuing without ground layer - map may not display correctly');
+            // Don't throw - allow map to continue loading even if ground fails
+            this.groundLayer = null;
+          }
+
+          // Skip water by default (often returns 0 features and causes rate limits)
+          // Uncomment to enable water loading:
+          // try {
+          //   this.waterGroup = await createWater(
+          //     this.scene,
+          //     this.currentLat,
+          //     this.currentLon,
+          //     this.currentZoom
+          //   );
+          // } catch (error) {
+          //   console.warn('[Map] Skipping water due to errors');
+          //   this.waterGroup = null;
+          // }
+          this.waterGroup = null; // Disabled by default
+          
+          // Initial delay before loading features (2 seconds)
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          // Create roads
+          try {
+            this.roadsGroup = await createRoads(
+              this.scene,
+              this.currentLat,
+              this.currentLon,
+              this.currentZoom
+            );
+          } catch (error) {
+            console.warn('[Map] Skipping roads due to rate limits - this is normal');
+            console.warn('[Map] The map will continue loading other features');
+            this.roadsGroup = null;
+          }
+          
+          // Delay to prevent rate limiting (4 seconds between major features)
+          await new Promise(resolve => setTimeout(resolve, 4000));
+
+          // Create buildings with timeout to prevent getting stuck
+          if (this.buildingsEnabled) {
+            try {
+              // Start building creation (don't await - let it continue in background)
+              const buildingsPromise = createBuildings(
+                this.scene,
+                this.currentLat,
+                this.currentLon,
+                this.currentZoom
+              );
+              
+              // Wait for buildings with timeout, but continue even if timeout
+              const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Buildings loading timeout')), 120000) // 120 second timeout
+              );
+              
+              // Update building count as they're added (polling approach)
+              const updateCount = setInterval(() => {
+                // Check if buildings group exists in scene
+                const buildingsInScene = this.scene.getObjectByName('BuildingsGroup');
+                if (buildingsInScene) {
+                  const count = buildingsInScene.children.length;
+                  document.getElementById('info-buildings').textContent = count;
+                  if (count > 0 && count % 5000 === 0) {
+                    console.log(`[Buildings] ${count} buildings visible in scene`);
+                  }
+                }
+              }, 3000); // Update every 3 seconds
+              
+              try {
+                this.buildingsGroup = await Promise.race([buildingsPromise, timeoutPromise]);
+                clearInterval(updateCount);
+                
+                if (this.buildingsGroup && this.buildingsGroup.group) {
+                  const count = this.buildingsGroup.group.children.length;
+                  document.getElementById('info-buildings').textContent = count;
+                  console.log(`[Buildings] Completed: ${count} buildings added to scene`);
+                } else {
+                  document.getElementById('info-buildings').textContent = '0';
+                }
+              } catch (timeoutError) {
+                clearInterval(updateCount);
+                // Timeout occurred, but buildings are still being added to scene
+                // Check scene directly for buildings
+                const buildingsInScene = this.scene.getObjectByName('BuildingsGroup');
+                if (buildingsInScene) {
+                  const count = buildingsInScene.children.length;
+                  document.getElementById('info-buildings').textContent = count;
+                  console.log(`[Buildings] Timeout reached, but ${count} buildings are visible in scene`);
+                  // Store reference even if promise didn't complete
+                  if (!this.buildingsGroup) {
+                    this.buildingsGroup = { group: buildingsInScene, dispose: () => this.scene.remove(buildingsInScene) };
+                  }
+                } else {
+                  // Buildings promise might still resolve - don't set to null yet
+                  console.warn('[Map] Buildings loading timed out - they may still be loading in background');
+                  // Continue polling in case buildings finish later
+                  setTimeout(() => {
+                    const buildingsInScene = this.scene.getObjectByName('BuildingsGroup');
+                    if (buildingsInScene) {
+                      const count = buildingsInScene.children.length;
+                      document.getElementById('info-buildings').textContent = count;
+                      if (!this.buildingsGroup) {
+                        this.buildingsGroup = { group: buildingsInScene, dispose: () => this.scene.remove(buildingsInScene) };
+                      }
+                    }
+                  }, 10000);
+                }
+              }
+            } catch (error) {
+              console.warn('[Map] Buildings failed to load:', error.message || error);
+              console.warn('[Map] Continuing without buildings - this is normal when APIs are rate-limited');
+              this.buildingsGroup = null;
+              document.getElementById('info-buildings').textContent = '0';
+            }
+            
+            // Delay to prevent rate limiting (4 seconds)
+            await new Promise(resolve => setTimeout(resolve, 4000));
+          }
+
+          // Create trees (on top) - optional, skip if rate limited
+          try {
+            this.treesGroup = await createTrees(
+              this.scene,
+              this.currentLat,
+              this.currentLon,
+              this.currentZoom
+            );
+          } catch (error) {
+            console.warn('[Map] Skipping trees due to rate limits - this is normal');
+            console.warn('[Map] The map will continue loading other features');
+            this.treesGroup = null;
+          }
+
+          // Update camera
+          this.updateCameraPosition();
+          this.controls.target.set(0, 0, 0);
+          this.controls.update();
+
+          // Update hash
+          const heading = Math.atan2(
+            this.camera.position.z,
+            this.camera.position.x
+          );
+          const distance = this.camera.position.length();
+          updateHash(this.currentLat, this.currentLon, this.currentZoom, heading, distance);
+        } catch (error) {
+          console.error('[Map] Error in loadMapInternal:', error);
+          // Don't re-throw - let outer handler deal with it
+        }
+      }
+
+      // Debounced version for UI interactions
+      loadMapDebounced() {
+        if (this.loadMapDebounceTimer) {
+          clearTimeout(this.loadMapDebounceTimer);
+        }
+        this.loadMapDebounceTimer = setTimeout(() => {
+          this.loadMap();
+        }, 500); // 500ms debounce
+      }
+
+      setupUI() {
+        // Search
+        document.getElementById('search-button').addEventListener('click', async () => {
+          const query = document.getElementById('search-input').value;
+          if (!query) return;
+
+          const results = await searchLocation(query);
+          const resultsDiv = document.getElementById('search-results');
+          resultsDiv.innerHTML = '';
+
+          results.forEach(result => {
+            const div = document.createElement('div');
+            div.className = 'search-result';
+            div.innerHTML = `
+              <div class="search-result-name">${result.name.split(',')[0]}</div>
+              <div class="search-result-details">${result.name}</div>
+            `;
+            div.addEventListener('click', () => {
+              this.currentLat = result.lat;
+              this.currentLon = result.lon;
+              document.getElementById('lat-input').value = result.lat;
+              document.getElementById('lon-input').value = result.lon;
+              this.loadMapDebounced();
+            });
+            resultsDiv.appendChild(div);
+          });
+        });
+
+        // Map style
+        document.getElementById('map-style').addEventListener('change', (e) => {
+          this.currentLayerType = e.target.value;
+          this.loadMapDebounced();
+        });
+
+        // Date input (for seasonal sun position)
+        const dateInput = document.getElementById('date-input');
+        // Set default to today
+        const today = new Date();
+        dateInput.value = today.toISOString().split('T')[0];
+        this.currentDate = today;
+        dateInput.addEventListener('change', (e) => {
+          this.currentDate = new Date(e.target.value);
+          this.updateSunPosition();
+        });
+
+        // Time of day
+        const timeSlider = document.getElementById('time-slider');
+        timeSlider.addEventListener('input', (e) => {
+          this.timeOfDay = parseFloat(e.target.value);
+          document.getElementById('time-value').textContent = 
+            `${Math.floor(this.timeOfDay)}:${Math.floor((this.timeOfDay % 1) * 60).toString().padStart(2, '0')}`;
+          this.updateSunPosition();
+        });
+
+        // Sun intensity
+        const sunSlider = document.getElementById('sun-intensity-slider');
+        sunSlider.addEventListener('input', (e) => {
+          this.sunIntensity = parseFloat(e.target.value);
+          document.getElementById('sun-intensity-value').textContent = this.sunIntensity.toFixed(1);
+          this.updateSunPosition();
+        });
+
+        // Buildings toggle
+        document.getElementById('buildings-enabled').addEventListener('change', (e) => {
+          this.buildingsEnabled = e.target.checked;
+          this.loadMapDebounced();
+        });
+
+        // Shadows toggle
+        document.getElementById('shadows-enabled').addEventListener('change', (e) => {
+          this.shadowsEnabled = e.target.checked;
+          this.renderer.shadowMap.enabled = this.shadowsEnabled;
+          this.sunLight.castShadow = this.shadowsEnabled;
+        });
+
+        // Zoom
+        const zoomSlider = document.getElementById('zoom-slider');
+        zoomSlider.addEventListener('input', (e) => {
+          this.currentZoom = parseInt(e.target.value);
+          document.getElementById('zoom-value').textContent = this.currentZoom;
+          document.getElementById('info-zoom').textContent = this.currentZoom;
+        });
+
+        // Location inputs
+        document.getElementById('lat-input').value = this.currentLat;
+        document.getElementById('lon-input').value = this.currentLon;
+        document.getElementById('update-location').addEventListener('click', () => {
+          this.currentLat = parseFloat(document.getElementById('lat-input').value);
+          this.currentLon = parseFloat(document.getElementById('lon-input').value);
+          this.currentZoom = parseInt(document.getElementById('zoom-slider').value);
+          // Update sun position when location changes (sun position depends on lat/lon)
+          this.updateSunPosition();
+          this.loadMapDebounced();
+        });
+
+        // Update info panel
+        setInterval(() => {
+          document.getElementById('info-lat').textContent = this.currentLat.toFixed(5);
+          document.getElementById('info-lon').textContent = this.currentLon.toFixed(5);
+        }, 1000);
+      }
+
+      onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      animate() {
+        requestAnimationFrame(() => this.animate());
+        this.controls.update();
+        this.renderer.render(this.scene, this.camera);
+        
+        // Debug: Log scene contents periodically (every 5 seconds)
+        if (Math.random() < 0.0001) { // ~1% chance per frame = ~every 5 seconds at 60fps
+          const buildingsInScene = this.scene.getObjectByName('BuildingsGroup');
+          const buildingCount = buildingsInScene ? buildingsInScene.children.length : 0;
+          if (buildingCount > 0) {
+            console.log(`[Render] Scene has ${buildingCount} buildings, camera at:`, this.camera.position);
+          }
+        }
+      }
+    }
+
+    // Initialize app
+    console.log('[App] Starting Streets GL Standalone...');
+    try {
+      const app = new StreetsGLApp();
+      console.log('[App] Streets GL App initialized successfully');
+    } catch (error) {
+      console.error('[App] Failed to initialize:', error);
+      throw error; // Re-throw to see error in console
+    }
+  </script>
+</body>
+</html>
+

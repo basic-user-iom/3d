@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist/desktop-build/
+streets-gl-alt/node_modules/
+streets-gl-alt/build/
+files-upload/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+.idea/
+.vscode/
+playwright-report/
+test-results/

@@ -1,0 +1,4 @@
+# Place DRACO decoder files here
+# Download from: https://github.com/google/draco/tree/master/javascript/example/draco_decoder_gltf
+# Extract and place the draco_decoder_gltf.js and draco_decoder_gltf.wasm files here
+

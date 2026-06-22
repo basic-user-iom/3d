@@ -1,0 +1,37 @@
+{
+	"compilerOptions": {
+		"module": "esnext",
+		"target": "es6",
+		"lib": [
+			"es2021",
+			"dom"
+		],
+		"allowJs": true,
+		"noEmit": true,
+		"sourceMap": true,
+		"moduleResolution": "node",
+		"alwaysStrict": true,
+		"noImplicitAny": true,
+		"noImplicitThis": true,
+		"strictBindCallApply": true,
+		"strictFunctionTypes": true,
+		"resolveJsonModule": true,
+		"allowSyntheticDefaultImports": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"skipLibCheck": true,
+		"jsx": "react",
+		"baseUrl": "./src",
+		"paths": {
+			"~/*": ["*"]
+		}
+	},
+	"include": [
+		"src"
+	],
+	"exclude": [
+		"src/lib/math/ConvexHullGrahamScan.js",
+		"src/lib/math/OMBB.js",
+		"src/lib/tile-processing/vector/providers/pbf/vector_tile.js"
+	]
+}

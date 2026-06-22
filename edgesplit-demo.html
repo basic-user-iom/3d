@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Three.js EdgeSplit Modifier Demo</title>
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background-color: #1a1a1a;
+			overflow: hidden;
+		}
+
+		canvas {
+			display: block;
+		}
+
+		#info {
+			position: absolute;
+			top: 20px;
+			left: 20px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 15px 20px;
+			border-radius: 8px;
+			font-size: 14px;
+			line-height: 1.6;
+			max-width: 300px;
+			z-index: 100;
+			backdrop-filter: blur(10px);
+		}
+
+		#info h1 {
+			font-size: 18px;
+			margin-bottom: 10px;
+			color: #4a9eff;
+		}
+
+		#info p {
+			margin: 5px 0;
+			font-size: 12px;
+			color: #ccc;
+		}
+
+		#controls {
+			position: absolute;
+			top: 20px;
+			right: 20px;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 20px;
+			border-radius: 8px;
+			color: white;
+			min-width: 280px;
+			max-height: 90vh;
+			overflow-y: auto;
+			z-index: 100;
+			backdrop-filter: blur(10px);
+		}
+
+		#controls h2 {
+			font-size: 16px;
+			margin-bottom: 15px;
+			color: #4a9eff;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			padding-bottom: 10px;
+		}
+
+		.control-group {
+			margin-bottom: 20px;
+		}
+
+		.control-group label {
+			display: block;
+			margin-bottom: 8px;
+			font-size: 13px;
+			color: #fff;
+		}
+
+		.control-group small {
+			display: block;
+			margin-top: 4px;
+			font-size: 11px;
+			color: #aaa;
+		}
+
+		input[type="range"] {
+			width: 100%;
+			margin: 5px 0;
+		}
+
+		.checkbox-label {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			cursor: pointer;
+		}
+
+		input[type="checkbox"] {
+			width: 18px;
+			height: 18px;
+			cursor: pointer;
+		}
+
+		.value-display {
+			display: inline-block;
+			min-width: 50px;
+			text-align: right;
+			color: #4a9eff;
+			font-weight: 600;
+		}
+
+		button {
+			width: 100%;
+			padding: 10px;
+			margin-top: 10px;
+			background: #4a9eff;
+			color: white;
+			border: none;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 13px;
+			font-weight: 600;
+			transition: background 0.2s;
+		}
+
+		button:hover {
+			background: #3a8eef;
+		}
+
+		button:active {
+			background: #2a7edf;
+		}
+
+		#stats {
+			position: absolute;
+			bottom: 20px;
+			left: 20px;
+			color: #0f0;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 8px 12px;
+			border-radius: 4px;
+			font-family: 'Courier New', monospace;
+			font-size: 11px;
+			z-index: 100;
+		}
+	</style>
+</head>
+<body>
+	<div id="info">
+		<h1>🔲 EdgeSplit Modifier Demo</h1>
+		<p style="color: #4a9eff; font-weight: 600;">Cube Edge Softening</p>
+		<p>🖱️ <strong>Drag</strong> to rotate camera</p>
+		<p>🔍 <strong>Scroll</strong> to zoom</p>
+		<p>⚙️ <strong>Adjust controls</strong> to see edge splitting effects</p>
+		<p style="margin-top: 10px; color: #888; font-size: 11px;">
+			EdgeSplit softens sharp cube edges by splitting vertices. Higher cutoff angles (60-90°) create softer, more rounded edges. Lower angles keep edges sharper.
+		</p>
+	</div>
+
+	<div id="controls">
+		<h2>⚙️ EdgeSplit Controls</h2>
+		
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="wireframe">
+				<span>Wireframe Mode</span>
+			</label>
+			<small>Toggle between wireframe and solid rendering</small>
+		</div>
+
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="showWireframe" checked>
+				<span>Show Wireframe Overlay</span>
+			</label>
+			<small>Display black wireframe overlay on solid cube (like reference image)</small>
+		</div>
+
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="showOriginal" checked>
+				<span>Show Original Geometry</span>
+			</label>
+			<small>Display the original sharp-edged cube alongside the softened one</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Cube Segments: <span class="value-display" id="segmentsValue">12</span>
+				<input type="range" id="segmentsSlider" min="4" max="20" step="1" value="12">
+			</label>
+			<small>Number of segments per cube face (more = smoother rounded edges, like reference image)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Cutoff Angle (degrees): <span class="value-display" id="angleValue">85.00</span>
+				<input type="range" id="angleSlider" min="70" max="90" step="0.5" value="85">
+			</label>
+			<small>Edges with angles above this will be split. Higher = more rounded (85-90° for beveled look)</small>
+		</div>
+
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="flatShading">
+				<span>Flat Shading</span>
+			</label>
+			<small>Toggle between smooth (shows softening) and flat (shows faceting)</small>
+		</div>
+
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="tryKeepNormals" checked>
+				<span>Try Keep Normals</span>
+			</label>
+			<small>Attempt to preserve original normals when splitting</small>
+		</div>
+
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="showEdges" checked>
+				<span>Show Edges (Green Lines)</span>
+			</label>
+			<small>Visualize the edges created by EdgeSplit modifier</small>
+		</div>
+
+		<button id="resetBtn">🔄 Reset to Defaults</button>
+		<button id="reapplyBtn">🔄 Reapply Modifier</button>
+	</div>
+
+	<div id="stats"></div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { EdgeSplitModifier } from 'three/addons/modifiers/EdgeSplitModifier.js';
+		import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+		// ==========================================
+		// SCENE SETUP
+		// ==========================================
+
+		const scene = new THREE.Scene();
+		scene.background = new THREE.Color(0xe0e0e0); // Light grey background like reference
+
+		const camera = new THREE.PerspectiveCamera(
+			75,
+			window.innerWidth / window.innerHeight,
+			0.1,
+			1000
+		);
+		camera.position.set(5, 5, 5);
+		camera.lookAt(0, 0, 0);
+
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.shadowMap.enabled = true;
+		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		document.body.appendChild(renderer.domElement);
+
+		// Controls
+		const controls = new OrbitControls(camera, renderer.domElement);
+		controls.target.set(0, 0, 0);
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.05;
+		controls.minDistance = 3;
+		controls.maxDistance = 20;
+
+		// ==========================================
+		// LIGHTING
+		// ==========================================
+
+		// Main directional light - positioned to show faceting clearly
+		const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
+		mainLight.position.set(5, 10, 5);
+		mainLight.castShadow = true;
+		mainLight.shadow.mapSize.width = 2048;
+		mainLight.shadow.mapSize.height = 2048;
+		mainLight.shadow.camera.near = 0.5;
+		mainLight.shadow.camera.far = 50;
+		mainLight.shadow.camera.left = -10;
+		mainLight.shadow.camera.right = 10;
+		mainLight.shadow.camera.top = 10;
+		mainLight.shadow.camera.bottom = -10;
+		scene.add(mainLight);
+
+		// Fill light - lower intensity to emphasize faceting
+		const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+		fillLight.position.set(-5, 5, -5);
+		scene.add(fillLight);
+
+		// Ambient light - softer for rounded cube look
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+		scene.add(ambientLight);
+
+		// Additional rim light to highlight edges
+		const rimLight = new THREE.DirectionalLight(0xffffff, 0.5);
+		rimLight.position.set(-5, -5, -10);
+		scene.add(rimLight);
+
+		// ==========================================
+		// GEOMETRY AND MODIFIER
+		// ==========================================
+
+		// Original geometry - using a cube with many subdivisions for rounded edges
+		// EdgeSplit will soften the sharp edges of the cube to create beveled/rounded effect
+		// More segments = smoother rounded edges (like the reference image)
+		let originalGeometry = new THREE.BoxGeometry(2, 2, 2, 12, 12, 12);
+		
+		// EdgeSplit modifier
+		const modifier = new EdgeSplitModifier();
+
+		// Modified geometry (will be created on first apply)
+		let modifiedGeometry = null;
+		let cubeMesh = null;
+		let originalMesh = null;
+		let edgesHelper = null;
+
+		// Material - light grey/white like reference image, smooth shading
+		const material = new THREE.MeshStandardMaterial({
+			color: 0xf5f5f5, // Light grey like reference
+			metalness: 0.1,
+			roughness: 0.7, // More matte like reference
+			flatShading: false, // Smooth shading shows rounded edges
+			side: THREE.DoubleSide
+		});
+
+		// Edge material for visualization - black wireframe like reference
+		const edgeMaterial = new THREE.LineBasicMaterial({
+			color: 0x000000, // Black wireframe like reference image
+			linewidth: 1
+		});
+
+		// Function to apply the modifier
+		function applyModifier() {
+			const cutoffAngle = parseFloat(document.getElementById('angleSlider').value) * (Math.PI / 180);
+			const tryKeepNormals = document.getElementById('tryKeepNormals').checked;
+
+			// Clone the original geometry to avoid modifying it
+			let geometryClone = originalGeometry.clone();
+			
+			// EdgeSplitModifier requires indexed geometry with position and normal attributes
+			// Ensure the geometry has normals computed
+			geometryClone.computeVertexNormals();
+			
+			// Debug: Log geometry info before applying modifier
+			console.log('Geometry before modifier:', {
+				hasIndex: !!geometryClone.index,
+				indexCount: geometryClone.index ? geometryClone.index.count : 0,
+				hasPosition: !!geometryClone.attributes.position,
+				hasNormal: !!geometryClone.attributes.normal,
+				positionCount: geometryClone.attributes.position ? geometryClone.attributes.position.count : 0,
+				normalCount: geometryClone.attributes.normal ? geometryClone.attributes.normal.count : 0
+			});
+			
+			// Ensure geometry is properly indexed
+			if (!geometryClone.index || geometryClone.index.count === 0) {
+				console.warn('Geometry is not indexed, attempting to fix...');
+				// If not indexed, convert to indexed
+				const positions = geometryClone.attributes.position;
+				if (positions && positions.count > 0) {
+					// Create index array (each vertex is unique in non-indexed geometry)
+					const index = new Uint16Array(positions.count);
+					for (let i = 0; i < positions.count; i++) {
+						index[i] = i;
+					}
+					geometryClone.setIndex(new THREE.BufferAttribute(index, 1));
+					geometryClone.computeVertexNormals();
+				}
+			}
+			
+			// Apply the modifier
+			try {
+				modifiedGeometry = modifier.modify(geometryClone, cutoffAngle, tryKeepNormals);
+			} catch (error) {
+				console.error('Error applying EdgeSplit modifier:', error);
+				console.error('Geometry info:', {
+					hasIndex: !!geometryClone.index,
+					indexCount: geometryClone.index ? geometryClone.index.count : 0,
+					hasPosition: !!geometryClone.attributes.position,
+					hasNormal: !!geometryClone.attributes.normal,
+					positionCount: geometryClone.attributes.position ? geometryClone.attributes.position.count : 0
+				});
+				// Fallback: use original geometry if modifier fails
+				modifiedGeometry = geometryClone;
+			}
+
+			// Remove old meshes and helpers
+			if (cubeMesh) {
+				scene.remove(cubeMesh);
+				cubeMesh.geometry.dispose();
+			}
+			if (edgesHelper) {
+				scene.remove(edgesHelper);
+				edgesHelper.geometry.dispose();
+			}
+
+			// Create new mesh with modified geometry
+			cubeMesh = new THREE.Mesh(modifiedGeometry, material);
+			cubeMesh.castShadow = true;
+			cubeMesh.receiveShadow = true;
+			scene.add(cubeMesh);
+
+			// Add edge visualization to show the split edges
+			const edgesGeometry = new THREE.EdgesGeometry(modifiedGeometry);
+			edgesHelper = new THREE.LineSegments(edgesGeometry, edgeMaterial);
+			edgesHelper.position.copy(cubeMesh.position);
+			edgesHelper.rotation.copy(cubeMesh.rotation);
+			scene.add(edgesHelper);
+
+			// Log vertex count difference to show the modifier is working
+			const originalVertices = originalGeometry.attributes.position.count;
+			const modifiedVertices = modifiedGeometry.attributes.position.count;
+			console.log(`✅ EdgeSplit applied: cutoffAngle=${(cutoffAngle * 180 / Math.PI).toFixed(2)}°, tryKeepNormals=${tryKeepNormals}`);
+			console.log(`   Vertices: ${originalVertices} → ${modifiedVertices} (${modifiedVertices - originalVertices} added)`);
+		}
+
+		// Function to create/show original geometry
+		function updateOriginalMesh() {
+			const showOriginal = document.getElementById('showOriginal').checked;
+
+			if (showOriginal && !originalMesh) {
+				const originalMaterial = new THREE.MeshStandardMaterial({
+					color: 0xff6b6b,
+					metalness: 0.3,
+					roughness: 0.4,
+					flatShading: false,
+					transparent: true,
+					opacity: 0.5,
+					side: THREE.DoubleSide
+				});
+				originalMesh = new THREE.Mesh(originalGeometry.clone(), originalMaterial);
+				originalMesh.position.set(-3, 0, 0);
+				originalMesh.castShadow = true;
+				originalMesh.receiveShadow = true;
+				scene.add(originalMesh);
+			} else if (!showOriginal && originalMesh) {
+				scene.remove(originalMesh);
+				originalMesh.geometry.dispose();
+				originalMesh.material.dispose();
+				originalMesh = null;
+			}
+
+			// Adjust modified mesh position
+			if (cubeMesh) {
+				cubeMesh.position.set(showOriginal ? 3 : 0, 0, 0);
+			}
+			if (edgesHelper) {
+				edgesHelper.position.set(showOriginal ? 3 : 0, 0, 0);
+			}
+		}
+
+		// Initial application - don't show original by default to match reference
+		applyModifier();
+		// Don't show original by default to focus on the rounded cube
+		document.getElementById('showOriginal').checked = false;
+
+		// ==========================================
+		// UI CONTROLS
+		// ==========================================
+
+		// Update value displays
+		function updateValueDisplays() {
+			document.getElementById('angleValue').textContent = 
+				parseFloat(document.getElementById('angleSlider').value).toFixed(2);
+			document.getElementById('segmentsValue').textContent = 
+				document.getElementById('segmentsSlider').value;
+		}
+
+		// Function to recreate geometry with new segments
+		function recreateGeometry() {
+			const segments = parseInt(document.getElementById('segmentsSlider').value);
+			
+			// Dispose old geometry
+			if (originalGeometry) {
+				originalGeometry.dispose();
+			}
+			
+			// Create new cube geometry with specified segments
+			originalGeometry = new THREE.BoxGeometry(2, 2, 2, segments, segments, segments);
+			
+			// Reapply modifier with new geometry
+			applyModifier();
+			updateOriginalMesh();
+		}
+
+		// Wireframe toggle
+		document.getElementById('wireframe').addEventListener('change', (e) => {
+			material.wireframe = e.target.checked;
+			if (originalMesh) {
+				originalMesh.material.wireframe = e.target.checked;
+			}
+			// Toggle edge visualization
+			if (edgesHelper) {
+				const showWireframe = document.getElementById('showWireframe').checked;
+				edgesHelper.visible = !e.target.checked && showWireframe;
+			}
+		});
+
+		// Flat shading toggle
+		document.getElementById('flatShading').addEventListener('change', (e) => {
+			material.flatShading = e.target.checked;
+			if (originalMesh) {
+				originalMesh.material.flatShading = false; // Keep original smooth
+			}
+			// Recompute normals for flat shading
+			if (cubeMesh && cubeMesh.geometry) {
+				cubeMesh.geometry.computeVertexNormals();
+			}
+		});
+
+		// Show original toggle
+		document.getElementById('showOriginal').addEventListener('change', () => {
+			updateOriginalMesh();
+		});
+
+		// Show edges toggle
+		document.getElementById('showEdges').addEventListener('change', (e) => {
+			if (edgesHelper) {
+				edgesHelper.visible = e.target.checked && !document.getElementById('wireframe').checked;
+			}
+		});
+
+		// Show wireframe overlay toggle
+		document.getElementById('showWireframe').addEventListener('change', (e) => {
+			if (edgesHelper) {
+				edgesHelper.visible = e.target.checked && !document.getElementById('wireframe').checked;
+			}
+			// Also update showEdges checkbox to match
+			document.getElementById('showEdges').checked = e.target.checked;
+		});
+
+		// Segments slider - recreate geometry and reapply modifier
+		document.getElementById('segmentsSlider').addEventListener('input', () => {
+			updateValueDisplays();
+			recreateGeometry();
+		});
+
+		// Angle slider - reapply modifier on change for real-time preview
+		document.getElementById('angleSlider').addEventListener('input', () => {
+			updateValueDisplays();
+			applyModifier();
+			updateOriginalMesh();
+			// Restore edge visibility state
+			const showWireframe = document.getElementById('showWireframe').checked;
+			if (edgesHelper) {
+				edgesHelper.visible = showWireframe && !document.getElementById('wireframe').checked;
+			}
+		});
+
+		// Reapply button
+		document.getElementById('reapplyBtn').addEventListener('click', () => {
+			applyModifier();
+			updateOriginalMesh();
+		});
+
+		// Reset button
+		document.getElementById('resetBtn').addEventListener('click', () => {
+			document.getElementById('wireframe').checked = false;
+			document.getElementById('showOriginal').checked = false;
+			document.getElementById('segmentsSlider').value = '12';
+			document.getElementById('angleSlider').value = '85';
+			document.getElementById('tryKeepNormals').checked = true;
+			document.getElementById('showEdges').checked = true;
+			document.getElementById('showWireframe').checked = true;
+			document.getElementById('flatShading').checked = false;
+			
+			material.wireframe = false;
+			material.flatShading = false;
+			recreateGeometry();
+			if (edgesHelper) edgesHelper.visible = true;
+			updateValueDisplays();
+		});
+
+		// Initial value display update
+		updateValueDisplays();
+
+		// ==========================================
+		// ANIMATION LOOP
+		// ==========================================
+
+		const statsDiv = document.getElementById('stats');
+		let frameCount = 0;
+		let lastTime = performance.now();
+
+		function animate() {
+			requestAnimationFrame(animate);
+
+			controls.update();
+
+			// Rotate meshes slightly for visual interest
+			if (cubeMesh) {
+				cubeMesh.rotation.y += 0.005;
+			}
+			if (originalMesh) {
+				originalMesh.rotation.y += 0.005;
+			}
+			if (edgesHelper) {
+				edgesHelper.rotation.y += 0.005;
+			}
+
+			// Render
+			renderer.render(scene, camera);
+
+			// Update stats
+			frameCount++;
+			const now = performance.now();
+			if (now - lastTime >= 1000) {
+				const fps = Math.round((frameCount * 1000) / (now - lastTime));
+				statsDiv.textContent = `FPS: ${fps}`;
+				frameCount = 0;
+				lastTime = now;
+			}
+		}
+
+		// Handle window resize
+		window.addEventListener('resize', () => {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		});
+
+		// Start animation
+		animate();
+
+		console.log('✅ EdgeSplit Modifier Demo initialized!');
+		console.log('💡 Adjust the cutoff angle to see how edges are split.');
+		console.log('💡 Lower angles split more edges, creating sharper corners.');
+	</script>
+</body>
+</html>
+

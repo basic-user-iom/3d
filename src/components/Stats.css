@@ -1,0 +1,41 @@
+.stats {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  background: #1f2430;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: #e5e7eb;
+  font-size: 12px;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  z-index: 9999;
+  min-width: 240px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  pointer-events: auto; /* allow dragging */
+  cursor: grab;
+  user-select: none;
+}
+
+.stats:active {
+  cursor: grabbing;
+}
+
+.stat-item {
+  display: flex;
+  gap: 6px;
+}
+
+.stat-label {
+  color: rgba(229, 231, 235, 0.7);
+}
+
+.stat-value {
+  color: #90ee90;
+  font-weight: 600;
+}
+

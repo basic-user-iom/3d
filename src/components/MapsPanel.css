@@ -1,0 +1,257 @@
+.maps-panel {
+  position: fixed;
+  /* top and left are set via inline styles from useFloatingPanel */
+  width: 420px;
+  min-width: 350px;
+  max-width: 600px;
+  max-height: calc(100vh - 72px);
+  height: auto;
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  padding: 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  resize: horizontal;
+  overflow-x: auto;
+  backdrop-filter: blur(4px);
+}
+
+@media (max-width: 768px) {
+  .maps-panel {
+    width: 100%;
+    max-width: 100%;
+    resize: none;
+  }
+}
+
+.maps-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2f2f2f;
+  flex-shrink: 0;
+  background: #242424;
+  cursor: grab;
+  user-select: none;
+}
+
+.maps-panel.dragging .maps-panel-header {
+  cursor: grabbing;
+}
+
+.maps-panel-header h3 {
+  margin: 0;
+  color: #f5f5f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.maps-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  background: #1a1a1a;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.maps-tabs {
+  display: flex;
+  background: #242424;
+  border-bottom: 1px solid #2f2f2f;
+  padding: 0 8px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.tab-button {
+  flex: 1;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #aaa;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.tab-button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-button.active {
+  color: #4a7ba3;
+  border-bottom-color: #4a7ba3;
+  background: rgba(74, 123, 163, 0.1);
+}
+
+.maps-tab-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.maps-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.maps-section h4 {
+  margin: 0;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.maps-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.maps-section label span {
+  color: #aaa;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.maps-section input {
+  width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  transition: all 0.2s;
+  box-sizing: border-box;
+}
+
+.maps-section input:focus {
+  outline: none;
+  border-color: #4a7ba3;
+  background: #2f2f2f;
+}
+
+.maps-section input::placeholder {
+  color: #666;
+}
+
+.load-button {
+  width: 100%;
+  padding: 12px;
+  background: #3a5a78;
+  border: 1px solid #4a7ba3;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.load-button:hover:not(:disabled) {
+  background: #4a6a88;
+  border-color: #5a8bb3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(74, 123, 163, 0.4);
+}
+
+.load-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error-message {
+  padding: 12px;
+  background: #5a2a2a;
+  border: 1px solid #7a3a3a;
+  border-radius: 6px;
+  color: #ff8888;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.maps-section p {
+  color: #aaa;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.maps-panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.maps-panel-content::-webkit-scrollbar-track {
+  background: #252525;
+}
+
+.maps-panel-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.maps-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+

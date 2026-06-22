@@ -1,0 +1,108 @@
+﻿
+      directionalLights.forEach((light) => {
+        if (light.userData.isSun) {
+          light.position.copy(sunPosition)
+          sunLightFound = true
+          try {
+>           console.log('[LightingDebug] Sun light updated, position:', sunPosition.toArray(), 'intensity:', 
+light.intensity)
+          } catch {}
+        }
+      })
+      if (!sunLightFound) {
+        try {
+  
+      // Update dynamic sky (includes volumetric clouds)
+      if (dynamicSkyEnabled) {
+        // Create or update dynamic sky
+        try {
+>         console.log('[WeatherDebug] DynamicSky enabled, cloudDensity:', cloudDensity, 'HDR:', hdrEnabled, 'hasEnv:', 
+!!scene.environment)
+        } catch {}
+        if (!viewerRef.current.dynamicSky) {
+          viewerRef.current.dynamicSky = new DynamicSky(scene, {
+            timeOfDay,
+            turbidity: skyTurbidity,
+                }
+              }
+            })
+            
+            try {
+>             console.log(`[WeatherDebug] Applied fallback RoomEnvironment to ${appliedCount} materials (DynamicSky 
+enabled, HDR disabled)`)
+            } catch {}
+          } catch {}
+        }
+        
+        // When HDR is enabled, HDR background takes priority - ensure it's set correctly
+                }
+              }
+            })
+            
+            try {
+>             console.log(`[WeatherDebug] Applied fallback RoomEnvironment to ${appliedCount} materials (HDR 
+disabled)`)
+            } catch {}
+          } catch {}
+        }
+        
+        // Apply environment map to all PBR materials for reflections
+            'Materials with metalness > 0.3 require environment maps for proper reflections',
+            'PBR materials (MeshStandardMaterial/MeshPhysicalMaterial) support envMap reflections',
+            'Non-PBR materials may not reflect properly - consider converting to PBR'
+          ]
+        }
+>       console.log('[LightingSummary] Complete state (copy this if reporting issues):', JSON.stringify(summary, null, 
+2))
+      } catch {}
+      
+      // CRITICAL FINAL CHECK: Ensure HDR background is ALWAYS set if HDR is enabled
+      // This runs AFTER all lighting/weather logic to override any background changes
+      // Must use original equirectangular texture, not PMREM cube map
+        console.groupEnd()
+      } catch {}
+      
+      if (shouldEnableRain) {
+        if (!rainSystem) {
+>         try { console.log('[WeatherDebug] Creating new rain system') } catch {}
+          rainSystem = new ParticleSystem(scene, {
+            type: 'rain',
+            intensity: rainIntensity,
+            enabled: true,
+            windIntensity,
+          })
+          if (particleSystems) {
+            particleSystems.push(rainSystem)
+          }
+        } else {
+>         try { console.log('[WeatherDebug] Updating existing rain system to enabled') } catch {}
+          rainSystem.updateConfig({
+            intensity: rainIntensity,
+            enabled: true,
+            windIntensity,
+            collisionEnabled: rainCollisionEnabled,
+          if (rainSystem.material) {
+            rainSystem.material.visible = true
+          }
+        }
+      } else if (rainSystem) {
+>       try { console.log('[WeatherDebug] Disabling rain system') } catch {}
+        rainSystem.updateConfig({ enabled: false })
+      }
+  
+      // Update or create snow particle system
+      let snowSystem = particleSystems?.find((s: any) => s.config?.type === 'snow')
+            hasEnvironment: !!scene.environment,
+            hasBackground: !!scene.background
+          },
+          conflicts: particleConflicts.length > 0 ? particleConflicts : null
+        }
+>       console.log('[ParticleSummary] Complete state (copy this if reporting issues):', 
+JSON.stringify(particleSummary, null, 2))
+        
+        console.groupCollapsed('[WeatherDebug] Update summary')
+        console.log({ rainIntensity, snowIntensity, cloudDensity, fogDensity, windIntensity })
+        console.groupEnd()
+      } catch {}
+
+

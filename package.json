@@ -1,0 +1,113 @@
+{
+  "name": "3d-test-software",
+  "version": "3.7.0",
+  "description": "Beta desktop and web 3D model viewer built with React, Vite, and Three.js.",
+  "author": "Mirjan",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "preflight": "node scripts/check-startup-requirements.js",
+    "dev": "concurrently -n \"StreetsGL,3DViewer\" -c \"cyan,yellow\" \"npm run streets-gl:managed\" \"vite --host --port 3000 --open\"",
+    "dev:full": "concurrently -n \"BugServer,StreetsGL,3DViewer\" -c \"green,cyan,yellow\" \"npm run server\" \"npm run streets-gl:managed\" \"vite --host --port 3000 --open\"",
+    "dev:with-revit": "concurrently -n \"RevitSync,StreetsGL,3DViewer\" -c \"magenta,cyan,yellow\" \"npm run revit-sync\" \"npm run streets-gl:managed\" \"vite --host --port 3000 --open\"",
+    "dev:skip-check": "concurrently -n \"StreetsGL,3DViewer\" -c \"cyan,yellow\" \"npm run streets-gl:managed\" \"vite --host --port 3000 --open\"",
+    "dev:viewer-only": "concurrently -n \"StreetsGL,3DViewer\" -c \"cyan,yellow\" \"npm run streets-gl:managed\" \"vite --host --port 3000\"",
+    "dev:revit-only": "concurrently -n \"RevitSync,3DViewer\" -c \"magenta,yellow\" \"npm run revit-sync\" \"vite --host --port 3000 --open\"",
+    "revit-sync": "cd server-revit-sync && node server.js",
+    "desktop:dev": "concurrently -n \"StreetsGL,3DViewer,Desktop\" -c \"cyan,yellow,magenta\" \"npm run streets-gl:managed\" \"vite --host --port 3000\" \"wait-on http://localhost:3000 && electron .\"",
+    "start:both": "npm run dev",
+    "start:desktop": "npm run desktop:dev",
+    "desktop:build": "npm run build && npm --prefix streets-gl-alt run build && electron .",
+    "desktop:dist": "npm run build && npm --prefix streets-gl-alt run build && electron-builder --win nsis portable",
+    "streets-gl": "cd streets-gl-alt && npm run dev",
+    "streets-gl:managed": "node scripts/start-streets-gl-server.js",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "typecheck:full": "tsc",
+    "preview": "vite preview",
+    "test": "vitest",
+    "server": "node server.js",
+    "docs:check": "node scripts/check-docs.mjs",
+    "lint": "eslint .",
+    "lint:scripts": "eslint .",
+    "test:smoke": "node scripts/smoke-tests.js",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@mkkellogg/gaussian-splats-3d": "^0.4.7",
+    "3d-tiles-renderer": "^0.4.18",
+    "dxf-parser": "^1.1.2",
+    "gltf-pipeline": "^4.3.0",
+    "jszip": "^3.10.1",
+    "ktx2-encoder": "^0.5.1",
+    "meshoptimizer": "^0.25.0",
+    "pako": "^2.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "three": "^0.181.1",
+    "three-csm": "^4.2.1",
+    "three-gpu-pathtracer": "^0.0.23",
+    "three-mesh-bvh": "^0.9.2",
+    "three-stdlib": "^2.36.1",
+    "web-ifc": "^0.0.74",
+    "web-ifc-three": "^0.0.126",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^8.57.0",
+    "@playwright/test": "^1.49.1",
+    "@types/jszip": "^3.4.1",
+    "@types/pako": "^1.0.4",
+    "@types/react": "^19.2.6",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.181.0",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "electron": "^31.7.5",
+    "electron-builder": "^25.1.8",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "globals": "^15.14.0",
+    "express": "^5.1.0",
+    "typescript": "^5.2.2",
+    "vite": "^7.2.2",
+    "vitest": "^4.0.10",
+    "vitest-mock-extended": "^3.1.0",
+    "wait-on": "^8.0.5"
+  },
+  "build": {
+    "appId": "com.3dviewer.app",
+    "productName": "3D Viewer",
+    "directories": {
+      "output": "dist/desktop-build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/main.cjs",
+      "electron/preload.cjs",
+      "streets-gl-alt/build/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "sign": null,
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "artifactName": "3D-Viewer-Setup-${version}-${arch}.${ext}",
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    },
+    "portable": {
+      "artifactName": "3D-Viewer-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": []
+  }
+}

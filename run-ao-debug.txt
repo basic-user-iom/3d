@@ -1,0 +1,15 @@
+Copy and paste this ONE LINE into your browser console (F12):
+
+(()=>{const pp=window.__viewer?.postProcessingSystem||window.sharedViewer?.postProcessingSystem;if(!pp){console.error('❌ Not found');return;}console.log('=== AO Debug ===');console.log('AO enabled:',pp.config?.ao?.enabled);console.log('AO pass:',!!pp.aoPass);console.log('Composer:',!!pp.composer);if(pp.composer){const c=pp.composer;console.log('readBuffer.depthTexture:',!!c.readBuffer?.depthTexture);console.log('composerRenderTarget.depthTexture:',!!pp.composerRenderTarget?.depthTexture);if(!c.readBuffer?.depthTexture&&pp.composerRenderTarget?.depthTexture){console.log('⚠️ FIXING: Connecting depth texture...');c.readBuffer.depthTexture=pp.composerRenderTarget.depthTexture;console.log('✅ Fixed! Refresh and enable AO again.');}else if(!c.readBuffer?.depthTexture){console.log('❌ Depth texture missing - this is the problem!');}}})()
+
+
+
+
+
+
+
+
+
+
+
+

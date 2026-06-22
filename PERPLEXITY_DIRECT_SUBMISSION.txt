@@ -1,0 +1,82 @@
+Three.js Shadow System Architecture - Critical Issues Need Guidance
+
+PROBLEM:
+We have a Three.js React application with three shadow systems (Standard, HDR, CSM/Weather GL) that can be switched between. After comprehensive code analysis, we've identified 5 critical issues causing shadow inconsistencies.
+
+CRITICAL ISSUES:
+
+1. DOUBLE LIGHT POSITION RESTORATION (Race Condition)
+   - Light positions restored atomically in ShadowSystemCoordinator.switchSystem() (lines 110-119)
+   - Then restored again in requestAnimationFrame callback in ViewerCanvas.tsx (lines 10759-10866)
+   - Causes: Position conflicts, incorrect final positions
+   - Question: Best pattern to ensure positions restored exactly once, atomically?
+
+2. SHADOW CAMERA BOUNDS TIMING
+   - CSM destroyed before switch (good)
+   - BUT: Shadow camera bounds updated in requestAnimationFrame before CSM lights fully removed
+   - Even though CSM lights excluded from bounds calculation, timing window exists
+   - Causes: Shadows only appear in specific positions (user-reported)
+   - Question: How to ensure bounds calculated only after CSM lights completely removed?
+
+3. HDR DISABLE DOESN'T RESTORE CSM
+   - Code detects CSM should be restored (savedShadowSystem === 'csm')
+   - BUT: Only logs message, doesn't actually restore CSM system
+   - CSM restoration relies on enableStandaloneWeather effect which may not trigger
+   - Code location: ViewerCanvas.tsx:7937-7939
+   - Question: How to properly restore CSM after HDR disable with correct config?
+
+4. DOUBLE CSM DESTRUCTION
+   - CSM destroyed manually in ViewerCanvas.tsx before switch (line 10740-10744)
+   - Also destroyed automatically in ShadowManager.disableCurrentSystem() (line 448-452)
+   - Causes: Double destruction errors, timing issues, resource leaks
+   - Question: Best pattern for resource cleanup coordination?
+
+5. LIGHTS NOT FOUND AFTER WEATHER GL EXIT
+   - directionalLights Map may be empty after CSM switch
+   - Scene traversal fallback may miss hidden lights
+   - Console shows: "⚠️ No directional lights found to register with ShadowManager"
+   - Question: How to ensure lights always findable? Separate registry? Never hide lights?
+
+ARCHITECTURE QUESTIONS:
+
+1. Best architectural pattern for managing multiple shadow systems?
+   - State machine pattern?
+   - Command pattern for transitions?
+   - Transition queue to prevent overlapping switches?
+
+2. Resource cleanup coordination?
+   - Synchronous before switch?
+   - Asynchronous with proper waiting?
+   - Centralized cleanup manager?
+
+3. Async operation handling during switches?
+   - Promises/async-await?
+   - Event emitters?
+   - requestAnimationFrame with proper sequencing?
+
+4. Shadow camera bounds synchronization?
+   - Wait for CSM destruction Promise?
+   - Callback from destroy method?
+   - Calculate only after scene stable?
+
+5. Light registry pattern?
+   - Separate persistent registry?
+   - Never hide lights, only disable shadows?
+   - WeakMap for tracking?
+
+TECH STACK:
+- Three.js 0.162+
+- React 18
+- TypeScript
+- Zustand state management
+
+NEED:
+Concrete code patterns and best practices for Three.js shadow system transitions that can be implemented in existing codebase.
+
+TEST RESULTS:
+- Standard → Weather GL → Standard: ⚠️ PARTIAL PASS (2 critical issues)
+- Standard → HDR → Standard: ⚠️ PARTIAL PASS (2 critical issues)
+- Weather GL → HDR → Weather GL: ❌ FAIL (3 critical issues)
+- Rapid Switching: ❌ FAIL (4 critical issues)
+
+Total: 5 critical issues, 8 warnings identified

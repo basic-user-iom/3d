@@ -1,0 +1,451 @@
+.primitives-panel {
+  position: fixed;
+  top: 60px;
+  left: 0;
+  width: 380px;
+  min-width: 320px;
+  max-width: 480px;
+  max-height: calc(100vh - 72px);
+  height: auto;
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  padding: 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  resize: none;
+  overflow-x: hidden;
+  backdrop-filter: blur(4px);
+}
+
+@media (max-width: 768px) {
+  .primitives-panel {
+    width: 100%;
+    max-width: 100%;
+    resize: none;
+  }
+}
+
+.primitives-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2f2f2f;
+  flex-shrink: 0;
+  background: #242424;
+  cursor: grab;
+  user-select: none;
+}
+
+.primitives-panel.dragging .primitives-panel-header {
+  cursor: grabbing;
+}
+
+.primitives-panel-header h3 {
+  margin: 0;
+  color: #f5f5f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.primitives-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  padding-right: calc(20px + 8px);
+  flex: 1;
+  min-height: 0;
+  background: #1a1a1a;
+  box-sizing: border-box;
+}
+
+@media (max-width: 400px) {
+  .primitives-panel-content {
+    padding: 12px;
+    gap: 16px;
+  }
+}
+
+.primitives-panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.primitives-panel-content::-webkit-scrollbar-track {
+  background: #252525;
+}
+
+.primitives-panel-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.primitives-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.primitives-section h4,
+.scale-section h4,
+.texture-section h4 {
+  margin: 0 0 12px 0;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.primitives-section {
+  overflow: visible;
+}
+
+.primitives-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.primitive-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 8px;
+  background: #2a2a2a;
+  border: 2px solid #3a3a3a;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #e0e0e0;
+  min-height: 80px;
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.primitive-button:hover {
+  background: #333;
+  border-color: #555;
+  transform: translateY(-2px);
+}
+
+.primitive-button:hover .primitive-icon {
+  transform: scale(1.05);
+  filter: brightness(1.1);
+}
+
+.primitive-button.active {
+  background: #3a5a78;
+  border-color: #4a7ba3;
+  box-shadow: 0 4px 12px rgba(74, 123, 163, 0.3);
+}
+
+.primitive-button.active .primitive-icon {
+  filter: brightness(1.2) saturate(1.3);
+  transform: scale(1.1);
+}
+
+.primitive-icon {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 8px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+/* Box Icon - 3D cube */
+.primitive-icon-box {
+  background: linear-gradient(135deg, #666 0%, #888 50%, #444 100%);
+  border: 1px solid #555;
+  border-radius: 4px;
+  box-shadow: 
+    inset -2px -2px 0 rgba(0, 0, 0, 0.3),
+    inset 2px 2px 0 rgba(255, 255, 255, 0.1),
+    2px 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Sphere Icon - Circle with gradient */
+.primitive-icon-sphere {
+  background: radial-gradient(circle at 30% 30%, #fff, #888, #444);
+  border-radius: 50%;
+  box-shadow: 
+    inset -3px -3px 6px rgba(0, 0, 0, 0.4),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.2),
+    2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Plane Icon - Flat rectangle */
+.primitive-icon-plane {
+  background: linear-gradient(135deg, #888 0%, #666 100%);
+  border: 1px solid #555;
+  border-radius: 2px;
+  box-shadow: 
+    inset 0 0 4px rgba(0, 0, 0, 0.2),
+    0 2px 4px rgba(0, 0, 0, 0.2);
+  width: 36px;
+  height: 22px;
+  margin: 0 auto;
+}
+
+/* Cone Icon - Triangle */
+.primitive-icon-cone {
+  width: 28px;
+  height: 32px;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: visible;
+}
+
+.primitive-icon-cone::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-bottom: 20px solid #888;
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.primitive-icon-cone::after {
+  content: '';
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 4px;
+  background: #888;
+  border-radius: 0 0 9px 9px;
+}
+
+/* Cylinder Icon - Rounded rectangle */
+.primitive-icon-cylinder {
+  background: linear-gradient(to right, #666 0%, #888 50%, #666 100%);
+  border: 1px solid #555;
+  border-radius: 12px 12px 2px 2px;
+  box-shadow: 
+    inset 0 -4px 6px rgba(0, 0, 0, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.3);
+  width: 22px;
+  height: 28px;
+  margin: 0 auto;
+}
+
+/* Torus Icon - Donut shape using border */
+.primitive-icon-torus {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 4px solid #888;
+  background: transparent;
+  box-shadow: 
+    inset 0 0 8px rgba(0, 0, 0, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.3);
+  position: relative;
+}
+
+.primitive-icon-torus::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1a1a1a;
+}
+
+/* Tetrahedron Icon - Triangle */
+.primitive-icon-tetrahedron {
+  width: 28px;
+  height: 28px;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: visible;
+}
+
+.primitive-icon-tetrahedron::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-bottom: 20px solid #888;
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.primitive-icon-tetrahedron::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 10px solid #666;
+}
+
+/* Octahedron Icon - Diamond shape (rotated square) */
+.primitive-icon-octahedron {
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(135deg, #888 0%, #666 50%, #888 100%);
+  transform: rotate(45deg);
+  border: 1px solid #555;
+  box-shadow: 
+    inset -2px -2px 4px rgba(0, 0, 0, 0.3),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.2),
+    2px 2px 4px rgba(0, 0, 0, 0.3);
+  margin: 0 auto;
+}
+
+.primitive-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  line-height: 1.2;
+  text-align: center;
+  word-break: break-word;
+}
+
+.scale-inputs {
+  display: flex;
+  gap: 12px;
+}
+
+.scale-inputs label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scale-inputs label span {
+  color: #aaa;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.scale-inputs input {
+  width: 100%;
+  padding: 8px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.scale-inputs input:focus {
+  outline: none;
+  border-color: #4a7ba3;
+  background: #2f2f2f;
+}
+
+.texture-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.upload-button,
+.remove-button,
+.create-button {
+  padding: 10px 16px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.upload-button:hover,
+.remove-button:hover {
+  background: #333;
+  border-color: #555;
+}
+
+.remove-button {
+  padding: 8px 12px;
+  background: #5a2a2a;
+  border-color: #7a3a3a;
+}
+
+.remove-button:hover {
+  background: #6a3333;
+  border-color: #8a4444;
+}
+
+.create-button {
+  width: 100%;
+  padding: 14px;
+  background: #3a5a78;
+  border-color: #4a7ba3;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 8px;
+}
+
+.create-button:hover {
+  background: #4a6a88;
+  border-color: #5a8bb3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(74, 123, 163, 0.4);
+}
+

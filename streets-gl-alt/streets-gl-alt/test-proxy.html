@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Proxy Test</title>
+</head>
+<body>
+    <h1>Testing Proxy</h1>
+    <button onclick="testProxy()">Test /vector/13/2412/3079</button>
+    <div id="result"></div>
+    
+    <script>
+        async function testProxy() {
+            const url = '/vector/13/2412/3079';
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing...';
+            
+            try {
+                const response = await fetch(url);
+                resultDiv.innerHTML = `
+                    <p>Status: ${response.status}</p>
+                    <p>Status Text: ${response.statusText}</p>
+                    <p>Headers: ${JSON.stringify([...response.headers.entries()])}</p>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+

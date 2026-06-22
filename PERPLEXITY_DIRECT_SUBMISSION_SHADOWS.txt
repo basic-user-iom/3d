@@ -1,0 +1,147 @@
+Three.js Shadow System Architecture Question - Multiple Shadow Systems with State Management Issues
+
+PROBLEM:
+We have a Three.js application with three shadow system modes that can be switched at runtime:
+1. Weather GL (CSM) - Cascaded Shadow Maps for standalone weather system
+2. Standard Shadows - Default Three.js directional light shadows
+3. HDR System - High Dynamic Range environment
+
+When switching between these modes, we experience inconsistencies:
+- Shadows disappear or don't render correctly
+- Light positions are not restored properly
+- Shadow plane visibility is lost
+- Material shadow properties (castShadow, receiveShadow, depthWrite) are not preserved
+- Shadow maps are not regenerated at correct times
+- Race conditions with state restoration
+
+ARCHITECTURE:
+We have multiple components managing shadows:
+- ShadowManager: Manages shadow system type and switching
+- ShadowSystemCoordinator: Coordinates state preservation during transitions
+- ShadowMaterialStateManager: Preserves material shadow properties
+- ShadowPlaneManager: Manages shadow plane visibility and material
+- CSMShadowSystem: Implements Cascaded Shadow Maps
+
+SPECIFIC ISSUES:
+
+1. LIGHT POSITION RESTORATION:
+When disabling Weather GL (CSM) and switching to Standard shadows, we save original light positions but restore them AFTER the system switch, causing timing issues. Should light positions be restored atomically with the system switch?
+
+2. LIGHT VISIBILITY:
+Our ShadowManager sets light.visible = false when disabling standard shadows. Is this correct, or should lights remain visible? What's the industry best practice?
+
+3. HDR DISABLE LOGIC:
+After HDR disable, we check if CSM is active but may not handle all transition scenarios. Should we save the active shadow system state before HDR is applied?
+
+4. RACE CONDITIONS:
+We use setTimeout and requestAnimationFrame for state restoration, which causes race conditions when users switch systems quickly. What's the best pattern for atomic state transitions in Three.js?
+
+5. MATERIAL STATE:
+Material shadow properties may not be saved before all transitions (especially Weather GL → HDR, HDR → Weather GL). Should we save material state before every transition, or is there a more efficient approach?
+
+6. SHADOW PLANE:
+Shadow plane visibility and material properties are not consistently managed across transitions. Should shadow plane state be part of the shadow system state machine?
+
+CODE EXAMPLES:
+
+Weather GL → Standard Transition:
+```typescript
+else if (!currentEnableStandaloneWeather) {
+  const shadowCoordinator = viewerRef.current?.shadowCoordinator
+  if (shadowCoordinator) {
+    shadowCoordinator.switchSystem('standard', undefined, {
+      preserveMaterials: true,
+      preserveShadowPlane: true,
+      preserveLightStates: true
+    })
+  }
+  
+  // Destroy CSM
+  if (viewerRef.current.csmShadowSystem) {
+    viewerRef.current.csmShadowSystem.destroy()
+    viewerRef.current.csmShadowSystem = undefined
+  }
+  
+  // ⚠️ Light position restoration happens later - timing issue
+}
+```
+
+ShadowManager disableCurrentSystem:
+```typescript
+private disableCurrentSystem(): void {
+  if (this.currentSystem === 'standard') {
+    this.standardLights.forEach(light => {
+      light.castShadow = false
+      light.visible = false // ⚠️ Is this correct?
+    })
+  }
+}
+```
+
+HDR Disable Shadow Restoration:
+```typescript
+const isCSMActive = viewerRef.current?.shadowManager?.isSystemActive('csm') || 
+                    !!viewerRef.current?.csmShadowSystem
+
+if (isCSMActive) {
+  // CSM is active
+} else {
+  // Standard shadows - re-enable
+  directionalLights.forEach((light) => {
+    light.castShadow = true
+    if (light.shadow) {
+      light.shadow.needsUpdate = true
+    }
+  })
+}
+```
+
+QUESTIONS:
+1. Should we implement a proper state machine for shadow system transitions? What architecture?
+2. How to ensure atomic state transitions (lights, materials, shadow plane, shadow maps)?
+3. Industry best practice for light visibility during shadow transitions?
+4. When should we save state (before, during, or after transition)?
+5. When should shadow maps be regenerated (immediate or deferred)?
+6. How to prevent race conditions when switching systems quickly? Should we queue transitions?
+7. How should HDR system interact with shadow systems? Save shadow state before HDR?
+8. How should CSM material uniforms be cleaned up when switching away from CSM?
+9. Should shadow plane state be part of shadow system state or managed separately?
+10. Industry best practices for managing multiple shadow systems in a single Three.js application?
+
+EXPECTED OUTCOME:
+We need a comprehensive solution that:
+- Ensures consistent shadow rendering across all transitions
+- Properly preserves and restores all state (lights, materials, shadow plane)
+- Prevents race conditions
+- Follows Three.js best practices
+- Is maintainable and extensible
+
+Please provide:
+1. Recommended architecture/pattern
+2. Specific code fixes for identified issues
+3. Best practices for state management
+4. Example implementation if possible
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

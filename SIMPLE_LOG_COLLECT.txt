@@ -1,0 +1,26 @@
+═══════════════════════════════════════════════════════════════
+SIMPLE LOG COLLECTION - COPY AND PASTE THIS
+═══════════════════════════════════════════════════════════════
+
+STEP 1: Open browser console on http://localhost:3000
+        Press F12 → Click "Console" tab
+
+STEP 2: Copy the ENTIRE contents of INJECT_LOG_COLLECTOR.js
+        (Open the file, Select All, Copy)
+
+STEP 3: Paste into browser console and press Enter
+
+STEP 4: Wait for popup "Report copied to clipboard!"
+
+STEP 5: Paste the report here
+
+═══════════════════════════════════════════════════════════════
+
+OR - Quick one-liner to check status:
+
+Paste this in console:
+  fetch('http://localhost:3002/api/revit/sessions').then(r=>r.json()).then(console.log)
+
+This shows active sessions (should show your model if export worked)
+
+═══════════════════════════════════════════════════════════════

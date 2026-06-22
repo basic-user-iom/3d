@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Ground Projected Environment - Example Usage</title>
+	<style>
+		body {
+			margin: 0;
+			overflow: hidden;
+			font-family: Arial, sans-serif;
+		}
+		#info {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: white;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			font-size: 14px;
+		}
+		#controls {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 15px;
+			border-radius: 5px;
+			color: white;
+		}
+		button {
+			padding: 8px 15px;
+			margin: 5px 0;
+			cursor: pointer;
+			background: #4CAF50;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			width: 100%;
+		}
+		button:hover {
+			background: #45a049;
+		}
+		label {
+			display: block;
+			margin-top: 10px;
+		}
+		input[type="range"] {
+			width: 100%;
+		}
+	</style>
+</head>
+<body>
+	<div id="info">
+		Ground Projected Environment Mapping Demo<br>
+		Drag to rotate • Scroll to zoom
+	</div>
+	
+	<div id="controls">
+		<button id="toggleBtn">Toggle Ground Projection</button>
+		<label>
+			Height: <span id="heightValue">15</span>
+			<input type="range" id="heightSlider" min="5" max="30" value="15" step="0.5">
+		</label>
+		<label>
+			Radius: <span id="radiusValue">100</span>
+			<input type="range" id="radiusSlider" min="50" max="200" value="100" step="5">
+		</label>
+	</div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "./build/three.module.js",
+				"three/addons/": "./examples/jsm/"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { setupGroundProjectedEnv, setupBasicScene, createPBRMaterial } from './ground-projection-setup.js';
+
+		// Initialize scene
+		const { camera, scene, renderer } = setupBasicScene();
+
+		// Setup ground-projected environment
+		const groundEnv = await setupGroundProjectedEnv(scene, {
+			hdrPath: './examples/textures/equirectangular/blouberg_sunrise_2_1k.hdr',
+			height: 15,
+			radius: 100,
+			enabled: true
+		});
+
+		// Add some demo objects
+		const geometry = new THREE.TorusKnotGeometry(2, 0.6, 100, 16);
+		const material = createPBRMaterial({
+			color: 0x000000,
+			metalness: 1.0,
+			roughness: 0.3,
+			clearcoat: 1.0,
+			clearcoatRoughness: 0.1
+		});
+		const torusKnot = new THREE.Mesh(geometry, material);
+		torusKnot.position.y = 4;
+		scene.add(torusKnot);
+
+		// Add a sphere
+		const sphereGeometry = new THREE.SphereGeometry(1.5, 64, 64);
+		const sphereMaterial = createPBRMaterial({
+			color: 0x2194ce,
+			metalness: 0.9,
+			roughness: 0.1,
+			clearcoat: 1.0,
+			clearcoatRoughness: 0.1
+		});
+		const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+		sphere.position.set(-5, 2.5, 0);
+		scene.add(sphere);
+
+		// Setup controls
+		const controls = new OrbitControls(camera, renderer.domElement);
+		controls.target.set(0, 2, 0);
+		controls.maxPolarAngle = THREE.MathUtils.degToRad(90);
+		controls.maxDistance = 80;
+		controls.minDistance = 10;
+		controls.enablePan = false;
+		controls.update();
+
+		// UI Controls
+		let isGrounded = true;
+		const toggleBtn = document.getElementById('toggleBtn');
+		const heightSlider = document.getElementById('heightSlider');
+		const radiusSlider = document.getElementById('radiusSlider');
+		const heightValue = document.getElementById('heightValue');
+		const radiusValue = document.getElementById('radiusValue');
+
+		toggleBtn.addEventListener('click', () => {
+			isGrounded = !isGrounded;
+			groundEnv.toggle(isGrounded);
+			toggleBtn.textContent = isGrounded ? 'Disable Ground Projection' : 'Enable Ground Projection';
+			render();
+		});
+
+		heightSlider.addEventListener('input', (e) => {
+			const height = parseFloat(e.target.value);
+			heightValue.textContent = height;
+			groundEnv.update(height, parseFloat(radiusSlider.value));
+			render();
+		});
+
+		radiusSlider.addEventListener('input', (e) => {
+			const radius = parseFloat(e.target.value);
+			radiusValue.textContent = radius;
+			groundEnv.update(parseFloat(heightSlider.value), radius);
+			render();
+		});
+
+		controls.addEventListener('change', render);
+
+		// Animation
+		function animate() {
+			requestAnimationFrame(animate);
+			torusKnot.rotation.y += 0.005;
+			sphere.rotation.y += 0.003;
+			render();
+		}
+
+		function render() {
+			renderer.render(scene, camera);
+		}
+
+		animate();
+	</script>
+</body>
+</html>
+

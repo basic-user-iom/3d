@@ -1,0 +1,227 @@
+.rendering-effects-panel {
+  position: fixed;
+  /* top and left are set via inline styles from useFloatingPanel */
+  width: 420px;
+  min-width: 350px;
+  max-width: 600px;
+  max-height: calc(100vh - 72px);
+  height: auto;
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  padding: 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  resize: horizontal;
+  overflow-x: auto;
+  backdrop-filter: blur(4px);
+}
+
+@media (max-width: 768px) {
+  .rendering-effects-panel {
+    width: 100%;
+    max-width: 100%;
+    resize: none;
+  }
+}
+
+.rendering-effects-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2f2f2f;
+  flex-shrink: 0;
+  background: #242424;
+  cursor: grab;
+  user-select: none;
+}
+
+.rendering-effects-panel.dragging .rendering-effects-panel-header {
+  cursor: grabbing;
+}
+
+.rendering-effects-panel-header h3 {
+  margin: 0;
+  color: #f5f5f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.rendering-effects-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 20px;
+  padding-right: calc(20px + 8px);
+  flex: 1;
+  min-height: 0;
+  background: #1a1a1a;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+@media (max-width: 400px) {
+  .rendering-effects-panel-content {
+    padding: 12px;
+    gap: 16px;
+  }
+}
+
+.rendering-effects-panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rendering-effects-panel-content::-webkit-scrollbar-track {
+  background: #252525;
+}
+
+.rendering-effects-panel-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.rendering-effects-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.effects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px;
+}
+
+.effect-card {
+  background: #2a2a2a;
+  border: 2px solid #3a3a3a;
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.3s;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-height: 140px;
+}
+
+.effect-card:hover {
+  background: #333;
+  border-color: #555;
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+.effect-card.active {
+  background: #3a5a78;
+  border-color: #4a7ba3;
+  box-shadow: 0 4px 12px rgba(74, 123, 163, 0.4);
+}
+
+.effect-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+}
+
+.effect-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f5f5f5;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.effect-description {
+  font-size: 11px;
+  color: #aaa;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.effect-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #3a3a3a;
+  color: #888;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.effect-toggle.enabled {
+  background: #4a7ba3;
+  color: #fff;
+}
+
+.effect-card:hover .effect-toggle {
+  background: #444;
+}
+
+.effect-card.active .effect-toggle {
+  background: #5a8bb3;
+}
+
+.effects-note {
+  padding: 16px;
+  background: #2a2a2a;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+}
+
+.effects-note p {
+  margin: 0;
+  color: #aaa;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+

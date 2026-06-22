@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AO Debug Test</title>
+    <meta http-equiv="refresh" content="2;url=http://localhost:3000">
+</head>
+<body>
+    <h1>AO Debug Test</h1>
+    <p>This page will redirect to your app and run debug commands.</p>
+    <p>Open the browser console (F12) before this redirects.</p>
+    
+    <script>
+        // Wait for redirect, then inject script
+        setTimeout(() => {
+            // This won't work cross-origin, but we can try
+            console.log('Debug script ready - please run manually in console on localhost:3000');
+        }, 3000);
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+

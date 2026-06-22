@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSS Standalone Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+        }
+        #container {
+            display: flex;
+            gap: 20px;
+        }
+        #canvas-container {
+            flex: 1;
+            border: 2px solid #333;
+            background: #000;
+        }
+        #controls {
+            width: 300px;
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .control-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 5px;
+        }
+        .value {
+            color: #0ff;
+            font-family: monospace;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background: #0a0;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0c0;
+        }
+        #console {
+            background: #000;
+            color: #0f0;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #333;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>SSS Standalone Test</h1>
+    <div id="container">
+        <div id="canvas-container"></div>
+        <div id="controls">
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="enablePostProcessing" checked>
+                    Enable Post-Processing
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="enableSSS" checked>
+                    Enable SSS
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    Intensity: <span class="value" id="intensityValue">0.5</span>
+                    <input type="range" id="intensity" min="0" max="2" step="0.01" value="0.5">
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    Max Radius: <span class="value" id="maxRadiusValue">5.0</span>
+                    <input type="range" id="maxRadius" min="0" max="20" step="0.1" value="5.0">
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    Samples: <span class="value" id="samplesValue">8</span>
+                    <input type="range" id="samples" min="1" max="64" step="1" value="8">
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    Ray Distance: <span class="value" id="rayDistanceValue">50</span>
+                    <input type="range" id="rayDistance" min="1" max="200" step="1" value="50">
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    Light Direction X: <span class="value" id="lightXValue">0</span>
+                    <input type="range" id="lightX" min="-1" max="1" step="0.01" value="0">
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    Light Direction Y: <span class="value" id="lightYValue">-1</span>
+                    <input type="range" id="lightY" min="-1" max="1" step="0.01" value="-1">
+                </label>
+            </div>
+            <div class="control-group">
+                <label>
+                    Light Direction Z: <span class="value" id="lightZValue">0</span>
+                    <input type="range" id="lightZ" min="-1" max="1" step="0.01" value="0">
+                </label>
+            </div>
+            <div class="control-group">
+                <button id="debugDepth">Debug: Show Depth</button>
+                <button id="debugShadow">Debug: Show Shadow</button>
+                <button id="debugNormal">Debug: Normal</button>
+            </div>
+            <div id="console"></div>
+        </div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+        // Console logging
+        const consoleDiv = document.getElementById('console');
+        function log(msg) {
+            console.log(msg);
+            const p = document.createElement('div');
+            p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            consoleDiv.appendChild(p);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        }
+
+        // SSS Shader (simplified version)
+        const SSSShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                tDepth: { value: null },
+                cameraNear: { value: 0.1 },
+                cameraFar: { value: 1000 },
+                lightDirection: { value: new THREE.Vector3(0, -1, 0) },
+                intensity: { value: 0.5 },
+                maxRadius: { value: 5.0 },
+                samples: { value: 8 },
+                rayDistance: { value: 50.0 },
+                thickness: { value: 0.02 },
+                bias: { value: 0.01 },
+                debugMode: { value: 0.0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform sampler2D tDepth;
+                uniform float cameraNear;
+                uniform float cameraFar;
+                uniform vec3 lightDirection;
+                uniform float intensity;
+                uniform float maxRadius;
+                uniform int samples;
+                uniform float rayDistance;
+                uniform float thickness;
+                uniform float bias;
+                uniform float debugMode;
+                varying vec2 vUv;
+
+                float readDepth(sampler2D depthSampler, vec2 coord) {
+                    float fragCoordZ = texture2D(depthSampler, coord).x;
+                    float n = cameraNear;
+                    float f = cameraFar;
+                    float z_ndc = fragCoordZ * 2.0 - 1.0;
+                    float z_eye = 2.0 * n * f / (f + n - z_ndc * (f - n));
+                    return (z_eye - n) / (f - n);
+                }
+
+                float sampleDepth(vec2 uv) {
+                    return readDepth(tDepth, uv);
+                }
+
+                float traceShadow(vec2 uv, vec3 rayDir, float rayLength) {
+                    float shadow = 0.0;
+                    float currentDepth = sampleDepth(uv);
+                    
+                    if (currentDepth >= 1.0) {
+                        return 0.0;
+                    }
+                    
+                    vec2 step = rayDir.xy * maxRadius / float(samples);
+                    float stepDepth = rayDir.z * rayLength / float(samples);
+                    
+                    float accumulatedDepth = 0.0;
+                    
+                    for (int i = 0; i < 64; i++) {
+                        if (i >= samples) break;
+                        
+                        vec2 sampleUV = uv + step * float(i);
+                        if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+                            break;
+                        }
+                        
+                        float sampleDepthValue = sampleDepth(sampleUV);
+                        float rayDepth = currentDepth + accumulatedDepth + stepDepth * float(i);
+                        
+                        if (sampleDepthValue < rayDepth - bias) {
+                            float shadowFactor = 1.0 - smoothstep(0.0, thickness, rayDepth - sampleDepthValue);
+                            shadow += shadowFactor / float(samples);
+                        }
+                        
+                        accumulatedDepth += stepDepth;
+                    }
+                    
+                    return min(shadow * intensity, 1.0);
+                }
+
+                void main() {
+                    vec4 color = texture2D(tDiffuse, vUv);
+                    float depth = sampleDepth(vUv);
+                    
+                    if (debugMode > 0.5) {
+                        if (debugMode > 1.5) {
+                            vec3 normalizedLightDir = normalize(lightDirection);
+                            vec2 screenOffset = normalizedLightDir.xy * maxRadius;
+                            float depthChange = normalizedLightDir.z * rayDistance;
+                            vec3 rayDir = normalize(vec3(screenOffset, depthChange));
+                            float shadow = traceShadow(vUv, rayDir, rayDistance);
+                            gl_FragColor = vec4(shadow, shadow, shadow, 1.0);
+                            return;
+                        } else {
+                            gl_FragColor = vec4(depth, depth, depth, 1.0);
+                            return;
+                        }
+                    }
+                    
+                    if (depth >= 1.0) {
+                        gl_FragColor = color;
+                        return;
+                    }
+                    
+                    vec3 normalizedLightDir = normalize(lightDirection);
+                    vec2 screenOffset = normalizedLightDir.xy * maxRadius;
+                    float depthChange = normalizedLightDir.z * rayDistance;
+                    vec3 rayDir = normalize(vec3(screenOffset, depthChange));
+                    
+                    float shadow = traceShadow(vUv, rayDir, rayDistance);
+                    color.rgb *= (1.0 - shadow);
+                    
+                    gl_FragColor = color;
+                }
+            `
+        };
+
+        // Depth Render Pass
+        class DepthRenderPass {
+            constructor(camera) {
+                this.camera = camera;
+                this.depthMaterial = new THREE.ShaderMaterial({
+                    vertexShader: `
+                        varying vec4 vViewPosition;
+                        void main() {
+                            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                            vViewPosition = mvPosition;
+                            gl_Position = projectionMatrix * mvPosition;
+                        }
+                    `,
+                    fragmentShader: `
+                        precision highp float;
+                        varying vec4 vViewPosition;
+                        void main() {
+                            float depth = gl_FragCoord.z;
+                            gl_FragColor = vec4(depth, 0.0, 0.0, 1.0);
+                        }
+                    `
+                });
+                this.originalMaterials = new WeakMap();
+            }
+
+            replaceMaterials(object) {
+                if (object instanceof THREE.Mesh) {
+                    if (object.material && !this.originalMaterials.has(object)) {
+                        this.originalMaterials.set(object, object.material);
+                    }
+                    object.material = this.depthMaterial;
+                }
+                for (const child of object.children) {
+                    this.replaceMaterials(child);
+                }
+            }
+
+            restoreMaterials(object) {
+                if (object instanceof THREE.Mesh && this.originalMaterials.has(object)) {
+                    object.material = this.originalMaterials.get(object);
+                }
+                for (const child of object.children) {
+                    this.restoreMaterials(child);
+                }
+            }
+
+            render(renderer, scene, camera, target) {
+                const oldRenderTarget = renderer.getRenderTarget();
+                this.replaceMaterials(scene);
+                renderer.setRenderTarget(target);
+                renderer.render(scene, camera);
+                this.restoreMaterials(scene);
+                renderer.setRenderTarget(oldRenderTarget);
+            }
+        }
+
+        // Setup scene
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(5, 5, 5);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth - 340, window.innerHeight - 100);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Add light
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(5, 10, 5);
+        light.castShadow = true;
+        scene.add(light);
+
+        // Add objects
+        const geometry = new THREE.BoxGeometry(2, 2, 2);
+        const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+        const cube = new THREE.Mesh(geometry, material);
+        cube.castShadow = true;
+        cube.receiveShadow = true;
+        scene.add(cube);
+
+        const planeGeometry = new THREE.PlaneGeometry(10, 10);
+        const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x888888 });
+        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        plane.rotation.x = -Math.PI / 2;
+        plane.position.y = -1;
+        plane.receiveShadow = true;
+        scene.add(plane);
+
+        // Post-processing setup
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        // Depth prepass
+        const depthRenderTarget = new THREE.WebGLRenderTarget(renderer.domElement.width, renderer.domElement.height, {
+            depthBuffer: true,
+            stencilBuffer: false,
+            type: THREE.UnsignedByteType,
+            format: THREE.RGBAFormat
+        });
+        const depthRenderPass = new DepthRenderPass(camera);
+
+        // SSS pass
+        const sssPass = new ShaderPass(SSSShader);
+        sssPass.renderToScreen = false;
+        
+        // Override render to connect textures
+        const originalRender = sssPass.render.bind(sssPass);
+        sssPass.render = (renderer, writeBuffer, readBuffer, deltaTime = 0, maskActive = false) => {
+            const uniforms = sssPass.uniforms;
+            if (depthRenderTarget && depthRenderTarget.texture) {
+                uniforms.tDepth.value = depthRenderTarget.texture;
+            }
+            if (readBuffer && readBuffer.texture) {
+                uniforms.tDiffuse.value = readBuffer.texture;
+            }
+            originalRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+        };
+        
+        composer.addPass(sssPass);
+
+        const outputPass = new OutputPass();
+        outputPass.renderToScreen = true;
+        composer.addPass(outputPass);
+
+        // Update camera near/far
+        sssPass.uniforms.cameraNear.value = camera.near;
+        sssPass.uniforms.cameraFar.value = camera.far;
+
+        log('✅ Scene initialized');
+        log('✅ Post-processing setup complete');
+
+        // Controls
+        let postProcessingEnabled = true;
+        let sssEnabled = true;
+
+        document.getElementById('enablePostProcessing').addEventListener('change', (e) => {
+            postProcessingEnabled = e.target.checked;
+            log(`Post-processing: ${postProcessingEnabled ? 'ON' : 'OFF'}`);
+        });
+
+        document.getElementById('enableSSS').addEventListener('change', (e) => {
+            sssEnabled = e.target.checked;
+            log(`SSS: ${sssEnabled ? 'ON' : 'OFF'}`);
+        });
+
+        function updateSSS() {
+            const uniforms = sssPass.uniforms;
+            uniforms.intensity.value = parseFloat(document.getElementById('intensity').value);
+            uniforms.maxRadius.value = parseFloat(document.getElementById('maxRadius').value);
+            uniforms.samples.value = parseInt(document.getElementById('samples').value);
+            uniforms.rayDistance.value = parseFloat(document.getElementById('rayDistance').value);
+            uniforms.lightDirection.value.set(
+                parseFloat(document.getElementById('lightX').value),
+                parseFloat(document.getElementById('lightY').value),
+                parseFloat(document.getElementById('lightZ').value)
+            );
+            
+            document.getElementById('intensityValue').textContent = uniforms.intensity.value.toFixed(2);
+            document.getElementById('maxRadiusValue').textContent = uniforms.maxRadius.value.toFixed(1);
+            document.getElementById('samplesValue').textContent = uniforms.samples.value;
+            document.getElementById('rayDistanceValue').textContent = uniforms.rayDistance.value;
+            document.getElementById('lightXValue').textContent = uniforms.lightDirection.value.x.toFixed(2);
+            document.getElementById('lightYValue').textContent = uniforms.lightDirection.value.y.toFixed(2);
+            document.getElementById('lightZValue').textContent = uniforms.lightDirection.value.z.toFixed(2);
+        }
+
+        document.getElementById('intensity').addEventListener('input', updateSSS);
+        document.getElementById('maxRadius').addEventListener('input', updateSSS);
+        document.getElementById('samples').addEventListener('input', updateSSS);
+        document.getElementById('rayDistance').addEventListener('input', updateSSS);
+        document.getElementById('lightX').addEventListener('input', updateSSS);
+        document.getElementById('lightY').addEventListener('input', updateSSS);
+        document.getElementById('lightZ').addEventListener('input', updateSSS);
+
+        document.getElementById('debugDepth').addEventListener('click', () => {
+            sssPass.uniforms.debugMode.value = 1.0;
+            log('Debug mode: Show Depth');
+        });
+
+        document.getElementById('debugShadow').addEventListener('click', () => {
+            sssPass.uniforms.debugMode.value = 2.0;
+            log('Debug mode: Show Shadow');
+        });
+
+        document.getElementById('debugNormal').addEventListener('click', () => {
+            sssPass.uniforms.debugMode.value = 0.0;
+            log('Debug mode: Normal');
+        });
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Rotate cube
+            cube.rotation.y += 0.01;
+
+            if (postProcessingEnabled && sssEnabled) {
+                // Render depth prepass
+                depthRenderPass.render(renderer, scene, camera, depthRenderTarget);
+                
+                // Update SSS textures
+                const uniforms = sssPass.uniforms;
+                if (depthRenderTarget && depthRenderTarget.texture) {
+                    uniforms.tDepth.value = depthRenderTarget.texture;
+                }
+                
+                // Render with post-processing
+                composer.render();
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+
+        animate();
+        log('✅ Animation loop started');
+        log('✅ Ready! Adjust sliders to test SSS');
+    </script>
+</body>
+</html>
+

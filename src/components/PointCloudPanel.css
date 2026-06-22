@@ -1,0 +1,171 @@
+.point-cloud-panel {
+  position: fixed;
+  background: rgba(20, 20, 20, 0.95);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 0;
+  min-width: 320px;
+  max-width: 380px;
+  z-index: 150;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+
+.point-cloud-panel.dragging {
+  z-index: 200;
+}
+
+.point-cloud-panel .panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: grab;
+  user-select: none;
+}
+
+.point-cloud-panel .panel-header:active {
+  cursor: grabbing;
+}
+
+.point-cloud-panel .panel-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.point-cloud-panel .minimize-button,
+.point-cloud-panel .close-button {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.point-cloud-panel .minimize-button:hover,
+.point-cloud-panel .close-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.point-cloud-panel .panel-content {
+  padding: 16px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+.point-cloud-panel .pc-section {
+  margin-bottom: 20px;
+}
+
+.point-cloud-panel .pc-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #ffffff;
+  margin-bottom: 8px;
+}
+
+.point-cloud-panel .pc-mode-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.point-cloud-panel .pc-mode-button {
+  flex: 1;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.point-cloud-panel .pc-mode-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.point-cloud-panel .pc-mode-button.active {
+  background: rgba(74, 158, 255, 0.25);
+  border-color: rgba(74, 158, 255, 0.6);
+}
+
+.point-cloud-panel .pc-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.point-cloud-panel .pc-slider {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.point-cloud-panel .pc-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #4a9eff;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.point-cloud-panel .pc-slider::-webkit-slider-thumb:hover {
+  background: #6bb0ff;
+}
+
+.point-cloud-panel .pc-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: #4a9eff;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  transition: background 0.2s ease;
+}
+
+.point-cloud-panel .pc-slider-value {
+  min-width: 46px;
+  text-align: right;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.point-cloud-panel .pc-hint {
+  display: block;
+  color: #888;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.point-cloud-panel .pc-info {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: #aaa;
+  line-height: 1.5;
+}

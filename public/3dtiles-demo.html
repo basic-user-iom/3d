@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>Three.js 3D Tiles Loader Demo</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+			color: #444;
+			background-color: #1a1a1a;
+			overflow: hidden;
+		}
+
+		#info {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 10px 15px;
+			border-radius: 5px;
+			font-size: 14px;
+			z-index: 100;
+			line-height: 1.6;
+			max-width: 400px;
+		}
+
+		#info a {
+			color: #4a9eff;
+			text-decoration: none;
+		}
+
+		#info a:hover {
+			text-decoration: underline;
+		}
+
+		#progress {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			color: #fff;
+			font-size: 24px;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 20px 40px;
+			border-radius: 10px;
+			z-index: 200;
+			display: none;
+		}
+
+		#controls {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 15px;
+			border-radius: 5px;
+			color: #fff;
+			font-size: 12px;
+			z-index: 100;
+			min-width: 250px;
+		}
+
+		#controls input[type="text"] {
+			width: 100%;
+			padding: 8px;
+			margin: 5px 0;
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 3px;
+			color: #fff;
+			font-size: 12px;
+		}
+
+		#controls button {
+			width: 100%;
+			padding: 8px 16px;
+			margin: 5px 0;
+			background: #4a9eff;
+			color: white;
+			border: none;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 12px;
+		}
+
+		#controls button:hover {
+			background: #3a8eef;
+		}
+
+		#controls button:disabled {
+			background: #666;
+			cursor: not-allowed;
+		}
+
+		#controls label {
+			display: block;
+			margin-top: 10px;
+			margin-bottom: 5px;
+		}
+
+		#stats {
+			margin-top: 10px;
+			padding-top: 10px;
+			border-top: 1px solid rgba(255, 255, 255, 0.2);
+			font-size: 11px;
+			line-height: 1.6;
+		}
+
+		canvas {
+			display: block;
+		}
+	</style>
+</head>
+<body>
+	<div id="info">
+		<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - 
+		<a href="https://github.com/NASA-AMMOS/3DTilesRendererJS" target="_blank" rel="noopener">3D Tiles Renderer</a><br/>
+		Use mouse to orbit, scroll to zoom. 3D Tiles load progressively based on camera position.<br/>
+		<small>Note: Enter a valid 3D Tiles tileset.json URL to load a tileset.</small>
+	</div>
+
+	<div id="progress">Loading...</div>
+
+	<div id="controls">
+		<div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+			<strong style="display: block; margin-bottom: 10px;">Cesium Ion (Recommended)</strong>
+			<label>Cesium Ion Access Token:</label>
+			<input type="password" id="ionToken" placeholder="Your Cesium Ion token" value="">
+			<label style="margin-top: 10px;">Asset ID (e.g., 2275207 for OSM Buildings):</label>
+			<input type="text" id="ionAssetId" placeholder="Enter Cesium Ion asset ID" value="">
+			<button id="loadIonBtn" style="margin-top: 5px;">Load from Cesium Ion</button>
+		</div>
+		
+		<div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+			<strong style="display: block; margin-bottom: 10px;">Direct URL</strong>
+			<label>3D Tiles URL:</label>
+			<input type="text" id="tilesUrl" placeholder="Enter tileset.json URL" value="">
+			<button id="loadBtn" style="margin-top: 5px;">Load Tileset</button>
+		</div>
+		
+		<button id="clearBtn" disabled>Clear</button>
+		<div id="stats">
+			<div>Active Tiles: <span id="activeTiles">0</span></div>
+			<div>Visible Tiles: <span id="visibleTiles">0</span></div>
+			<div>Downloaded Tiles: <span id="downloadedTiles">0</span></div>
+			<div>Failed Tiles: <span id="failedTiles">0</span></div>
+		</div>
+	</div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+				"three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/",
+				"3d-tiles-renderer": "https://esm.sh/3d-tiles-renderer@0.3.24?external=three"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { TilesRenderer } from '3d-tiles-renderer';
+		import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+		import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+		let camera, scene, renderer, controls;
+		let tilesRenderer = null;
+		let stats = {
+			activeTiles: 0,
+			visibleTiles: 0,
+			downloadedTiles: 0,
+			failedTiles: 0
+		};
+
+		const progressDiv = document.getElementById('progress');
+		const tilesUrlInput = document.getElementById('tilesUrl');
+		const loadBtn = document.getElementById('loadBtn');
+		const clearBtn = document.getElementById('clearBtn');
+
+		// Error handling
+		window.addEventListener('error', (e) => {
+			console.error('Global error:', e.error);
+			showProgress('Error: ' + (e.error?.message || 'Unknown error'));
+		});
+
+		window.addEventListener('unhandledrejection', (e) => {
+			console.error('Unhandled promise rejection:', e.reason);
+			showProgress('Error: ' + (e.reason?.message || 'Unknown error'));
+		});
+
+		init();
+
+		function init() {
+			try {
+				console.log('Initializing 3D Tiles demo...');
+
+				// Scene
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color(0x263238);
+
+				// Camera
+				camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
+				camera.position.set(0, 0, 10);
+
+				// Renderer
+				renderer = new THREE.WebGLRenderer({ antialias: true });
+				renderer.setPixelRatio(window.devicePixelRatio);
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.outputColorSpace = THREE.SRGBColorSpace;
+				document.body.appendChild(renderer.domElement);
+
+				// Controls
+				controls = new OrbitControls(camera, renderer.domElement);
+				controls.enableDamping = true;
+				controls.dampingFactor = 0.05;
+				controls.screenSpacePanning = false;
+				controls.minDistance = 1;
+				controls.maxDistance = 10000;
+
+				// Add lights
+				const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+				scene.add(ambientLight);
+
+				const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+				directionalLight.position.set(10, 10, 5);
+				scene.add(directionalLight);
+
+				// Grid helper
+				const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0x444444);
+				scene.add(gridHelper);
+
+				// Axes helper
+				const axesHelper = new THREE.AxesHelper(5);
+				scene.add(axesHelper);
+
+				window.addEventListener('resize', onWindowResize);
+
+				// Button handlers
+				loadBtn.addEventListener('click', loadTileset);
+				clearBtn.addEventListener('click', clearTileset);
+
+				// Load default tileset on Enter key
+				tilesUrlInput.addEventListener('keypress', (e) => {
+					if (e.key === 'Enter') {
+						loadTileset();
+					}
+				});
+
+				hideProgress();
+				animate();
+				console.log('Initialization complete');
+			} catch (error) {
+				console.error('Error in init:', error);
+				showProgress('Initialization error: ' + error.message);
+			}
+		}
+
+		async function loadTileset() {
+			const url = tilesUrlInput.value.trim();
+			if (!url) {
+				alert('Please enter a tileset URL');
+				return;
+			}
+
+			try {
+				// Clear existing tileset
+				if (tilesRenderer) {
+					clearTileset();
+				}
+
+				showProgress('Loading tileset...');
+				loadBtn.disabled = true;
+
+				// Create tiles renderer
+				tilesRenderer = new TilesRenderer(url);
+
+				// Setup DRACO loader for compressed geometry
+				const dracoLoader = new DRACOLoader();
+				dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+				dracoLoader.setDecoderConfig({ type: 'wasm' });
+
+				// Setup GLTF loader
+				const gltfLoader = new GLTFLoader(tilesRenderer.manager);
+				gltfLoader.setDRACOLoader(dracoLoader);
+				tilesRenderer.manager.addHandler(/\.(gltf|glb)$/i, gltfLoader);
+
+				// Set camera and resolution
+				tilesRenderer.setCamera(camera);
+				tilesRenderer.setResolutionFromRenderer(camera, renderer);
+
+				// Add tileset group to scene
+				scene.add(tilesRenderer.group);
+
+				// Event listeners for stats
+				tilesRenderer.addEventListener('load-tile-set', () => {
+					console.log('Tileset loaded');
+					hideProgress();
+					loadBtn.disabled = false;
+					clearBtn.disabled = false;
+
+					// Frame the tileset
+					const sphere = new THREE.Sphere();
+					if (tilesRenderer.getBoundingSphere(sphere)) {
+						const center = sphere.center;
+						const radius = sphere.radius;
+
+						// Position camera to view the tileset
+						const distance = radius * 2;
+						camera.position.set(
+							center.x + distance * 0.7,
+							center.y + distance * 0.5,
+							center.z + distance * 0.7
+						);
+						controls.target.copy(center);
+						controls.update();
+					}
+				});
+
+				tilesRenderer.addEventListener('dispose-tile', () => {
+					updateStats();
+				});
+
+				tilesRenderer.addEventListener('load-tile', () => {
+					stats.downloadedTiles++;
+					updateStats();
+				});
+
+				tilesRenderer.addEventListener('load-tile-error', () => {
+					stats.failedTiles++;
+					updateStats();
+				});
+
+				// Start loading
+				tilesRenderer.update();
+
+			} catch (error) {
+				console.error('Error loading tileset:', error);
+				showProgress('Error loading tileset: ' + error.message);
+				loadBtn.disabled = false;
+			}
+		}
+
+		function clearTileset() {
+			if (tilesRenderer) {
+				scene.remove(tilesRenderer.group);
+				tilesRenderer.dispose();
+				tilesRenderer = null;
+
+				stats = {
+					activeTiles: 0,
+					visibleTiles: 0,
+					downloadedTiles: 0,
+					failedTiles: 0
+				};
+				updateStats();
+				clearBtn.disabled = true;
+			}
+		}
+
+		function updateStats() {
+			// Note: getActiveTiles and getVisibleTiles may not be available in all versions
+			// Using basic stats that are always available
+			if (tilesRenderer) {
+				try {
+					if (typeof tilesRenderer.getActiveTiles === 'function') {
+						stats.activeTiles = tilesRenderer.getActiveTiles().length;
+					}
+					if (typeof tilesRenderer.getVisibleTiles === 'function') {
+						stats.visibleTiles = tilesRenderer.getVisibleTiles().length;
+					}
+				} catch (e) {
+					// Methods not available, keep current values
+				}
+			}
+
+			document.getElementById('activeTiles').textContent = stats.activeTiles;
+			document.getElementById('visibleTiles').textContent = stats.visibleTiles;
+			document.getElementById('downloadedTiles').textContent = stats.downloadedTiles;
+			document.getElementById('failedTiles').textContent = stats.failedTiles;
+		}
+
+		function onWindowResize() {
+			const w = window.innerWidth;
+			const h = window.innerHeight;
+
+			camera.aspect = w / h;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize(w, h);
+
+			if (tilesRenderer) {
+				tilesRenderer.setResolutionFromRenderer(camera, renderer);
+			}
+		}
+
+		function animate() {
+			requestAnimationFrame(animate);
+
+			if (controls) {
+				controls.update();
+			}
+
+			if (tilesRenderer) {
+				tilesRenderer.update();
+				updateStats();
+			}
+
+			renderer.render(scene, camera);
+		}
+
+		function showProgress(message) {
+			progressDiv.innerText = message;
+			progressDiv.style.display = 'block';
+		}
+
+		function hideProgress() {
+			progressDiv.style.display = 'none';
+		}
+	</script>
+</body>
+</html>
+

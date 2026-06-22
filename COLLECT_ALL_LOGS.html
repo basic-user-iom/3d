@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collect All Revit Connection Logs</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #2196F3;
+            border-radius: 4px;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #2196F3;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button.secondary {
+            background: #2196F3;
+        }
+        button.secondary:hover {
+            background: #0b7dda;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .log-section {
+            margin: 15px 0;
+        }
+        .instructions {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .instructions li {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Revit Connection - Complete Log Collector</h1>
+        
+        <div class="instructions">
+            <h3>📋 Instructions:</h3>
+            <ol>
+                <li><strong>Open this page in the same browser</strong> where your 3D viewer is running</li>
+                <li><strong>Click "Collect Browser Logs"</strong> - This captures console logs from the 3D viewer</li>
+                <li><strong>Click "Collect Server Status"</strong> - This checks server health and sessions</li>
+                <li><strong>Copy the complete log</strong> and share it for analysis</li>
+            </ol>
+            <p><strong>Note:</strong> For server logs and Revit journal, use <code>COLLECT_ALL_LOGS.ps1</code> PowerShell script.</p>
+        </div>
+
+        <div class="section">
+            <h2>1. Browser Console Logs</h2>
+            <button onclick="collectBrowserLogs()">📥 Collect Browser Logs</button>
+            <button class="secondary" onclick="clearBrowserLogs()">🗑️ Clear</button>
+            <div id="browserStatus"></div>
+            <textarea id="browserLogs" placeholder="Browser console logs will appear here..."></textarea>
+        </div>
+
+        <div class="section">
+            <h2>2. Server Status & Sessions</h2>
+            <button onclick="collectServerStatus()">🌐 Collect Server Status</button>
+            <div id="serverStatus"></div>
+            <textarea id="serverLogs" placeholder="Server status will appear here..."></textarea>
+        </div>
+
+        <div class="section">
+            <h2>3. Viewer State</h2>
+            <button onclick="collectViewerState()">👁️ Collect Viewer State</button>
+            <div id="viewerStatus"></div>
+            <textarea id="viewerLogs" placeholder="Viewer state will appear here..."></textarea>
+        </div>
+
+        <div class="section">
+            <h2>4. Complete Report</h2>
+            <button onclick="generateCompleteReport()" style="background: #ff9800;">📊 Generate Complete Report</button>
+            <button class="secondary" onclick="copyToClipboard()">📋 Copy to Clipboard</button>
+            <div id="reportStatus"></div>
+            <textarea id="completeReport" placeholder="Complete report will appear here..."></textarea>
+        </div>
+    </div>
+
+    <script>
+        let collectedLogs = {
+            browser: '',
+            server: '',
+            viewer: '',
+            timestamp: new Date().toISOString()
+        }
+
+        // Override console methods to capture logs
+        const originalLog = console.log
+        const originalError = console.error
+        const originalWarn = console.warn
+        const originalInfo = console.info
+
+        const logBuffer = []
+
+        function captureLog(level, args) {
+            const timestamp = new Date().toISOString()
+            const message = Array.from(args).map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ')
+            logBuffer.push(`[${timestamp}] [${level}] ${message}`)
+        }
+
+        console.log = function(...args) {
+            captureLog('LOG', args)
+            originalLog.apply(console, args)
+        }
+
+        console.error = function(...args) {
+            captureLog('ERROR', args)
+            originalError.apply(console, args)
+        }
+
+        console.warn = function(...args) {
+            captureLog('WARN', args)
+            originalWarn.apply(console, args)
+        }
+
+        console.info = function(...args) {
+            captureLog('INFO', args)
+            originalInfo.apply(console, args)
+        }
+
+        function collectBrowserLogs() {
+            const statusDiv = document.getElementById('browserStatus')
+            const logsTextarea = document.getElementById('browserLogs')
+            
+            try {
+                // Get logs from buffer
+                const logs = logBuffer.join('\n')
+                
+                // Also try to get logs from window if available
+                let additionalLogs = ''
+                if (window.console && window.console.history) {
+                    additionalLogs = window.console.history.join('\n')
+                }
+
+                const allLogs = logs || additionalLogs || 'No logs captured yet. Make sure to interact with the 3D viewer first.'
+
+                collectedLogs.browser = allLogs
+                logsTextarea.value = allLogs
+                
+                statusDiv.innerHTML = `<div class="status success">✅ Collected ${logBuffer.length} log entries</div>`
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ Error collecting logs: ${error.message}</div>`
+            }
+        }
+
+        function clearBrowserLogs() {
+            logBuffer.length = 0
+            document.getElementById('browserLogs').value = ''
+            document.getElementById('browserStatus').innerHTML = '<div class="status info">🗑️ Logs cleared</div>'
+        }
+
+        async function collectServerStatus() {
+            const statusDiv = document.getElementById('serverStatus')
+            const logsTextarea = document.getElementById('serverLogs')
+            
+            statusDiv.innerHTML = '<div class="status info">⏳ Checking server status...</div>'
+            
+            try {
+                const serverUrl = 'http://localhost:3002'
+                const results = []
+
+                // Check health
+                try {
+                    const healthResponse = await fetch(`${serverUrl}/api/revit/health`)
+                    const healthData = await healthResponse.json()
+                    results.push('=== SERVER HEALTH ===')
+                    results.push(JSON.stringify(healthData, null, 2))
+                    results.push('')
+                } catch (error) {
+                    results.push('=== SERVER HEALTH ===')
+                    results.push(`ERROR: ${error.message}`)
+                    results.push('')
+                }
+
+                // Check sessions
+                try {
+                    const sessionsResponse = await fetch(`${serverUrl}/api/revit/sessions`)
+                    const sessionsData = await sessionsResponse.json()
+                    results.push('=== ACTIVE SESSIONS ===')
+                    results.push(JSON.stringify(sessionsData, null, 2))
+                    results.push('')
+                } catch (error) {
+                    results.push('=== ACTIVE SESSIONS ===')
+                    results.push(`ERROR: ${error.message}`)
+                    results.push('')
+                }
+
+                // Check WebSocket connection
+                results.push('=== WEBSOCKET STATUS ===')
+                if (window.revitSyncManager) {
+                    results.push(`Connected: ${window.revitSyncManager.isConnected ? 'Yes' : 'No'}`)
+                    results.push(`WebSocket State: ${window.revitSyncManager.ws?.readyState || 'N/A'}`)
+                    results.push(`Session ID: ${window.revitSyncManager.sessionId || 'None'}`)
+                } else {
+                    results.push('RevitSyncManager not found in window')
+                }
+
+                const report = results.join('\n')
+                collectedLogs.server = report
+                logsTextarea.value = report
+                
+                statusDiv.innerHTML = '<div class="status success">✅ Server status collected</div>'
+            } catch (error) {
+                const errorMsg = `Error collecting server status: ${error.message}`
+                collectedLogs.server = errorMsg
+                logsTextarea.value = errorMsg
+                statusDiv.innerHTML = `<div class="status error">❌ ${errorMsg}</div>`
+            }
+        }
+
+        function collectViewerState() {
+            const statusDiv = document.getElementById('viewerStatus')
+            const logsTextarea = document.getElementById('viewerLogs')
+            
+            try {
+                const results = []
+
+                if (window.viewer) {
+                    results.push('=== VIEWER STATE ===')
+                    results.push(`Scene exists: ${!!window.viewer.scene}`)
+                    results.push(`Scene children count: ${window.viewer.scene?.children.length || 0}`)
+                    results.push('')
+                    
+                    results.push('=== SCENE CHILDREN ===')
+                    if (window.viewer.scene) {
+                        window.viewer.scene.children.forEach((child, index) => {
+                            results.push(`[${index}] ${child.name || child.type || 'Unknown'}`)
+                            results.push(`    Visible: ${child.visible}`)
+                            results.push(`    Is Revit Model: ${child.userData?.isRevitModel || false}`)
+                            results.push(`    Children: ${child.children.length}`)
+                            results.push('')
+                        })
+                    }
+                    
+                    results.push('=== REVIT MODELS IN SCENE ===')
+                    let revitModelCount = 0
+                    if (window.viewer.scene) {
+                        window.viewer.scene.traverse((obj) => {
+                            if (obj.userData?.isRevitModel) {
+                                revitModelCount++
+                                results.push(`- ${obj.name || obj.type || 'Unknown'} (visible: ${obj.visible})`)
+                            }
+                        })
+                    }
+                    if (revitModelCount === 0) {
+                        results.push('No Revit models found in scene')
+                    }
+                } else {
+                    results.push('Viewer not found in window object')
+                }
+
+                const report = results.join('\n')
+                collectedLogs.viewer = report
+                logsTextarea.value = report
+                
+                statusDiv.innerHTML = '<div class="status success">✅ Viewer state collected</div>'
+            } catch (error) {
+                const errorMsg = `Error collecting viewer state: ${error.message}`
+                collectedLogs.viewer = errorMsg
+                logsTextarea.value = errorMsg
+                statusDiv.innerHTML = `<div class="status error">❌ ${errorMsg}</div>`
+            }
+        }
+
+        function generateCompleteReport() {
+            const reportDiv = document.getElementById('reportStatus')
+            const reportTextarea = document.getElementById('completeReport')
+            
+            const report = `=== REVIT CONNECTION - COMPLETE LOG REPORT ===
+Generated: ${new Date().toLocaleString()}
+Timestamp: ${collectedLogs.timestamp}
+
+═══════════════════════════════════════════════════════════════
+1. BROWSER CONSOLE LOGS
+═══════════════════════════════════════════════════════════════
+
+${collectedLogs.browser || 'No browser logs collected yet. Click "Collect Browser Logs" first.'}
+
+═══════════════════════════════════════════════════════════════
+2. SERVER STATUS & SESSIONS
+═══════════════════════════════════════════════════════════════
+
+${collectedLogs.server || 'No server status collected yet. Click "Collect Server Status" first.'}
+
+═══════════════════════════════════════════════════════════════
+3. VIEWER STATE
+═══════════════════════════════════════════════════════════════
+
+${collectedLogs.viewer || 'No viewer state collected yet. Click "Collect Viewer State" first.'}
+
+═══════════════════════════════════════════════════════════════
+4. SYSTEM INFORMATION
+═══════════════════════════════════════════════════════════════
+
+User Agent: ${navigator.userAgent}
+Platform: ${navigator.platform}
+Language: ${navigator.language}
+URL: ${window.location.href}
+Screen: ${screen.width}x${screen.height}
+
+═══════════════════════════════════════════════════════════════
+END OF REPORT
+═══════════════════════════════════════════════════════════════
+
+NOTE: For server console logs and Revit journal files, use:
+- COLLECT_ALL_LOGS.ps1 (PowerShell script)
+- Or manually check:
+  - Server window (where START_REVIT_SYNC_SERVER.bat is running)
+  - Revit journal: %LOCALAPPDATA%\\Autodesk\\Revit\\Autodesk Revit 2026\\Journals\\
+`
+
+            reportTextarea.value = report
+            reportDiv.innerHTML = '<div class="status success">✅ Complete report generated</div>'
+        }
+
+        function copyToClipboard() {
+            const reportTextarea = document.getElementById('completeReport')
+            if (!reportTextarea.value) {
+                alert('Please generate a complete report first!')
+                return
+            }
+            
+            reportTextarea.select()
+            document.execCommand('copy')
+            
+            const reportDiv = document.getElementById('reportStatus')
+            reportDiv.innerHTML = '<div class="status success">✅ Report copied to clipboard!</div>'
+            
+            setTimeout(() => {
+                reportDiv.innerHTML = ''
+            }, 3000)
+        }
+
+        // Auto-collect on page load if viewer is available
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                if (window.viewer) {
+                    console.log('[LogCollector] Auto-collecting initial state...')
+                    collectViewerState()
+                    collectServerStatus()
+                }
+            }, 1000)
+        })
+    </script>
+</body>
+</html>

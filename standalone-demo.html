@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Export Test Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #ffffff;
+      overflow: hidden;
+    }
+    
+    #canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    
+    .info {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 1000;
+      max-width: 300px;
+    }
+    
+    .info h2 {
+      margin-bottom: 12px;
+      color: #4a9eff;
+    }
+    
+    .info ul {
+      list-style: none;
+      padding-left: 0;
+    }
+    
+    .info li {
+      margin: 8px 0;
+      padding-left: 20px;
+      position: relative;
+    }
+    
+    .info li:before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: #4a9eff;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  
+  <div class="info">
+    <h2>3D Export Test Demo</h2>
+    <ul>
+      <li>Plane (receives shadows)</li>
+      <li>Box object (casts shadows)</li>
+      <li>Directional light (sun)</li>
+      <li>HDR background</li>
+      <li>OrbitControls enabled</li>
+    </ul>
+    <p style="margin-top: 12px; font-size: 12px; color: #888;">
+      Use mouse to orbit, drag to rotate, scroll to zoom
+    </p>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Camera position
+    camera.position.set(5, 5, 5);
+    camera.lookAt(0, 0, 0);
+
+    // Controls
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    // Create ground plane (receives shadows)
+    const planeGeometry = new THREE.PlaneGeometry(20, 20);
+    const planeMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x808080,
+      roughness: 0.8,
+      metalness: 0.2
+    });
+    const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.y = 0;
+    plane.receiveShadow = true;
+    plane.name = 'Ground_Plane';
+    scene.add(plane);
+
+    // Create shadow plane (for shadow visualization, like in main app)
+    const shadowPlaneGeometry = new THREE.PlaneGeometry(20, 20);
+    const shadowPlaneMaterial = new THREE.ShadowMaterial({ 
+      opacity: 0.5,
+      color: 0x000000
+    });
+    const shadowPlane = new THREE.Mesh(shadowPlaneGeometry, shadowPlaneMaterial);
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.position.y = -0.001; // Slightly below ground plane
+    shadowPlane.receiveShadow = true;
+    shadowPlane.castShadow = false;
+    shadowPlane.name = 'Shadow_Plane';
+    shadowPlane.userData.isShadowPlane = true;
+    scene.add(shadowPlane);
+
+    // Create a simple object (box) that casts shadows
+    const boxGeometry = new THREE.BoxGeometry(2, 2, 2);
+    const boxMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x4a9eff,
+      roughness: 0.5,
+      metalness: 0.3
+    });
+    const box = new THREE.Mesh(boxGeometry, boxMaterial);
+    box.position.set(0, 1, 0);
+    box.castShadow = true;
+    box.receiveShadow = true;
+    box.name = 'Test_Box';
+    scene.add(box);
+
+    // Add a sphere for variety
+    const sphereGeometry = new THREE.SphereGeometry(1, 32, 32);
+    const sphereMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xff6b6b,
+      roughness: 0.4,
+      metalness: 0.6
+    });
+    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    sphere.position.set(-3, 1, 0);
+    sphere.castShadow = true;
+    sphere.receiveShadow = true;
+    sphere.name = 'Test_Sphere';
+    scene.add(sphere);
+
+    // Create directional light (sun)
+    const sunLight = new THREE.DirectionalLight(0xffffff, 2);
+    sunLight.position.set(5, 10, 5);
+    sunLight.castShadow = true;
+    sunLight.name = 'Sun_Light';
+    
+    // Configure shadow map
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 0.5;
+    sunLight.shadow.camera.far = 50;
+    sunLight.shadow.camera.left = -10;
+    sunLight.shadow.camera.right = 10;
+    sunLight.shadow.camera.top = 10;
+    sunLight.shadow.camera.bottom = -10;
+    sunLight.shadow.bias = -0.0001;
+    sunLight.shadow.normalBias = 0.02;
+    sunLight.shadow.radius = 4;
+    
+    scene.add(sunLight);
+    scene.add(sunLight.target);
+
+    // Add ambient light for overall illumination
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambientLight);
+
+    // Load HDR environment map
+    const rgbeLoader = new RGBELoader();
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+    
+    // Try to load a real HDR from Poly Haven (free HDR library)
+    // Using a small 1k HDR for faster loading
+    const hdrUrl = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr';
+    
+    rgbeLoader.load(
+      hdrUrl,
+      (texture) => {
+        const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        scene.environment = envMap;
+        scene.background = envMap;
+        texture.dispose();
+        pmremGenerator.dispose();
+        console.log('HDR environment map loaded successfully');
+      },
+      undefined,
+      (error) => {
+        console.warn('Failed to load HDR, using procedural environment:', error);
+        // Fallback: Create a simple procedural environment
+        const envScene = new THREE.Scene();
+        const envLight = new THREE.HemisphereLight(0x87ceeb, 0x8b7355, 1);
+        envScene.add(envLight);
+        
+        const envMap = pmremGenerator.fromScene(envScene, 0.04).texture;
+        scene.environment = envMap;
+        scene.background = envMap;
+        pmremGenerator.dispose();
+      }
+    );
+
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      // Rotate objects for visual interest
+      box.rotation.y += 0.01;
+      sphere.rotation.x += 0.01;
+      sphere.rotation.y += 0.01;
+      
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Start animation
+    animate();
+
+    // Export scene info to console for debugging
+    console.log('Demo scene created:', {
+      objects: scene.children.length,
+      lights: scene.children.filter(c => c instanceof THREE.Light).length,
+      meshes: scene.children.filter(c => c instanceof THREE.Mesh).length,
+      shadowsEnabled: renderer.shadowMap.enabled
+    });
+  </script>
+</body>
+</html>

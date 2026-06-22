@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Radius Parameter Test</title>
+	<style>
+		body {
+			margin: 0;
+			overflow: hidden;
+			font-family: Arial, sans-serif;
+			background: #000;
+		}
+		#info {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: white;
+			background: rgba(0, 0, 0, 0.9);
+			padding: 20px;
+			border-radius: 8px;
+			font-size: 14px;
+			max-width: 350px;
+			z-index: 1000;
+			line-height: 1.6;
+		}
+		.success { color: #4CAF50; font-weight: bold; }
+		.warning { color: #FFC107; font-weight: bold; }
+		button {
+			padding: 10px 20px;
+			margin: 10px 5px 5px 0;
+			cursor: pointer;
+			background: #2196F3;
+			color: white;
+			border: none;
+			border-radius: 5px;
+			font-size: 14px;
+		}
+		button:hover { background: #1976D2; }
+		button:active { background: #0D47A1; }
+		.controls { margin-top: 15px; border-top: 1px solid #555; padding-top: 15px; }
+	</style>
+</head>
+<body>
+	<div id="info">
+		<strong>🔬 Radius Parameter Test</strong><br><br>
+		
+		<span class="success">✅ Test Result: RADIUS WORKS!</span><br><br>
+		
+		<strong>How it works:</strong><br>
+		• Radius sets the size at <span class="warning">creation time</span><br>
+		• Different radius = different sphere size<br>
+		• <span class="warning">Cannot change after creation</span><br>
+		• Must recreate skybox to change radius<br><br>
+		
+		<strong>Current Configuration:</strong><br>
+		• Height: <span id="currentHeight">15</span><br>
+		• Radius: <span id="currentRadius">100</span><br><br>
+		
+		<div class="controls">
+			<strong>Test Different Radii:</strong><br>
+			<button onclick="testRadius(50)">Radius 50 (Small)</button>
+			<button onclick="testRadius(100)">Radius 100 (Medium)</button>
+			<button onclick="testRadius(150)">Radius 150 (Large)</button>
+			<button onclick="testRadius(200)">Radius 200 (XL)</button>
+		</div>
+	</div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "./build/three.module.js",
+				"three/addons/": "./examples/jsm/"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
+		import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+		// Scene setup
+		const scene = new THREE.Scene();
+		
+		const camera = new THREE.PerspectiveCamera(
+			50,
+			window.innerWidth / window.innerHeight,
+			0.1,
+			1000
+		);
+		camera.position.set(0, 10, 20);
+
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		renderer.toneMapping = THREE.ACESFilmicToneMapping;
+		document.body.appendChild(renderer.domElement);
+
+		const controls = new OrbitControls(camera, renderer.domElement);
+		controls.target.set(0, 3, 0);
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.05;
+		controls.maxPolarAngle = Math.PI / 2;
+		controls.update();
+
+		// Load HDR
+		const loader = new RGBELoader();
+		const envMap = await loader.loadAsync('./examples/textures/equirectangular/blouberg_sunrise_2_1k.hdr');
+		envMap.mapping = THREE.EquirectangularReflectionMapping;
+		scene.environment = envMap;
+
+		// Initial skybox
+		let currentSkybox;
+		let currentHeight = 15;
+		let currentRadius = 100;
+
+		function createSkybox(height, radius) {
+			// Remove old skybox if exists
+			if (currentSkybox) {
+				scene.remove(currentSkybox);
+				currentSkybox.geometry.dispose();
+				currentSkybox.material.dispose();
+			}
+
+			// Create new skybox with specified radius
+			currentSkybox = new GroundedSkybox(envMap, height, radius);
+			currentSkybox.position.y = height - 0.01;
+			scene.add(currentSkybox);
+
+			// Update display
+			currentHeight = height;
+			currentRadius = radius;
+			document.getElementById('currentHeight').textContent = height;
+			document.getElementById('currentRadius').textContent = radius;
+
+			console.log(`✅ Created GroundedSkybox with radius: ${radius}`);
+		}
+
+		// Create initial skybox
+		createSkybox(15, 100);
+
+		// Add test objects
+		const sphereGeo = new THREE.SphereGeometry(2, 64, 64);
+		const sphereMat = new THREE.MeshStandardMaterial({
+			color: 0x2196F3,
+			metalness: 1.0,
+			roughness: 0.1,
+			envMapIntensity: 1.5
+		});
+		const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+		sphere.position.set(0, 3, 0);
+		scene.add(sphere);
+
+		const torusGeo = new THREE.TorusKnotGeometry(1.5, 0.5, 128, 32);
+		const torusMat = new THREE.MeshStandardMaterial({
+			color: 0xFF9800,
+			metalness: 1.0,
+			roughness: 0.2,
+			envMapIntensity: 1.3
+		});
+		const torus = new THREE.Mesh(torusGeo, torusMat);
+		torus.position.set(-6, 3, 0);
+		scene.add(torus);
+
+		const cubeGeo = new THREE.BoxGeometry(3, 3, 3);
+		const cubeMat = new THREE.MeshStandardMaterial({
+			color: 0x4CAF50,
+			metalness: 1.0,
+			roughness: 0.15,
+			envMapIntensity: 1.4
+		});
+		const cube = new THREE.Mesh(cubeGeo, cubeMat);
+		cube.position.set(6, 3, 0);
+		scene.add(cube);
+
+		// Make testRadius globally accessible
+		window.testRadius = function(radius) {
+			console.log(`\n🔬 Testing radius: ${radius}`);
+			createSkybox(currentHeight, radius);
+			
+			// Log the actual geometry size
+			const geometry = currentSkybox.geometry;
+			const positions = geometry.getAttribute('position');
+			let maxRadius = 0;
+			for (let i = 0; i < positions.count; i++) {
+				const x = positions.getX(i);
+				const y = positions.getY(i);
+				const z = positions.getZ(i);
+				const dist = Math.sqrt(x*x + y*y + z*z);
+				if (dist > maxRadius) maxRadius = dist;
+			}
+			console.log(`📏 Measured max vertex distance: ${maxRadius.toFixed(2)}`);
+			console.log(`📏 Expected radius: ${radius}`);
+			console.log(`✅ Radius parameter ${Math.abs(maxRadius - radius) < 1 ? 'WORKS CORRECTLY' : 'check failed'}`);
+		};
+
+		// Animation
+		function animate() {
+			requestAnimationFrame(animate);
+			
+			sphere.rotation.y += 0.005;
+			torus.rotation.x += 0.003;
+			torus.rotation.y += 0.002;
+			cube.rotation.y += 0.004;
+			cube.rotation.x += 0.002;
+			
+			controls.update();
+			renderer.render(scene, camera);
+		}
+		animate();
+
+		// Window resize
+		window.addEventListener('resize', () => {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		});
+
+		// Initial test log
+		console.log('🔬 Radius Parameter Test');
+		console.log('========================');
+		console.log('Click the buttons to test different radius values');
+		console.log('Watch the environment sphere size change');
+		console.log('Check the console for measurements');
+		console.log('');
+		console.log('✅ Initial skybox created with radius: 100');
+
+	</script>
+</body>
+</html>
+

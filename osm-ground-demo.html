@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>OpenStreetMap Ground Layer Demo</title>
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background-color: #1a1a1a;
+			overflow: hidden;
+		}
+
+		canvas {
+			display: block;
+		}
+
+		#info {
+			position: absolute;
+			top: 20px;
+			left: 20px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 15px 20px;
+			border-radius: 8px;
+			font-size: 14px;
+			line-height: 1.6;
+			max-width: 300px;
+			z-index: 100;
+			backdrop-filter: blur(10px);
+		}
+
+		#info h1 {
+			font-size: 18px;
+			margin-bottom: 10px;
+			color: #4a9eff;
+		}
+
+		#info p {
+			margin: 5px 0;
+			font-size: 12px;
+			color: #ccc;
+		}
+
+		#controls {
+			position: absolute;
+			top: 20px;
+			right: 20px;
+			background: rgba(0, 0, 0, 0.8);
+			padding: 20px;
+			border-radius: 8px;
+			color: white;
+			min-width: 280px;
+			max-height: 90vh;
+			overflow-y: auto;
+			z-index: 100;
+			backdrop-filter: blur(10px);
+		}
+
+		#controls h2 {
+			font-size: 16px;
+			margin-bottom: 15px;
+			color: #4a9eff;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			padding-bottom: 10px;
+		}
+
+		.control-group {
+			margin-bottom: 20px;
+		}
+
+		.control-group label {
+			display: block;
+			margin-bottom: 8px;
+			font-size: 13px;
+			color: #fff;
+		}
+
+		.control-group small {
+			display: block;
+			margin-top: 4px;
+			font-size: 11px;
+			color: #aaa;
+		}
+
+		input[type="range"] {
+			width: 100%;
+			margin: 5px 0;
+		}
+
+		input[type="number"],
+		input[type="text"] {
+			width: 100%;
+			padding: 8px;
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 4px;
+			color: white;
+			font-size: 12px;
+			margin-top: 5px;
+		}
+
+		input[type="number"]::-webkit-inner-spin-button,
+		input[type="number"]::-webkit-outer-spin-button {
+			opacity: 1;
+		}
+
+		select {
+			width: 100%;
+			padding: 8px;
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			border-radius: 4px;
+			color: white;
+			font-size: 12px;
+			margin-top: 5px;
+			cursor: pointer;
+			appearance: none;
+			-webkit-appearance: none;
+			-moz-appearance: none;
+			background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+			background-repeat: no-repeat;
+			background-position: right 8px center;
+			padding-right: 30px;
+		}
+
+		select:hover {
+			background-color: rgba(255, 255, 255, 0.15);
+			border-color: rgba(255, 255, 255, 0.3);
+		}
+
+		select:focus {
+			outline: none;
+			border-color: #4a9eff;
+			background-color: rgba(255, 255, 255, 0.15);
+		}
+
+		select option {
+			background: #2a2a2a;
+			color: white;
+			padding: 8px;
+		}
+
+		.checkbox-label {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			cursor: pointer;
+		}
+
+		input[type="checkbox"] {
+			width: 18px;
+			height: 18px;
+			cursor: pointer;
+		}
+
+		.value-display {
+			display: inline-block;
+			min-width: 50px;
+			text-align: right;
+			color: #4a9eff;
+			font-weight: 600;
+		}
+
+		button {
+			width: 100%;
+			padding: 10px;
+			margin-top: 10px;
+			background: #4a9eff;
+			color: white;
+			border: none;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 13px;
+			font-weight: 600;
+			transition: background 0.2s;
+		}
+
+		button:hover {
+			background: #3a8eef;
+		}
+
+		button:active {
+			background: #2a7edf;
+		}
+
+		button:disabled {
+			background: #666;
+			cursor: not-allowed;
+		}
+
+		#stats {
+			position: absolute;
+			bottom: 20px;
+			left: 20px;
+			color: #0f0;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 8px 12px;
+			border-radius: 4px;
+			font-family: 'Courier New', monospace;
+			font-size: 11px;
+			z-index: 100;
+		}
+
+		#loading {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			color: #fff;
+			background: rgba(0, 0, 0, 0.9);
+			padding: 20px 40px;
+			border-radius: 8px;
+			font-size: 16px;
+			z-index: 200;
+			display: none;
+		}
+	</style>
+</head>
+<body>
+	<div id="info">
+		<h1>🗺️ OpenStreetMap Ground Layer</h1>
+		<p>🖱️ <strong>Drag</strong> to rotate camera</p>
+		<p>🔍 <strong>Scroll</strong> to zoom</p>
+		<p>📊 <strong>Adjust controls</strong> to modify map</p>
+		<p style="margin-top: 10px; color: #888; font-size: 11px;">
+			This demo shows how to add OpenStreetMap tiles as a ground layer in Three.js. Use the controls to add/remove the layer and adjust settings.
+		</p>
+	</div>
+
+	<div id="controls">
+		<h2>⚙️ Map Layer Controls</h2>
+		
+		<div class="control-group">
+			<label class="checkbox-label">
+				<input type="checkbox" id="osmEnabled" checked>
+				<span>Enable Map Ground Layer</span>
+			</label>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Map Layer Type
+				<select id="layerTypeSelect">
+					<option value="osm">OpenStreetMap (Standard)</option>
+					<option value="osm-humanitarian">OSM Humanitarian</option>
+					<option value="cartodb">CartoDB Positron</option>
+					<option value="cartodb-dark">CartoDB Dark Matter</option>
+					<option value="satellite">ESRI World Imagery (Satellite)</option>
+					<option value="topo">USGS Topographic</option>
+				</select>
+			</label>
+			<small>Choose the map tile provider</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Location Preset
+				<select id="locationSelect">
+					<option value="custom">Custom Location</option>
+					<option value="london">London, UK</option>
+					<option value="newyork">New York, USA</option>
+					<option value="tokyo">Tokyo, Japan</option>
+					<option value="paris">Paris, France</option>
+					<option value="sydney">Sydney, Australia</option>
+					<option value="dubai">Dubai, UAE</option>
+					<option value="sanfrancisco">San Francisco, USA</option>
+					<option value="moscow">Moscow, Russia</option>
+					<option value="beijing">Beijing, China</option>
+					<option value="sao-paulo">São Paulo, Brazil</option>
+					<option value="cape-town">Cape Town, South Africa</option>
+					<option value="reykjavik">Reykjavik, Iceland</option>
+				</select>
+			</label>
+			<small>Quick location selection</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Center Latitude: <span class="value-display" id="latValue">51.505</span>
+				<input type="number" id="latInput" step="0.001" value="51.505" min="-90" max="90">
+			</label>
+			<small>Latitude for map center (-90 to 90)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Center Longitude: <span class="value-display" id="lonValue">-0.09</span>
+				<input type="number" id="lonInput" step="0.001" value="-0.09" min="-180" max="180">
+			</label>
+			<small>Longitude for map center (-180 to 180)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Zoom Level: <span class="value-display" id="zoomValue">13</span>
+				<input type="range" id="zoomSlider" min="1" max="18" step="1" value="13">
+			</label>
+			<small>Map zoom level (1-18, higher = more detail)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Tile Grid Size: <span class="value-display" id="gridValue">3</span>
+				<input type="range" id="gridSlider" min="1" max="5" step="1" value="3">
+			</label>
+			<small>Number of tiles in grid (NxN, larger = wider coverage)</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Ground Size: <span class="value-display" id="sizeValue">1000</span>
+				<input type="range" id="sizeSlider" min="100" max="5000" step="100" value="1000">
+			</label>
+			<small>Size of ground plane in world units</small>
+		</div>
+
+		<div class="control-group">
+			<label>
+				Opacity: <span class="value-display" id="opacityValue">1.00</span>
+				<input type="range" id="opacitySlider" min="0" max="1" step="0.01" value="1.0">
+			</label>
+			<small>Transparency of the map layer (0-1)</small>
+		</div>
+
+		<button id="addLayerBtn">➕ Add OSM Layer</button>
+		<button id="removeLayerBtn">➖ Remove OSM Layer</button>
+		<button id="updateLayerBtn">🔄 Update Layer</button>
+		<button id="resetBtn">🔄 Reset to Defaults</button>
+	</div>
+
+	<div id="stats"></div>
+	<div id="loading">Loading tiles...</div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+		// ==========================================
+		// SCENE SETUP
+		// ==========================================
+
+		const scene = new THREE.Scene();
+		scene.background = new THREE.Color(0x87CEEB); // Sky blue background
+
+		const camera = new THREE.PerspectiveCamera(
+			75,
+			window.innerWidth / window.innerHeight,
+			0.1,
+			10000
+		);
+		camera.position.set(0, 500, 800);
+		camera.lookAt(0, 0, 0);
+
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.toneMapping = THREE.ACESFilmicToneMapping;
+		renderer.toneMappingExposure = 1.0;
+		renderer.shadowMap.enabled = true;
+		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		document.body.appendChild(renderer.domElement);
+
+		// Controls
+		const controls = new OrbitControls(camera, renderer.domElement);
+		controls.target.set(0, 0, 0);
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.05;
+		controls.minDistance = 100;
+		controls.maxDistance = 5000;
+		controls.maxPolarAngle = Math.PI / 2.2; // Prevent going below ground
+
+		// ==========================================
+		// LIGHTING
+		// ==========================================
+
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+		scene.add(ambientLight);
+
+		const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+		directionalLight.position.set(500, 1000, 500);
+		directionalLight.castShadow = true;
+		directionalLight.shadow.mapSize.width = 2048;
+		directionalLight.shadow.mapSize.height = 2048;
+		directionalLight.shadow.camera.near = 0.5;
+		directionalLight.shadow.camera.far = 5000;
+		directionalLight.shadow.camera.left = -2000;
+		directionalLight.shadow.camera.right = 2000;
+		directionalLight.shadow.camera.top = 2000;
+		directionalLight.shadow.camera.bottom = -2000;
+		scene.add(directionalLight);
+
+		// ==========================================
+		// MAP GROUND LAYER SYSTEM
+		// ==========================================
+
+		let osmGroundLayer = null;
+		let osmTiles = [];
+
+		// Location presets
+		const LOCATION_PRESETS = {
+			'london': { lat: 51.505, lon: -0.09, name: 'London, UK' },
+			'newyork': { lat: 40.7128, lon: -74.0060, name: 'New York, USA' },
+			'tokyo': { lat: 35.6762, lon: 139.6503, name: 'Tokyo, Japan' },
+			'paris': { lat: 48.8566, lon: 2.3522, name: 'Paris, France' },
+			'sydney': { lat: -33.8688, lon: 151.2093, name: 'Sydney, Australia' },
+			'dubai': { lat: 25.2048, lon: 55.2708, name: 'Dubai, UAE' },
+			'sanfrancisco': { lat: 37.7749, lon: -122.4194, name: 'San Francisco, USA' },
+			'moscow': { lat: 55.7558, lon: 37.6173, name: 'Moscow, Russia' },
+			'beijing': { lat: 39.9042, lon: 116.4074, name: 'Beijing, China' },
+			'sao-paulo': { lat: -23.5505, lon: -46.6333, name: 'São Paulo, Brazil' },
+			'cape-town': { lat: -33.9249, lon: 18.4241, name: 'Cape Town, South Africa' },
+			'reykjavik': { lat: 64.1466, lon: -21.9426, name: 'Reykjavik, Iceland' }
+		};
+
+		// Tile server configurations
+		const TILE_SERVERS = {
+			'osm': {
+				template: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+				subdomains: ['a', 'b', 'c']
+			},
+			'osm-humanitarian': {
+				template: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+				subdomains: ['a', 'b', 'c']
+			},
+			'cartodb': {
+				template: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+				subdomains: ['a', 'b', 'c', 'd']
+			},
+			'cartodb-dark': {
+				template: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+				subdomains: ['a', 'b', 'c', 'd']
+			},
+			'satellite': {
+				template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+				subdomains: []
+			},
+			'topo': {
+				template: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}',
+				subdomains: []
+			}
+		};
+
+		// Get current layer type
+		function getLayerType() {
+			return document.getElementById('layerTypeSelect').value;
+		}
+
+		// Get tile server config for current layer type
+		function getTileServerConfig() {
+			const layerType = getLayerType();
+			return TILE_SERVERS[layerType] || TILE_SERVERS['osm'];
+		}
+
+		/**
+		 * Convert latitude/longitude to tile coordinates
+		 */
+		function latLonToTile(lat, lon, zoom) {
+			const n = Math.pow(2, zoom);
+			const x = Math.floor((lon + 180) / 360 * n);
+			const latRad = lat * Math.PI / 180;
+			const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+			return { x, y, z: zoom };
+		}
+
+		/**
+		 * Convert tile coordinates to latitude/longitude (top-left corner)
+		 */
+		function tileToLatLon(x, y, z) {
+			const n = Math.pow(2, z);
+			const lon = x / n * 360 - 180;
+			const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)));
+			const lat = latRad * 180 / Math.PI;
+			return { lat, lon };
+		}
+
+		/**
+		 * Get tile URL for current layer type
+		 */
+		function getTileUrl(x, y, z) {
+			const config = getTileServerConfig();
+			const layerType = getLayerType();
+			let url = config.template;
+			
+			// Replace subdomain if available
+			if (config.subdomains.length > 0) {
+				const subdomain = config.subdomains[(x + y) % config.subdomains.length];
+				url = url.replace('{s}', subdomain);
+			}
+			
+			// Some servers (like ESRI) use TMS format where Y is inverted
+			let tileY = y;
+			if (layerType === 'satellite' || layerType === 'topo') {
+				// TMS format: Y = 2^z - 1 - y
+				tileY = Math.pow(2, z) - 1 - y;
+			}
+			
+			// Replace tile coordinates
+			url = url.replace('{z}', z.toString());
+			url = url.replace('{x}', x.toString());
+			url = url.replace('{y}', tileY.toString());
+			
+			return url;
+		}
+
+		/**
+		 * Load a map tile as a texture
+		 */
+		function loadMapTile(x, y, z) {
+			return new Promise((resolve, reject) => {
+				const url = getTileUrl(x, y, z);
+				const textureLoader = new THREE.TextureLoader();
+				
+				textureLoader.load(
+					url,
+					(texture) => {
+						texture.wrapS = THREE.ClampToEdgeWrapping;
+						texture.wrapT = THREE.ClampToEdgeWrapping;
+						texture.minFilter = THREE.LinearFilter;
+						texture.magFilter = THREE.LinearFilter;
+						resolve({ texture, x, y, z, url });
+					},
+					undefined,
+					(error) => {
+						console.error(`Failed to load tile ${x}/${y}/${z} (${url}):`, error);
+						reject(error);
+					}
+				);
+			});
+		}
+
+		/**
+		 * Create Map Ground Layer
+		 */
+		async function createOSMGroundLayer(options = {}) {
+			const {
+				centerLat = 51.505,
+				centerLon = -0.09,
+				zoom = 13,
+				gridSize = 3,
+				groundSize = 1000,
+				opacity = 1.0,
+				layerType = 'osm'
+			} = options;
+
+			const layerTypeName = document.getElementById('layerTypeSelect').options[document.getElementById('layerTypeSelect').selectedIndex].text;
+			showLoading(`Loading ${layerTypeName} tiles...`);
+
+			try {
+				// Get center tile
+				const centerTile = latLonToTile(centerLat, centerLon, zoom);
+				
+				// Calculate grid offset (center the grid around center tile)
+				const offset = Math.floor(gridSize / 2);
+				const startX = centerTile.x - offset;
+				const startY = centerTile.y - offset;
+
+				// Load all tiles with their grid positions
+				const tilePromises = [];
+				const tilePositions = []; // Track position of each tile
+				
+				for (let i = 0; i < gridSize; i++) {
+					for (let j = 0; j < gridSize; j++) {
+						const tileX = startX + i;
+						const tileY = startY + j;
+						tilePositions.push({ gridX: i, gridY: j, tileX, tileY });
+						tilePromises.push(loadMapTile(tileX, tileY, zoom));
+					}
+				}
+
+				const loadedTiles = await Promise.all(tilePromises);
+				console.log(`Loaded ${loadedTiles.length} map tiles (${layerTypeName})`);
+
+				// Create canvas to combine tiles
+				const tileSize = 256; // OSM tiles are 256x256
+				const canvas = document.createElement('canvas');
+				canvas.width = tileSize * gridSize;
+				canvas.height = tileSize * gridSize;
+				const ctx = canvas.getContext('2d');
+				
+				// Set image smoothing for better quality
+				ctx.imageSmoothingEnabled = true;
+				ctx.imageSmoothingQuality = 'high';
+
+				// Draw tiles onto canvas in correct positions
+				const imagePromises = loadedTiles.map((tile, index) => {
+					return new Promise((resolve) => {
+						const img = new Image();
+						img.crossOrigin = 'anonymous';
+						img.onload = () => {
+							const pos = tilePositions[index];
+							resolve({ img, pos, ...tile });
+						};
+						img.src = tile.texture.image.src;
+					});
+				});
+
+				const images = await Promise.all(imagePromises);
+				
+				// Sort images by their grid position to ensure correct order
+				images.sort((a, b) => {
+					if (a.pos.gridY !== b.pos.gridY) {
+						return a.pos.gridY - b.pos.gridY;
+					}
+					return a.pos.gridX - b.pos.gridX;
+				});
+				
+				// Draw each tile at its correct position
+				images.forEach((tileData) => {
+					const { gridX, gridY } = tileData.pos;
+					ctx.drawImage(
+						tileData.img,
+						gridX * tileSize,
+						gridY * tileSize,
+						tileSize,
+						tileSize
+					);
+				});
+
+				// Create texture from canvas
+				const combinedTexture = new THREE.CanvasTexture(canvas);
+				combinedTexture.wrapS = THREE.ClampToEdgeWrapping;
+				combinedTexture.wrapT = THREE.ClampToEdgeWrapping;
+				combinedTexture.minFilter = THREE.LinearMipmapLinearFilter;
+				combinedTexture.magFilter = THREE.LinearFilter;
+				combinedTexture.generateMipmaps = true;
+				combinedTexture.flipY = false; // Canvas textures are not flipped by default
+				combinedTexture.needsUpdate = true;
+
+				// Create ground plane
+				const groundGeometry = new THREE.PlaneGeometry(groundSize, groundSize);
+				const groundMaterial = new THREE.MeshStandardMaterial({
+					map: combinedTexture,
+					opacity: opacity,
+					transparent: opacity < 1.0,
+					roughness: 0.8,
+					metalness: 0.1
+				});
+				
+				const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+				ground.rotation.x = -Math.PI / 2;
+				ground.position.y = 0;
+				ground.receiveShadow = true;
+				ground.name = 'OSM_Ground_Layer';
+
+				// Store tile data for cleanup
+				ground.userData.osmTiles = loadedTiles;
+				ground.userData.osmConfig = { centerLat, centerLon, zoom, gridSize, groundSize, opacity };
+
+				hideLoading();
+				return ground;
+
+			} catch (error) {
+				console.error('Error creating OSM ground layer:', error);
+				hideLoading();
+				throw error;
+			}
+		}
+
+		/**
+		 * Add Map Ground Layer to scene
+		 */
+		async function addOSMGroundLayer() {
+			if (osmGroundLayer) {
+				console.warn('Map ground layer already exists. Remove it first or update it.');
+				return;
+			}
+
+			try {
+				const centerLat = parseFloat(document.getElementById('latInput').value);
+				const centerLon = parseFloat(document.getElementById('lonInput').value);
+				const zoom = parseInt(document.getElementById('zoomSlider').value);
+				const gridSize = parseInt(document.getElementById('gridSlider').value);
+				const groundSize = parseFloat(document.getElementById('sizeSlider').value);
+				const opacity = parseFloat(document.getElementById('opacitySlider').value);
+				const layerType = getLayerType();
+
+				osmGroundLayer = await createOSMGroundLayer({
+					centerLat,
+					centerLon,
+					zoom,
+					gridSize,
+					groundSize,
+					opacity,
+					layerType
+				});
+
+				scene.add(osmGroundLayer);
+				console.log('✅ Map ground layer added to scene');
+			} catch (error) {
+				console.error('Failed to add map ground layer:', error);
+				alert('Failed to load map tiles. Please check your internet connection and try again.');
+			}
+		}
+
+		/**
+		 * Remove OSM Ground Layer from scene
+		 */
+		function removeOSMGroundLayer() {
+			if (osmGroundLayer) {
+				// Dispose textures
+				if (osmGroundLayer.material.map) {
+					osmGroundLayer.material.map.dispose();
+				}
+				if (osmGroundLayer.userData.osmTiles) {
+					osmGroundLayer.userData.osmTiles.forEach(tile => {
+						if (tile.texture) {
+							tile.texture.dispose();
+						}
+					});
+				}
+				
+				// Dispose material and geometry
+				osmGroundLayer.material.dispose();
+				osmGroundLayer.geometry.dispose();
+				
+				// Remove from scene
+				scene.remove(osmGroundLayer);
+				osmGroundLayer = null;
+				console.log('✅ OSM ground layer removed from scene');
+			}
+		}
+
+		/**
+		 * Update existing OSM Ground Layer
+		 */
+		async function updateOSMGroundLayer() {
+			if (!osmGroundLayer) {
+				console.warn('No OSM ground layer to update. Adding new layer...');
+				await addOSMGroundLayer();
+				return;
+			}
+
+			removeOSMGroundLayer();
+			await addOSMGroundLayer();
+		}
+
+		// ==========================================
+		// DEMO OBJECTS
+		// ==========================================
+
+		// Add some objects to show the ground layer in context
+		const objectsGroup = new THREE.Group();
+
+		// Add a marker at center
+		const markerGeometry = new THREE.ConeGeometry(20, 60, 8);
+		const markerMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+		const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+		marker.position.set(0, 30, 0);
+		marker.castShadow = true;
+		objectsGroup.add(marker);
+
+		// Add some buildings
+		for (let i = 0; i < 5; i++) {
+			const size = 30 + Math.random() * 40;
+			const height = 50 + Math.random() * 100;
+			const buildingGeometry = new THREE.BoxGeometry(size, height, size);
+			const buildingMaterial = new THREE.MeshStandardMaterial({
+				color: new THREE.Color().setHSL(0.1, 0.3, 0.5 + Math.random() * 0.3)
+			});
+			const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+			building.position.set(
+				-200 + Math.random() * 400,
+				height / 2,
+				-200 + Math.random() * 400
+			);
+			building.castShadow = true;
+			building.receiveShadow = true;
+			objectsGroup.add(building);
+		}
+
+		scene.add(objectsGroup);
+
+		// ==========================================
+		// UI CONTROLS
+		// ==========================================
+
+		function updateValueDisplays() {
+			document.getElementById('latValue').textContent = 
+				parseFloat(document.getElementById('latInput').value).toFixed(3);
+			document.getElementById('lonValue').textContent = 
+				parseFloat(document.getElementById('lonInput').value).toFixed(3);
+			document.getElementById('zoomValue').textContent = 
+				document.getElementById('zoomSlider').value;
+			document.getElementById('gridValue').textContent = 
+				document.getElementById('gridSlider').value;
+			document.getElementById('sizeValue').textContent = 
+				document.getElementById('sizeSlider').value;
+			document.getElementById('opacityValue').textContent = 
+				parseFloat(document.getElementById('opacitySlider').value).toFixed(2);
+		}
+
+		function showLoading(message) {
+			const loadingDiv = document.getElementById('loading');
+			loadingDiv.textContent = message;
+			loadingDiv.style.display = 'block';
+		}
+
+		function hideLoading() {
+			document.getElementById('loading').style.display = 'none';
+		}
+
+		// Enable/disable checkbox
+		document.getElementById('osmEnabled').addEventListener('change', (e) => {
+			if (e.target.checked) {
+				if (!osmGroundLayer) {
+					addOSMGroundLayer();
+				}
+			} else {
+				if (osmGroundLayer) {
+					removeOSMGroundLayer();
+				}
+			}
+		});
+
+		// Input controls
+		['latInput', 'lonInput', 'zoomSlider', 'gridSlider', 'sizeSlider', 'opacitySlider'].forEach(id => {
+			const element = document.getElementById(id);
+			element.addEventListener('input', () => {
+				updateValueDisplays();
+				// Reset location preset to "custom" if lat/lon are manually changed
+				if (id === 'latInput' || id === 'lonInput') {
+					document.getElementById('locationSelect').value = 'custom';
+				}
+				// Auto-update opacity without recreating layer
+				if (id === 'opacitySlider' && osmGroundLayer) {
+					const opacity = parseFloat(element.value);
+					osmGroundLayer.material.opacity = opacity;
+					osmGroundLayer.material.transparent = opacity < 1.0;
+				}
+			});
+		});
+
+		// Location preset selector
+		document.getElementById('locationSelect').addEventListener('change', (e) => {
+			const presetId = e.target.value;
+			if (presetId !== 'custom' && LOCATION_PRESETS[presetId]) {
+				const preset = LOCATION_PRESETS[presetId];
+				document.getElementById('latInput').value = preset.lat.toString();
+				document.getElementById('lonInput').value = preset.lon.toString();
+				updateValueDisplays();
+				// Auto-update layer if it exists and is enabled
+				if (osmGroundLayer && document.getElementById('osmEnabled').checked) {
+					updateOSMGroundLayer();
+				}
+			}
+		});
+
+		// Layer type selector
+		document.getElementById('layerTypeSelect').addEventListener('change', () => {
+			// Auto-update layer if it exists and is enabled
+			if (osmGroundLayer && document.getElementById('osmEnabled').checked) {
+				updateOSMGroundLayer();
+			}
+		});
+
+		// Buttons
+		document.getElementById('addLayerBtn').addEventListener('click', addOSMGroundLayer);
+		document.getElementById('removeLayerBtn').addEventListener('click', () => {
+			removeOSMGroundLayer();
+			document.getElementById('osmEnabled').checked = false;
+		});
+		document.getElementById('updateLayerBtn').addEventListener('click', updateOSMGroundLayer);
+
+		document.getElementById('resetBtn').addEventListener('click', () => {
+			document.getElementById('latInput').value = '51.505';
+			document.getElementById('lonInput').value = '-0.09';
+			document.getElementById('zoomSlider').value = '13';
+			document.getElementById('gridSlider').value = '3';
+			document.getElementById('sizeSlider').value = '1000';
+			document.getElementById('opacitySlider').value = '1.0';
+			document.getElementById('layerTypeSelect').value = 'osm';
+			document.getElementById('locationSelect').value = 'london';
+			updateValueDisplays();
+			if (osmGroundLayer) {
+				updateOSMGroundLayer();
+			}
+		});
+
+		// Initial value display update
+		updateValueDisplays();
+
+		// Set initial location preset to London
+		document.getElementById('locationSelect').value = 'london';
+
+		// Initial load
+		document.getElementById('osmEnabled').checked = true;
+		addOSMGroundLayer();
+
+		// ==========================================
+		// ANIMATION LOOP
+		// ==========================================
+
+		const statsDiv = document.getElementById('stats');
+		let frameCount = 0;
+		let lastTime = performance.now();
+
+		function animate() {
+			requestAnimationFrame(animate);
+
+			controls.update();
+
+			// Rotate marker slowly
+			marker.rotation.y += 0.01;
+
+			renderer.render(scene, camera);
+
+			// Update stats
+			frameCount++;
+			const now = performance.now();
+			if (now - lastTime >= 1000) {
+				const fps = Math.round((frameCount * 1000) / (now - lastTime));
+				statsDiv.textContent = `FPS: ${fps}`;
+				frameCount = 0;
+				lastTime = now;
+			}
+		}
+
+		// Handle window resize
+		window.addEventListener('resize', () => {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		});
+
+		// Start animation
+		animate();
+
+		console.log('✅ OpenStreetMap Ground Layer Demo initialized!');
+		console.log('💡 Use the controls to add/remove and customize the OSM ground layer.');
+		
+		// Export functions for external use
+		window.OSMGroundLayerDemo = {
+			addLayer: addOSMGroundLayer,
+			removeLayer: removeOSMGroundLayer,
+			updateLayer: updateOSMGroundLayer,
+			createLayer: createOSMGroundLayer,
+			getLayer: () => osmGroundLayer
+		};
+	</script>
+</body>
+</html>
+

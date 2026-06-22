@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": false,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Path aliases for streets.gl modules */
+    "baseUrl": "./src",
+    "paths": {
+      "~/*": ["*"],
+      "streets-gl-alt/*": ["../streets-gl-alt/src/*"]
+    },
+
+    /* Linting */
+    "strict": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src", "tests", "vitest.config.ts"],
+  "exclude": [
+    "src/lib/render-graph/tests/**",
+    "src/viewer/utils/shadowSystemDebugTests.ts",
+    "src/viewer/utils/shadowSystemTestRunner.ts"
+  ],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
+

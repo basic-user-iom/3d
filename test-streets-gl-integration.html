@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streets GL Integration Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .test-section {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid #3a3a3a;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #4a9eff;
+        }
+        .test-item {
+            padding: 10px;
+            margin: 10px 0;
+            background: #1a1a1a;
+            border-radius: 4px;
+            border-left: 3px solid #4a9eff;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.pass {
+            background: #4caf50;
+            color: white;
+        }
+        .status.fail {
+            background: #f44336;
+            color: white;
+        }
+        .status.pending {
+            background: #ff9800;
+            color: white;
+        }
+        button {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #3a8eef;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .log {
+            background: #000;
+            color: #0f0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .log-entry {
+            margin: 2px 0;
+        }
+        .log-entry.error {
+            color: #f44;
+        }
+        .log-entry.warn {
+            color: #ff0;
+        }
+        .log-entry.info {
+            color: #0ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Streets GL Integration Test Suite</h1>
+    <p>This page helps verify that the Streets GL integration is working correctly.</p>
+
+    <div class="test-section">
+        <h2>1. Server Status</h2>
+        <div class="test-item">
+            Streets GL Server (port 8081)
+            <span id="streets-gl-status" class="status pending">Checking...</span>
+        </div>
+        <div class="test-item">
+            3D Viewer Server (port 3000)
+            <span id="viewer-status" class="status pending">Checking...</span>
+        </div>
+        <button onclick="checkServers()">Refresh Status</button>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Bridge Connection</h2>
+        <div class="test-item">
+            Bridge Ready
+            <span id="bridge-status" class="status pending">Not tested</span>
+        </div>
+        <div class="test-item">
+            PostMessage Communication
+            <span id="postmessage-status" class="status pending">Not tested</span>
+        </div>
+        <button onclick="testBridge()">Test Bridge</button>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Object Sync</h2>
+        <div class="test-item">
+            Object Creation Sync
+            <span id="object-sync-status" class="status pending">Not tested</span>
+        </div>
+        <div class="test-item">
+            Real-Time Transform Sync
+            <span id="transform-sync-status" class="status pending">Not tested</span>
+        </div>
+        <p><small>Note: These tests require manual interaction in the 3D viewer.</small></p>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Controls</h2>
+        <div class="test-item">
+            Shadow Quality Control
+            <span id="shadow-control-status" class="status pending">Not tested</span>
+        </div>
+        <div class="test-item">
+            Sun Intensity Control
+            <span id="sun-intensity-status" class="status pending">Not tested</span>
+        </div>
+        <div class="test-item">
+            Sun Direction Control
+            <span id="sun-direction-status" class="status pending">Not tested</span>
+        </div>
+        <p><small>Note: These tests require manual interaction in the 3D viewer.</small></p>
+    </div>
+
+    <div class="test-section">
+        <h2>5. Material Extraction</h2>
+        <div class="test-item">
+            Color Extraction
+            <span id="color-extraction-status" class="status pending">Not tested</span>
+        </div>
+        <div class="test-item">
+            Texture URL Extraction
+            <span id="texture-extraction-status" class="status pending">Not tested</span>
+        </div>
+        <div class="test-item">
+            Material Properties Extraction
+            <span id="material-props-status" class="status pending">Not tested</span>
+        </div>
+        <p><small>Note: These tests require manual interaction in the 3D viewer.</small></p>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Log</h2>
+        <div id="test-log" class="log">
+            <div class="log-entry info">Test suite initialized. Click "Refresh Status" to begin.</div>
+        </div>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('test-log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('test-log').innerHTML = '';
+            log('Log cleared', 'info');
+        }
+
+        function updateStatus(elementId, status, text) {
+            const element = document.getElementById(elementId);
+            element.className = `status ${status}`;
+            element.textContent = text;
+        }
+
+        async function checkServers() {
+            log('Checking server status...', 'info');
+            
+            // Check Streets GL Server
+            try {
+                const response = await fetch('http://localhost:8081', { 
+                    method: 'HEAD',
+                    mode: 'no-cors',
+                    cache: 'no-cache'
+                });
+                updateStatus('streets-gl-status', 'pass', 'Running');
+                log('✅ Streets GL Server is running on port 8081', 'info');
+            } catch (error) {
+                updateStatus('streets-gl-status', 'fail', 'Not Running');
+                log('❌ Streets GL Server is not running: ' + error.message, 'error');
+            }
+
+            // Check 3D Viewer Server
+            try {
+                const response = await fetch('http://localhost:3000', { 
+                    method: 'HEAD',
+                    mode: 'no-cors',
+                    cache: 'no-cache'
+                });
+                updateStatus('viewer-status', 'pass', 'Running');
+                log('✅ 3D Viewer Server is running on port 3000', 'info');
+            } catch (error) {
+                updateStatus('viewer-status', 'fail', 'Not Running');
+                log('❌ 3D Viewer Server is not running: ' + error.message, 'error');
+            }
+        }
+
+        async function testBridge() {
+            log('Testing bridge connection...', 'info');
+            
+            // Try to open the viewer in an iframe to test bridge
+            const iframe = document.createElement('iframe');
+            iframe.src = 'http://localhost:3000';
+            iframe.style.display = 'none';
+            document.body.appendChild(iframe);
+            
+            iframe.onload = () => {
+                log('✅ 3D Viewer iframe loaded', 'info');
+                updateStatus('bridge-status', 'pending', 'Testing...');
+                
+                // Listen for postMessage from the viewer
+                window.addEventListener('message', (event) => {
+                    if (event.origin === 'http://localhost:3000' || event.origin === 'http://localhost:8081') {
+                        log(`📨 Received message: ${event.data.type || 'unknown'}`, 'info');
+                        
+                        if (event.data.type === 'STREETS_GL_BRIDGE_READY') {
+                            updateStatus('bridge-status', 'pass', 'Ready');
+                            updateStatus('postmessage-status', 'pass', 'Working');
+                            log('✅ Bridge is ready and postMessage is working', 'info');
+                        }
+                    }
+                });
+                
+                // Give it a moment to initialize
+                setTimeout(() => {
+                    if (document.getElementById('bridge-status').textContent === 'Testing...') {
+                        updateStatus('bridge-status', 'pending', 'Waiting for bridge...');
+                        log('⏳ Waiting for bridge to initialize (this may take a few seconds)', 'warn');
+                    }
+                }, 2000);
+            };
+            
+            iframe.onerror = () => {
+                updateStatus('bridge-status', 'fail', 'Failed to load');
+                log('❌ Failed to load 3D Viewer iframe', 'error');
+            };
+        }
+
+        // Auto-check servers on load
+        window.addEventListener('load', () => {
+            log('Test suite loaded', 'info');
+            checkServers();
+        });
+    </script>
+</body>
+</html>
+
+

@@ -1,0 +1,310 @@
+.transform-panel {
+  position: fixed;
+  /* top and left are set via inline styles from useFloatingPanel */
+  width: 340px;
+  min-width: 280px;
+  max-width: 420px;
+  max-height: calc(100vh - 60px);
+  height: auto;
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  padding: 0;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  resize: none;
+  overflow-x: hidden;
+  backdrop-filter: blur(4px);
+}
+
+/* When dragging, smooth transition is disabled */
+.transform-panel.dragging {
+  transition: none;
+}
+
+@media (max-width: 768px) {
+  .transform-panel {
+    width: 100%;
+    max-width: 100%;
+    resize: none;
+  }
+}
+
+.transform-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2f2f2f;
+  flex-shrink: 0;
+  background: #242424;
+  cursor: grab;
+  user-select: none;
+}
+
+.transform-panel.dragging {
+  z-index: 1200;
+}
+
+.transform-panel.dragging .transform-panel-header {
+  cursor: grabbing;
+}
+
+.transform-panel-header h3 {
+  margin: 0;
+  color: #f5f5f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.minimize-button,
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.minimize-button:hover,
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.transform-quickbar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 20px 16px 20px;
+  background: #232323;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.transform-quick-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.transform-quick-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-right: 4px;
+}
+
+.transform-quick-button {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f0f0f0;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.transform-quick-button:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.transform-quick-button.active {
+  background: rgba(90, 140, 255, 0.25);
+  border-color: rgba(90, 140, 255, 0.5);
+  color: #ffffff;
+}
+
+.transform-quick-button:focus-visible {
+  outline: 2px solid rgba(120, 170, 255, 0.7);
+  outline-offset: 2px;
+}
+
+.transform-quick-button:active {
+  transform: translateY(1px);
+}
+
+.transform-quick-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.transform-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 20px;
+  padding-top: 16px;
+  padding-right: calc(20px + 8px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 0 0 auto;
+  background: #1a1a1a;
+  box-sizing: border-box;
+  max-height: calc(100vh - 60px - 72px - 76px);
+}
+
+@media (max-width: 400px) {
+  .transform-panel-content {
+    padding: 12px;
+    gap: 16px;
+    max-height: calc(100vh - 60px - 68px - 72px);
+  }
+
+  .transform-quickbar {
+    padding: 10px 12px 14px 12px;
+  }
+}
+
+.transform-panel-content.compact {
+  gap: 18px;
+}
+
+.transform-panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.transform-panel-content::-webkit-scrollbar-track {
+  background: #252525;
+}
+
+.transform-panel-content::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-radius: 4px;
+}
+
+.transform-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #505050;
+}
+
+.transform-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transform-section.dual {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
+
+.transform-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.transform-section.dual h4 {
+  margin-bottom: 4px;
+}
+
+@media (max-width: 520px) {
+  .transform-section.dual {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
+.transform-section h4 {
+  margin: 0 0 12px 0;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.vector-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vector-inputs label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: #d0d0d0;
+  font-size: 13px;
+  min-width: 0;
+  width: 100%;
+}
+
+.vector-inputs label > span {
+  min-width: 24px;
+  font-weight: 500;
+  color: #b0b0b0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.vector-inputs input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  background: #252525;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
+  transition: all 0.2s;
+  font-family: 'Courier New', monospace;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+@media (max-width: 400px) {
+  .vector-inputs input[type="number"] {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+}
+
+.vector-inputs input[type="number"]:hover {
+  background: #2a2a2a;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.vector-inputs input[type="number"]:focus {
+  border-color: #4a9eff;
+  background: #2a2a2a;
+}
+
+.vector-inputs input[type="number"]::-webkit-inner-spin-button,
+.vector-inputs input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+}
+

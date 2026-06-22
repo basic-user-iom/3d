@@ -1,0 +1,53 @@
+.render-mode-selector {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.render-mode-selector .toolbar-toggle {
+  padding: 4px 10px;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.render-mode-selector .toolbar-toggle.active {
+  background: rgba(100, 150, 255, 0.3);
+  border-color: rgba(100, 150, 255, 0.5);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

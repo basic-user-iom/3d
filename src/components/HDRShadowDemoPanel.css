@@ -1,0 +1,202 @@
+.hdr-shadow-demo-panel {
+  position: fixed;
+  width: 400px;
+  background: rgba(20, 20, 30, 0.95);
+  border: 1px solid #444;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #fff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.hdr-shadow-demo-panel.dragging {
+  opacity: 0.8;
+}
+
+.hdr-shadow-demo-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 12px 16px;
+  cursor: move;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.hdr-shadow-demo-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.hdr-shadow-demo-header button {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hdr-shadow-demo-header button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.hdr-shadow-demo-content {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.hdr-shadow-demo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.hdr-shadow-demo-actions button {
+  padding: 10px 16px;
+  background: #667eea;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.hdr-shadow-demo-actions button:hover:not(:disabled) {
+  background: #5568d3;
+}
+
+.hdr-shadow-demo-actions button:disabled {
+  background: #444;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.hdr-shadow-demo-instructions {
+  background: rgba(102, 126, 234, 0.1);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.hdr-shadow-demo-instructions h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #a8b5ff;
+}
+
+.hdr-shadow-demo-instructions ol {
+  margin: 8px 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.hdr-shadow-demo-instructions li {
+  margin-bottom: 4px;
+}
+
+.hdr-shadow-demo-result {
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.hdr-shadow-demo-result.success {
+  background: rgba(76, 175, 80, 0.2);
+  border: 1px solid rgba(76, 175, 80, 0.5);
+}
+
+.hdr-shadow-demo-result.warning {
+  background: rgba(255, 152, 0, 0.2);
+  border: 1px solid rgba(255, 152, 0, 0.5);
+}
+
+.hdr-shadow-demo-result h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+
+.hdr-shadow-demo-result .result-message {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.hdr-shadow-demo-result .result-details {
+  margin-top: 8px;
+}
+
+.hdr-shadow-demo-result .result-details h5 {
+  margin: 0 0 4px 0;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.hdr-shadow-demo-result .result-details ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+}
+
+.hdr-shadow-demo-result .result-details li {
+  margin-bottom: 2px;
+}
+
+.hdr-shadow-demo-status {
+  background: rgba(76, 175, 80, 0.1);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.hdr-shadow-demo-status p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.minimize-button,
+.close-button {
+  background: rgba(255, 255, 255, 0.2) !important;
+  border: none !important;
+  color: white !important;
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 18px !important;
+  line-height: 1 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+}
+
+.minimize-button:hover,
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
+}
+
+
+
+
+
+
+
+

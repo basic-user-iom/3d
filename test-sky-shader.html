@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Sky Shader Test - Official Implementation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #000;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 100;
+            max-width: 350px;
+            line-height: 1.6;
+        }
+        #info h3 {
+            margin: 0 0 10px 0;
+            color: #4a9eff;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 100;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        #controls h4 {
+            margin: 0 0 10px 0;
+            color: #4a9eff;
+        }
+        #controls label {
+            display: block;
+            margin: 8px 0;
+        }
+        #controls input[type="range"] {
+            width: 200px;
+            margin-right: 10px;
+        }
+        #controls span.value {
+            color: #4a9eff;
+            font-weight: bold;
+            min-width: 60px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="info">
+        <h3>🌤️ Three.js Sky Shader Test</h3>
+        <p><strong>Official Three.js Sky Implementation</strong></p>
+        <p>This test uses the official Three.js Sky shader from <code>three/addons/objects/Sky.js</code></p>
+        <p>Use the controls below to adjust sky parameters in real-time.</p>
+        <p><strong>Features:</strong></p>
+        <ul style="margin: 5px 0; padding-left: 20px;">
+            <li>Preetham atmospheric scattering</li>
+            <li>Dynamic sun position</li>
+            <li>Real-time parameter adjustment</li>
+            <li>Shadows and lighting</li>
+        </ul>
+    </div>
+    <div id="controls">
+        <h4>Sky Controls</h4>
+        <label>
+            Elevation: <span class="value" id="elevationValue">0.5</span> rad
+            <input type="range" id="elevation" min="-1.57" max="1.57" step="0.01" value="0.5">
+        </label>
+        <label>
+            Azimuth: <span class="value" id="azimuthValue">0.0</span> rad
+            <input type="range" id="azimuth" min="0" max="6.28" step="0.01" value="0.0">
+        </label>
+        <label>
+            Turbidity: <span class="value" id="turbidityValue">10</span>
+            <input type="range" id="turbidity" min="2" max="20" step="0.1" value="10">
+        </label>
+        <label>
+            Rayleigh: <span class="value" id="rayleighValue">2</span>
+            <input type="range" id="rayleigh" min="0" max="10" step="0.1" value="2">
+        </label>
+        <label>
+            Mie Coefficient: <span class="value" id="mieCoeffValue">0.005</span>
+            <input type="range" id="mieCoeff" min="0" max="0.1" step="0.001" value="0.005">
+        </label>
+        <label>
+            Mie Directional G: <span class="value" id="mieGValue">0.8</span>
+            <input type="range" id="mieG" min="0" max="1" step="0.01" value="0.8">
+        </label>
+        <label>
+            Exposure: <span class="value" id="exposureValue">0.68</span>
+            <input type="range" id="exposure" min="0" max="2" step="0.01" value="0.68">
+        </label>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { Sky } from 'three/addons/objects/Sky.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        console.log('Loading Three.js Sky Shader Test...');
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(
+            75,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        camera.position.set(0, 5, 10);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        // Controls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 5;
+        controls.maxDistance = 50;
+
+        // Create Sky using official Three.js Sky shader
+        console.log('Creating Sky object...');
+        const sky = new Sky();
+        sky.scale.setScalar(450000);
+        scene.add(sky);
+
+        // Sky uniforms
+        const skyUniforms = sky.material.uniforms;
+        console.log('Sky uniforms:', skyUniforms);
+        
+        // Set initial values (matching Three.js example defaults)
+        const elevation = 0.5; // radians (0 = horizon, PI/2 = zenith)
+        const azimuth = 0.0; // radians (0 = north)
+        
+        // Calculate sun position from elevation and azimuth
+        // Convert elevation/azimuth to spherical coordinates
+        const phi = THREE.MathUtils.degToRad(90 - (elevation * 180 / Math.PI));
+        const theta = azimuth;
+        
+        const sun = new THREE.Vector3();
+        sun.setFromSphericalCoords(1, phi, theta);
+        
+        skyUniforms['sunPosition'].value.copy(sun);
+        skyUniforms['turbidity'].value = 10;
+        skyUniforms['rayleigh'].value = 2;
+        skyUniforms['mieCoefficient'].value = 0.005;
+        skyUniforms['mieDirectionalG'].value = 0.8;
+        skyUniforms['exposure'].value = 0.68;
+
+        console.log('Sky initialized with sun position:', sun);
+
+        // Add a simple ground plane to see sky interaction
+        const groundGeometry = new THREE.PlaneGeometry(100, 100);
+        const groundMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x888888,
+            roughness: 0.8,
+            metalness: 0.2
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = 0;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Add test objects to see lighting
+        const boxGeometry = new THREE.BoxGeometry(2, 2, 2);
+        const boxMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff,
+            roughness: 0.5,
+            metalness: 0.5
+        });
+        const box = new THREE.Mesh(boxGeometry, boxMaterial);
+        box.position.set(-3, 1, 0);
+        box.castShadow = true;
+        box.receiveShadow = true;
+        scene.add(box);
+
+        const sphereGeometry = new THREE.SphereGeometry(1, 32, 32);
+        const sphereMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff,
+            roughness: 0.3,
+            metalness: 0.7
+        });
+        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+        sphere.position.set(3, 1, 0);
+        sphere.castShadow = true;
+        sphere.receiveShadow = true;
+        scene.add(sphere);
+
+        // Add directional light (sun) - matches sky sun position
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        sunLight.position.copy(sun).multiplyScalar(100);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 0.5;
+        sunLight.shadow.camera.far = 500;
+        sunLight.shadow.camera.left = -50;
+        sunLight.shadow.camera.right = 50;
+        sunLight.shadow.camera.top = 50;
+        sunLight.shadow.camera.bottom = -50;
+        sunLight.shadow.bias = -0.0001;
+        sunLight.shadow.radius = 3;
+        scene.add(sunLight);
+
+        // Add ambient light for fill
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        // Update function
+        function updateSunPosition() {
+            const elevation = parseFloat(document.getElementById('elevation').value);
+            const azimuth = parseFloat(document.getElementById('azimuth').value);
+            
+            // Convert to spherical coordinates
+            // Elevation: -PI/2 (below horizon) to PI/2 (zenith)
+            // Azimuth: 0 to 2*PI (rotation around Y axis)
+            const phi = THREE.MathUtils.degToRad(90 - (elevation * 180 / Math.PI));
+            const theta = azimuth;
+            
+            sun.setFromSphericalCoords(1, phi, theta);
+            skyUniforms['sunPosition'].value.copy(sun);
+            
+            // Update sun light position to match
+            sunLight.position.copy(sun).multiplyScalar(100);
+            sunLight.lookAt(0, 0, 0);
+            
+            // Update display values
+            document.getElementById('elevationValue').textContent = elevation.toFixed(2);
+            document.getElementById('azimuthValue').textContent = azimuth.toFixed(2);
+        }
+
+        // Control event listeners
+        document.getElementById('elevation').addEventListener('input', (e) => {
+            updateSunPosition();
+        });
+        
+        document.getElementById('azimuth').addEventListener('input', (e) => {
+            updateSunPosition();
+        });
+        
+        document.getElementById('turbidity').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            skyUniforms['turbidity'].value = value;
+            document.getElementById('turbidityValue').textContent = value.toFixed(1);
+        });
+        
+        document.getElementById('rayleigh').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            skyUniforms['rayleigh'].value = value;
+            document.getElementById('rayleighValue').textContent = value.toFixed(1);
+        });
+        
+        document.getElementById('mieCoeff').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            skyUniforms['mieCoefficient'].value = value;
+            document.getElementById('mieCoeffValue').textContent = value.toFixed(3);
+        });
+        
+        document.getElementById('mieG').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            skyUniforms['mieDirectionalG'].value = value;
+            document.getElementById('mieGValue').textContent = value.toFixed(2);
+        });
+        
+        document.getElementById('exposure').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            skyUniforms['exposure'].value = value;
+            renderer.toneMappingExposure = value;
+            document.getElementById('exposureValue').textContent = value.toFixed(2);
+        });
+
+        // Initial update
+        updateSunPosition();
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        console.log('✅ Three.js Sky Shader Test loaded successfully!');
+        console.log('Sky object:', sky);
+        console.log('Sky material:', sky.material);
+    </script>
+</body>
+</html>

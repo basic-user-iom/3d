@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proxy Test - Streets GL</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        .success {
+            background: #1a3a1a;
+            border-color: #4caf50;
+        }
+        .error {
+            background: #3a1a1a;
+            border-color: #f44336;
+        }
+        .pending {
+            background: #2a2a2a;
+            border-color: #ff9800;
+        }
+        button {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        pre {
+            background: #2a2a2a;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Streets GL Proxy Test</h1>
+    <p>This page tests if the webpack proxy is working correctly.</p>
+    
+    <button onclick="runTests()">Run Tests</button>
+    <button onclick="clearResults()">Clear</button>
+    
+    <div id="results"></div>
+
+    <script>
+        const resultsDiv = document.getElementById('results');
+        
+        function addResult(name, status, details) {
+            const div = document.createElement('div');
+            div.className = `test-result ${status}`;
+            div.innerHTML = `
+                <strong>${name}</strong>
+                <div>${details}</div>
+            `;
+            resultsDiv.appendChild(div);
+        }
+        
+        function clearResults() {
+            resultsDiv.innerHTML = '';
+        }
+        
+        async function runTests() {
+            clearResults();
+            addResult('Starting Tests...', 'pending', 'Testing proxy configuration...');
+            
+            // Test 1: Vector tile
+            try {
+                const response = await fetch('/vector/13/2412/3079');
+                const contentType = response.headers.get('content-type');
+                const size = response.headers.get('content-length');
+                
+                if (response.ok && response.status === 200) {
+                    addResult('✅ Vector Tile Test', 'success', 
+                        `Status: ${response.status}<br>
+                         Content-Type: ${contentType || 'N/A'}<br>
+                         Size: ${size || 'N/A'} bytes<br>
+                         <strong>Proxy is working!</strong>`);
+                } else {
+                    addResult('❌ Vector Tile Test', 'error', 
+                        `Status: ${response.status} ${response.statusText}<br>
+                         <strong>Proxy is NOT working. Server needs restart.</strong>`);
+                }
+            } catch (error) {
+                addResult('❌ Vector Tile Test', 'error', 
+                    `Error: ${error.message}<br>
+                     <strong>Proxy is NOT working.</strong>`);
+            }
+            
+            // Test 2: Vector timestamp
+            try {
+                const response = await fetch('/vector.timestamp');
+                
+                if (response.ok && response.status === 200) {
+                    const text = await response.text();
+                    addResult('✅ Vector Timestamp Test', 'success', 
+                        `Status: ${response.status}<br>
+                         Response: ${text.substring(0, 100)}...<br>
+                         <strong>Proxy is working!</strong>`);
+                } else {
+                    addResult('❌ Vector Timestamp Test', 'error', 
+                        `Status: ${response.status} ${response.statusText}<br>
+                         <strong>Proxy is NOT working.</strong>`);
+                }
+            } catch (error) {
+                addResult('❌ Vector Timestamp Test', 'error', 
+                    `Error: ${error.message}<br>
+                     <strong>Proxy is NOT working.</strong>`);
+            }
+            
+            // Test 3: High zoom tile
+            try {
+                const response = await fetch('/vector/16/19300/24629');
+                
+                if (response.ok && response.status === 200) {
+                    addResult('✅ High Zoom Tile Test', 'success', 
+                        `Status: ${response.status}<br>
+                         <strong>Proxy is working for high zoom levels!</strong>`);
+                } else {
+                    addResult('❌ High Zoom Tile Test', 'error', 
+                        `Status: ${response.status}<br>
+                         <strong>Proxy is NOT working.</strong>`);
+                }
+            } catch (error) {
+                addResult('❌ High Zoom Tile Test', 'error', 
+                    `Error: ${error.message}`);
+            }
+            
+            addResult('Tests Complete', 'pending', 
+                'Check the results above. If all tests pass, the proxy is working correctly!');
+        }
+        
+        // Auto-run tests on load
+        window.addEventListener('load', () => {
+            setTimeout(runTests, 1000);
+        });
+    </script>
+</body>
+</html>
+
+
+
+
+
+

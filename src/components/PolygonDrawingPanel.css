@@ -1,0 +1,565 @@
+.polygon-drawing-panel {
+  position: fixed;
+  width: 380px;
+  min-width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 80px);
+  height: auto;
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  padding: 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  resize: none;
+  backdrop-filter: blur(4px);
+  /* Ensure panel stays within viewport - inline styles will override but clamp ensures bounds */
+  min-height: 240px;
+  /* Ensure panel doesn't overflow viewport on right side */
+  left: 16px;
+  right: auto;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .polygon-drawing-panel {
+    width: calc(100vw - 32px) !important;
+    max-width: calc(100vw - 32px) !important;
+    min-width: calc(100vw - 32px) !important;
+    resize: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .polygon-drawing-panel {
+    width: calc(100vw - 16px) !important;
+    max-width: calc(100vw - 16px) !important;
+    min-width: calc(100vw - 16px) !important;
+  }
+  
+  .polygon-drawing-panel-content {
+    padding: 12px;
+    gap: 16px;
+  }
+}
+
+.polygon-drawing-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2f2f2f;
+  flex-shrink: 0;
+  background: #242424;
+  cursor: grab;
+  user-select: none;
+}
+
+.polygon-drawing-panel.dragging .polygon-drawing-panel-header {
+  cursor: grabbing;
+}
+
+.polygon-drawing-panel-header h3 {
+  margin: 0;
+  color: #f5f5f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.polygon-drawing-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  padding-right: 20px;
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  background: #1a1a1a;
+  box-sizing: border-box;
+  /* Prevent content from overflowing */
+  contain: layout style;
+  /* Ensure text doesn't overflow */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  width: 100%;
+  min-width: 0;
+  /* Ensure all content respects panel width */
+  max-width: 100%;
+}
+
+@media (max-width: 400px) {
+  .polygon-drawing-panel-content {
+    padding: 12px;
+    gap: 16px;
+  }
+}
+
+.polygon-drawing-panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.polygon-drawing-panel-content::-webkit-scrollbar-track {
+  background: #252525;
+}
+
+.polygon-drawing-panel-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.polygon-drawing-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.drawing-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.drawing-toggle-button {
+  width: 100%;
+  padding: 14px 16px;
+  background: #2a2a2a;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.drawing-toggle-button:hover {
+  background: #333;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.drawing-toggle-button.active {
+  background: #4caf50;
+  border-color: #4caf50;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+  color: #fff;
+}
+
+.drawing-status {
+  padding: 16px;
+  background: rgba(76, 175, 80, 0.1);
+  border: 1px solid rgba(76, 175, 80, 0.2);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.status-icon {
+  font-size: 18px;
+}
+
+.status-title {
+  color: #4caf50;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.status-info p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.points-counter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid rgba(76, 175, 80, 0.2);
+}
+
+.points-label {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.points-value {
+  color: #4caf50;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.polygon-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.finish-button,
+.clear-button,
+.delete-all-button {
+  flex: 1;
+  padding: 12px 16px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.finish-button {
+  background: #2196f3;
+  border-color: #2196f3;
+}
+
+.finish-button:hover:not(:disabled) {
+  background: #1976d2;
+  border-color: #1976d2;
+  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+}
+
+.finish-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.clear-button {
+  background: #2a2a2a;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.clear-button:hover {
+  background: #333;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.delete-all-button {
+  width: 100%;
+  background: rgba(244, 67, 54, 0.15);
+  border-color: rgba(244, 67, 54, 0.3);
+  color: #f44336;
+}
+
+.delete-all-button:hover {
+  background: rgba(244, 67, 54, 0.25);
+  border-color: rgba(244, 67, 54, 0.5);
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.2);
+}
+
+.button-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.button-text {
+  font-size: inherit;
+}
+
+.polygon-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.polygon-settings h4 {
+  margin: 0 0 8px 0;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.polygon-settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.polygon-settings label span {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.polygon-settings input[type="color"] {
+  width: 100%;
+  max-width: 100%;
+  height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+  box-sizing: border-box;
+}
+
+.polygon-settings input[type="color"]:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.polygon-settings input[type="range"] {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 6px;
+  background: #2a2a2a;
+  border-radius: 3px;
+  outline: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+}
+
+.polygon-settings input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: #4a7ba3;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.polygon-settings input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: #4a7ba3;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.color-input-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.color-picker {
+  width: 60px;
+  height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.2s ease;
+}
+
+.color-picker:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.color-text-input {
+  flex: 1;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-family: monospace;
+  transition: all 0.2s ease;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+
+.color-text-input:focus {
+  outline: none;
+  border-color: #4a7ba3;
+  background: #2f2f2f;
+}
+
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.slider-value {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 50px;
+  max-width: 60px;
+  text-align: right;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.polygon-settings select {
+  width: 100%;
+  max-width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-sizing: border-box;
+}
+
+.polygon-settings select:focus {
+  outline: none;
+  border-color: #4a7ba3;
+  background: #2f2f2f;
+}
+
+.polygon-editing-section {
+  padding: 16px;
+  background: rgba(33, 150, 243, 0.1);
+  border: 1px solid rgba(33, 150, 243, 0.3);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.polygon-editing-section h4 {
+  margin: 0 0 8px 0;
+  color: #2196f3;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.editing-hint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+}
+
+.material-application {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.apply-material-button {
+  width: 100%;
+  padding: 12px 16px;
+  background: #4caf50;
+  border: 2px solid #4caf50;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.apply-material-button:hover {
+  background: #45a049;
+  border-color: #45a049;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+}
+
+.material-hint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.polygon-note {
+  padding: 16px;
+  background: #2a2a2a;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+}
+
+.polygon-note p {
+  margin: 0;
+  color: #aaa;
+  font-size: 12px;
+  line-height: 1.6;
+}
+

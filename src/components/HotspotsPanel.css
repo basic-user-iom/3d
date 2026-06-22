@@ -1,0 +1,648 @@
+.hotspots-panel {
+  position: fixed;
+  /* top and left are set via inline styles from useFloatingPanel */
+  /* right: 0; removed to allow horizontal dragging */
+  width: 480px;
+  min-width: 450px;
+  max-width: 800px;
+  max-height: calc(100vh - 72px);
+  height: auto;
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  padding: 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  resize: horizontal;
+  overflow-x: auto;
+  backdrop-filter: blur(4px);
+  /* Ensure left positioning works, override any right positioning */
+  right: auto !important;
+  /* Prevent size changes when switching between edit/create modes */
+  transition: none;
+}
+
+@media (max-width: 768px) {
+  .hotspots-panel {
+    width: 100%;
+    max-width: 100%;
+    resize: none;
+  }
+}
+
+.hotspots-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2f2f2f;
+  flex-shrink: 0;
+  background: #242424;
+  cursor: grab;
+  user-select: none;
+}
+
+.hotspots-panel.dragging {
+  z-index: 200;
+}
+
+.hotspots-panel.dragging .hotspots-panel-header {
+  cursor: grabbing;
+}
+
+.hotspots-panel-header h3 {
+  margin: 0;
+  color: #f5f5f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.hotspots-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  padding-right: calc(20px + 8px);
+  flex: 1;
+  min-height: 0;
+  background: #1a1a1a;
+  box-sizing: border-box;
+  min-width: 0;
+  /* Ensure content fits within panel */
+  width: 100%;
+}
+
+@media (max-width: 400px) {
+  .hotspots-panel-content {
+    padding: 12px;
+    gap: 16px;
+  }
+}
+
+.hotspots-panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.hotspots-panel-content::-webkit-scrollbar-track {
+  background: #252525;
+}
+
+.hotspots-panel-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.hotspots-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.hotspots-list h4,
+.add-hotspot-section h4 {
+  margin: 0 0 12px 0;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.empty-message {
+  color: #666;
+  font-size: 13px;
+  text-align: center;
+  padding: 20px;
+  margin: 0;
+}
+
+.hotspots-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hotspot-item {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  transition: all 0.2s;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.hotspot-item:hover {
+  background: #333;
+  border-color: #555;
+}
+
+.hotspot-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.hotspot-info {
+  flex: 1;
+}
+
+.hotspot-name {
+  color: #f5f5f5;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.hotspot-type {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hotspot-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.expand-button {
+  background: transparent;
+  border: none;
+  color: #888;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+  font-size: 12px;
+}
+
+.expand-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.hotspot-details {
+  padding: 0 12px 12px 12px;
+  border-top: 1px solid #3a3a3a;
+  background: #222;
+}
+
+.button-icon {
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #888;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.button-icon:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #4a4a4a;
+  color: #fff;
+}
+
+.delete-button {
+  background: #5a2a2a;
+  border: 1px solid #7a3a3a;
+  border-radius: 6px;
+  color: #ff8888;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 16px;
+  padding: 0;
+}
+
+.delete-button:hover {
+  background: #6a3333;
+  border-color: #8a4444;
+}
+
+.add-hotspot-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.warning-message {
+  padding: 12px;
+  background: #5a4a2a;
+  border: 1px solid #7a6a3a;
+  border-radius: 6px;
+  color: #ffaa88;
+  font-size: 13px;
+  margin: 0;
+}
+
+.add-hotspot-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-hotspot-section label span {
+  color: #aaa;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.add-hotspot-section input,
+.add-hotspot-section select,
+.add-hotspot-section textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  transition: all 0.2s;
+  box-sizing: border-box;
+  font-family: inherit;
+  /* Ensure inputs don't overflow */
+  max-width: 100%;
+}
+
+.add-hotspot-section textarea {
+  resize: vertical;
+  min-height: 80px;
+  /* Prevent browser from auto-adjusting font size */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Ensure font size stays consistent */
+  font-size: inherit;
+}
+
+.add-hotspot-section input:focus,
+.add-hotspot-section select:focus,
+.add-hotspot-section textarea:focus {
+  outline: none;
+  border-color: #4a7ba3;
+  background: #2f2f2f;
+}
+
+.add-hotspot-section input::placeholder,
+.add-hotspot-section textarea::placeholder {
+  color: #666;
+}
+
+.add-button {
+  width: 100%;
+  padding: 12px;
+  background: #3a5a78;
+  border: 1px solid #4a7ba3;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.add-button:hover:not(:disabled) {
+  background: #4a6a88;
+  border-color: #5a8bb3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(74, 123, 163, 0.4);
+}
+
+.add-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hotspots-note {
+  padding: 16px;
+  background: #2a2a2a;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+}
+
+.hotspots-note p {
+  margin: 0;
+  color: #aaa;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Icon Selector */
+.icon-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.emoji-picker-container {
+  position: relative;
+}
+
+.emoji-picker-button {
+  width: 100%;
+  padding: 10px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.emoji-picker-button:hover {
+  background: #333;
+  border-color: #4a7ba3;
+}
+
+.emoji-picker {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: #1e1e1e;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  padding: 12px;
+  z-index: 1000;
+  max-height: 400px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.emoji-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.emoji-picker-header h5 {
+  margin: 0;
+  color: #e0e0e0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.emoji-picker-close {
+  background: transparent;
+  border: none;
+  color: #999;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.emoji-picker-close:hover {
+  background: #333;
+  color: #fff;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.emoji-item {
+  background: #2a2a2a;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 24px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-height: 40px;
+}
+
+.emoji-item:hover {
+  background: #333;
+  border-color: #4a7ba3;
+  transform: scale(1.1);
+}
+
+.emoji-item.selected {
+  background: #3a5a78;
+  border-color: #4a7ba3;
+  box-shadow: 0 0 8px rgba(74, 123, 163, 0.5);
+}
+
+.emoji-picker-custom {
+  padding-top: 8px;
+  border-top: 1px solid #3a3a3a;
+}
+
+.emoji-picker-custom input {
+  width: 100%;
+  padding: 8px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 24px;
+  text-align: center;
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+  transition: all 0.2s;
+}
+
+.emoji-picker-custom input:focus {
+  outline: none;
+  border-color: #4a7ba3;
+  background: #2f2f2f;
+}
+
+.emoji-picker::-webkit-scrollbar {
+  width: 6px;
+}
+
+.emoji-picker::-webkit-scrollbar-track {
+  background: #252525;
+}
+
+.emoji-picker::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+
+/* Text Formatting */
+.formatting-toggle {
+  background: #3a3a3a;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  color: #fff;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+}
+
+.formatting-toggle:hover {
+  background: #4a4a4a;
+  border-color: #5a5a5a;
+}
+
+.text-formatting-panel {
+  background: #252525;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.formatting-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  /* Ensure rows fit within panel */
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.formatting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 80px;
+}
+
+.formatting-label span {
+  font-size: 11px;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.formatting-label select,
+.formatting-label input[type="number"] {
+  padding: 6px 8px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.formatting-label input[type="color"] {
+  width: 100%;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.formatting-label input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.formatting-label input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+.formatting-button {
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #fff;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  transition: all 0.2s;
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.formatting-button:hover {
+  background: #333;
+  border-color: #4a7ba3;
+}
+
+.formatting-button.active {
+  background: #3a5a78;
+  border-color: #4a7ba3;
+  box-shadow: 0 0 4px rgba(74, 123, 163, 0.3);
+}
+

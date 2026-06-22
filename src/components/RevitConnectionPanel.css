@@ -1,0 +1,279 @@
+.revit-connection-panel {
+  position: fixed;
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  min-width: 450px;
+  max-width: 500px;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.revit-connection-panel.dragging {
+  opacity: 0.8;
+}
+
+.revit-connection-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: move;
+  user-select: none;
+}
+
+.revit-connection-panel-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.revit-connection-panel-header .close-button {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.revit-connection-panel-header .close-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.revit-connection-panel-content {
+  padding: 16px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+.revit-status-section {
+  margin-bottom: 20px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+}
+
+.revit-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.revit-status-indicator .status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #666;
+  transition: background 0.3s;
+}
+
+.revit-status-indicator.connected .status-dot {
+  background: #4caf50;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+}
+
+.revit-status-indicator.connecting .status-dot {
+  background: #ff9800;
+  animation: pulse 1.5s infinite;
+}
+
+.revit-status-indicator.error .status-dot {
+  background: #f44336;
+}
+
+.revit-status-indicator .status-text {
+  font-weight: 500;
+}
+
+.revit-last-update {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 4px;
+}
+
+.revit-config-section {
+  margin-bottom: 20px;
+}
+
+.revit-config-section label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.revit-config-section input {
+  width: 100%;
+  padding: 8px 12px;
+  margin-top: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.revit-config-section input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.revit-config-section input:focus {
+  outline: none;
+  border-color: #4caf50;
+}
+
+.revit-controls-section {
+  margin-bottom: 20px;
+}
+
+.revit-connect-button,
+.revit-disconnect-button {
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.revit-connect-button {
+  background: #4caf50;
+  color: #fff;
+}
+
+.revit-connect-button:hover {
+  background: #45a049;
+}
+
+.revit-disconnect-button {
+  background: #f44336;
+  color: #fff;
+}
+
+.revit-disconnect-button:hover {
+  background: #da190b;
+}
+
+.revit-error-message {
+  padding: 10px;
+  margin-bottom: 16px;
+  background: rgba(244, 67, 54, 0.2);
+  border: 1px solid rgba(244, 67, 54, 0.4);
+  border-radius: 4px;
+  color: #ffcdd2;
+  font-size: 13px;
+}
+
+.revit-sessions-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.revit-sessions-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.revit-no-sessions {
+  padding: 12px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+}
+
+.revit-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.revit-session-item {
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.revit-session-item:hover {
+  background: rgba(0, 0, 0, 0.5);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.revit-session-item.active {
+  border-color: #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.revit-session-name {
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.revit-session-id {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: monospace;
+  margin-bottom: 2px;
+}
+
+.revit-session-time {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.revit-instructions {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.revit-instructions h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.revit-instructions ol {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.revit-instructions code {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

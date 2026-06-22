@@ -1,0 +1,452 @@
+.texture-management-panel {
+  position: fixed;
+  /* top and left are set via inline styles from useFloatingPanel */
+  width: 500px;
+  min-width: 400px;
+  max-width: 700px;
+  max-height: calc(100vh - 72px);
+  height: auto;
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  padding: 0;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+  resize: horizontal;
+  overflow-x: auto;
+  backdrop-filter: blur(4px);
+}
+
+.texture-management-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2f2f2f;
+  flex-shrink: 0;
+  background: #242424;
+  cursor: grab;
+  user-select: none;
+}
+
+.texture-management-panel.dragging {
+  z-index: 200;
+}
+
+.texture-management-panel.dragging .texture-management-panel-header {
+  cursor: grabbing;
+}
+
+.texture-management-panel-header h3 {
+  margin: 0;
+  color: #f5f5f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.minimize-button,
+.close-button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.minimize-button:hover,
+.close-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.texture-management-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 20px;
+  flex: 1;
+  min-height: 0;
+  background: #1a1a1a;
+}
+
+.texture-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.search-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.search-input:focus {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(66, 135, 245, 0.5);
+}
+
+.search-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.clear-search-button {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.clear-search-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.view-mode-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.view-mode-button {
+  flex: 1;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.view-mode-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.view-mode-button.active {
+  background: rgba(66, 135, 245, 0.3);
+  border-color: rgba(66, 135, 245, 0.5);
+  color: #fff;
+}
+
+.merge-button {
+  padding: 8px 16px;
+  background: rgba(66, 135, 245, 0.3);
+  border: 1px solid rgba(66, 135, 245, 0.5);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.merge-button:hover:not(:disabled) {
+  background: rgba(66, 135, 245, 0.5);
+  border-color: rgba(66, 135, 245, 0.7);
+}
+
+.merge-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.continue-loading-button {
+  flex: 1;
+  padding: 10px 16px;
+  background: rgba(76, 175, 80, 0.3);
+  border: 1px solid rgba(76, 175, 80, 0.5);
+  color: #4caf50;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.continue-loading-button:hover {
+  background: rgba(76, 175, 80, 0.5);
+  border-color: rgba(76, 175, 80, 0.7);
+}
+
+.cancel-loading-button {
+  padding: 10px 16px;
+  background: rgba(255, 82, 82, 0.2);
+  border: 1px solid rgba(255, 82, 82, 0.4);
+  color: #ff5252;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cancel-loading-button:hover {
+  background: rgba(255, 82, 82, 0.3);
+  border-color: rgba(255, 82, 82, 0.6);
+}
+
+.texture-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.texture-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  position: relative;
+}
+
+.texture-group.has-duplicates {
+  border-color: rgba(255, 165, 0, 0.3);
+  background: rgba(255, 165, 0, 0.05);
+}
+
+.duplicate-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 8px;
+  background: rgba(255, 165, 0, 0.3);
+  border: 1px solid rgba(255, 165, 0, 0.5);
+  color: #ffa500;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.texture-item {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.texture-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.texture-item.selected {
+  background: rgba(66, 135, 245, 0.2);
+  border-color: rgba(66, 135, 245, 0.5);
+}
+
+.texture-thumbnail {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.texture-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.texture-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  text-align: center;
+}
+
+.texture-thumbnail input[type="checkbox"] {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.texture-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.texture-name {
+  font-weight: 600;
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.texture-property {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: capitalize;
+}
+
+.texture-details {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.texture-used-by {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-message {
+  text-align: center;
+  padding: 40px 20px;
+  color: #888;
+}
+
+.empty-message p {
+  margin: 8px 0;
+}
+
+.loading-progress {
+  padding: 20px;
+  text-align: center;
+}
+
+.loading-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.loading-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4287f5, #5ba3ff);
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.loading-progress p {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  margin: 0;
+}
+
+.hint {
+  font-size: 12px;
+  color: #666;
+}
+
+.hint-text {
+  padding: 12px;
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  color: #666;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* Context Menu */
+.texture-context-menu {
+  background: #2a2a2a;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 200px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.context-menu-item {
+  padding: 10px 16px;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+  user-select: none;
+}
+
+.context-menu-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.context-menu-item:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 0;
+}
+

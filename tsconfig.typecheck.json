@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/**/*.d.ts",
+    "src/main.tsx",
+    "tests",
+    "vitest.config.ts"
+  ],
+  "exclude": [
+    "src/lib/render-graph/tests/**",
+    "src/viewer/utils/shadowSystemDebugTests.ts",
+    "src/viewer/utils/shadowSystemTestRunner.ts"
+  ]
+}

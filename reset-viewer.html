@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reset 3D Viewer</title>
+</head>
+<body>
+    <h1>Resetting 3D Viewer...</h1>
+    <script>
+        // Clear all viewer-related localStorage keys
+        const keysToClear = [
+            'viewer.menuLayout',
+            'viewer_default_settings',
+            'viewer.camera',
+            'viewer.cameraSettings',
+            'viewer.hdr',
+            'viewer.hotspots'
+        ];
+        
+        console.log('Clearing localStorage keys...');
+        keysToClear.forEach(key => {
+            if (localStorage.getItem(key)) {
+                localStorage.removeItem(key);
+                console.log('Cleared:', key);
+            }
+        });
+        
+        // Clear all keys that start with 'viewer.'
+        Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('viewer.')) {
+                localStorage.removeItem(key);
+                console.log('Cleared:', key);
+            }
+        });
+        
+        console.log('✅ All viewer localStorage cleared!');
+        console.log('Redirecting to viewer...');
+        
+        // Redirect to viewer
+        setTimeout(() => {
+            window.location.href = 'http://localhost:3000';
+        }, 1000);
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

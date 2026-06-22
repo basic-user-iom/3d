@@ -1,0 +1,79 @@
+========================================
+QUICK FIX FOR CHAT NOT LOADING
+========================================
+
+STEP 1: Close Cursor completely (all windows)
+
+STEP 2: Open PowerShell and run ONE of these commands:
+
+OPTION A - Run the script file:
+cd "d:\ai-cursor\3d-test-software"
+.\fix-specific-chat-loading.ps1
+
+OPTION B - Copy and paste this ONE command:
+$p="$env:APPDATA\Cursor"; Remove-Item "$p\User\workspaceStorage" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item "$p\Cache","$p\CachedData","$p\Code Cache","$p\GPUCache","$p\Session Storage","$p\SharedStorage" -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path "$p\blob_storage") { Get-ChildItem "$p\blob_storage" -Recurse -Filter "*index*","*lock*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }; Write-Host "Done! Open Cursor now." -ForegroundColor Green
+
+STEP 3: Open Cursor and wait 30 seconds
+
+STEP 4: Try opening your chat again
+
+========================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

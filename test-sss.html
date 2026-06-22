@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SSS Test Script</title>
+</head>
+<body>
+    <h1>SSS Test Instructions</h1>
+    <p>Open browser console and run:</p>
+    <pre>
+// Test SSS System (Safe - won't block console)
+(function() {
+    try {
+        const viewer = window.__viewer;
+        if (!viewer) {
+            console.error('Viewer not found! Make sure the app is loaded.');
+            return;
+        }
+        
+        const postProcessingSystem = viewer.postProcessingSystem;
+        if (!postProcessingSystem) {
+            console.error('PostProcessingSystem not found! Post-processing may not be enabled.');
+            return;
+        }
+        
+        console.log('✅ PostProcessingSystem found');
+        
+        // Safely access properties (some may be private/undefined)
+        const config = postProcessingSystem.config;
+        console.log('SSS Config:', config?.sss ? {
+            enabled: config.sss.enabled,
+            intensity: config.sss.intensity,
+            maxRadius: config.sss.maxRadius,
+            samples: config.sss.samples
+        } : 'Not configured');
+        
+        // Try to access SSS pass (may be private, so use try-catch)
+        try {
+            const sssPass = postProcessingSystem.sssPass;
+            if (sssPass) {
+                console.log('✅ SSS Pass exists');
+                const uniforms = sssPass.uniforms;
+                console.log('SSS Uniforms:', {
+                    tDepth: !!uniforms.tDepth?.value,
+                    tDiffuse: !!uniforms.tDiffuse?.value,
+                    intensity: uniforms.intensity?.value,
+                    maxRadius: uniforms.maxRadius?.value,
+                    samples: uniforms.samples?.value
+                });
+            } else {
+                console.warn('⚠️ SSS Pass not found - SSS may not be enabled');
+            }
+        } catch (e) {
+            console.warn('⚠️ Could not access SSS Pass (may be private):', e.message);
+        }
+        
+        console.log('✅ Test complete - no blocking operations detected');
+    } catch (error) {
+        console.error('❌ Error during SSS test:', error);
+    }
+})();
+    </pre>
+</body>
+</html>
+

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>Three.js Path Tracer Demo - Vite Version</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background-color: #1a1a1a;
+			overflow: hidden;
+		}
+
+		#info {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 10px 15px;
+			border-radius: 5px;
+			font-size: 14px;
+			z-index: 100;
+		}
+
+		#info a {
+			color: #4a9eff;
+			text-decoration: none;
+		}
+
+		#status {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			color: #fff;
+			background: rgba(0, 0, 0, 0.7);
+			padding: 10px 15px;
+			border-radius: 5px;
+			font-size: 12px;
+			z-index: 100;
+			min-width: 200px;
+		}
+
+		canvas {
+			display: block;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="info">
+		<a href="https://threejs.org" target="_blank">three.js</a> pathtracer - 
+		<a href="https://github.com/gkjohnson/three-gpu-pathtracer" target="_blank">three-gpu-pathtracer</a><br/>
+		Use mouse to orbit, scroll to zoom
+	</div>
+
+	<div id="status">Loading...</div>
+
+	<script type="module">
+		// Use Vite's module resolution
+		import * as THREE from '/node_modules/three/build/three.module.js';
+		import { OrbitControls } from '/node_modules/three/examples/jsm/controls/OrbitControls.js';
+		import { WebGLPathTracer, BlurredEnvMapGenerator, GradientEquirectTexture } from '/node_modules/three-gpu-pathtracer/build/index.module.js';
+
+		const statusEl = document.getElementById('status');
+		const log = (msg) => {
+			console.log(msg);
+			statusEl.textContent = msg;
+		};
+
+		let camera, scene, renderer, controls;
+		let pathTracer, floor, gradientMap;
+		let samplesEl;
+
+		const params = {
+			enable: true,
+			toneMapping: true,
+			pause: false,
+			tiles: 3,
+			resolutionScale: 1,
+		};
+
+		try {
+			log('Initializing...');
+			
+			camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+			camera.position.set(150, 200, 250);
+
+			renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.toneMapping = THREE.ACESFilmicToneMapping;
+			document.body.appendChild(renderer.domElement);
+
+			log('Creating path tracer...');
+			gradientMap = new GradientEquirectTexture();
+			gradientMap.topColor.set(0xeeeeee);
+			gradientMap.bottomColor.set(0xeaeaea);
+			gradientMap.update();
+
+			pathTracer = new WebGLPathTracer(renderer);
+			pathTracer.filterGlossyFactor = 1;
+			pathTracer.minSamples = 3;
+			pathTracer.renderScale = params.resolutionScale;
+			pathTracer.tiles.set(params.tiles, params.tiles);
+
+			scene = new THREE.Scene();
+			scene.background = gradientMap;
+
+			controls = new OrbitControls(camera, renderer.domElement);
+			controls.addEventListener('change', () => {
+				if (pathTracer) pathTracer.updateCamera();
+			});
+
+			window.addEventListener('resize', () => {
+				const w = window.innerWidth;
+				const h = window.innerHeight;
+				renderer.setSize(w, h);
+				renderer.setPixelRatio(window.devicePixelRatio);
+				camera.aspect = w / h;
+				camera.updateProjectionMatrix();
+				if (pathTracer) pathTracer.updateCamera();
+			});
+
+			// Create test scene
+			log('Creating scene...');
+			const group = new THREE.Group();
+
+			const sphereGeometry = new THREE.SphereGeometry(50, 32, 32);
+			const sphereMaterial = new THREE.MeshStandardMaterial({
+				color: 0xff6b6b,
+				roughness: 0.3,
+				metalness: 0.7
+			});
+			const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+			sphere.position.set(-80, 50, 0);
+			group.add(sphere);
+
+			const boxGeometry = new THREE.BoxGeometry(80, 80, 80);
+			const boxMaterial = new THREE.MeshStandardMaterial({
+				color: 0x4ecdc4,
+				roughness: 0.2,
+				metalness: 0.8
+			});
+			const box = new THREE.Mesh(boxGeometry, boxMaterial);
+			box.position.set(80, 40, 0);
+			group.add(box);
+
+			const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+			scene.add(ambientLight);
+
+			const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+			directionalLight.position.set(100, 200, 100);
+			scene.add(directionalLight);
+
+			const envMapGenerator = new BlurredEnvMapGenerator(renderer);
+			const blurredEnvMap = envMapGenerator.generate(gradientMap, 0);
+			scene.environment = blurredEnvMap;
+
+			const bbox = new THREE.Box3().setFromObject(group);
+			controls.target0.copy(bbox.getCenter(new THREE.Vector3()));
+			controls.position0.set(2.3, 1, 2).multiplyScalar(Math.max(bbox.getSize(new THREE.Vector3()).x, bbox.getSize(new THREE.Vector3()).y, bbox.getSize(new THREE.Vector3()).z) * 0.6).add(controls.target0);
+			controls.reset();
+
+			scene.add(group);
+
+			const floorGeometry = new THREE.PlaneGeometry(1, 1);
+			const floorTexture = generateRadialFloorTexture(1024);
+			floor = new THREE.Mesh(
+				floorGeometry,
+				new THREE.MeshStandardMaterial({
+					side: THREE.DoubleSide,
+					roughness: 0.15,
+					metalness: 0.9,
+					map: floorTexture,
+					transparent: true,
+				}),
+			);
+			floor.scale.setScalar(2500);
+			floor.rotation.x = -Math.PI / 2;
+			floor.position.y = bbox.min.y;
+			scene.add(floor);
+
+			log('Setting scene...');
+			pathTracer.setScene(scene, camera);
+			pathTracer.updateEnvironment();
+
+			// Create GUI
+			const guiContainer = document.createElement('div');
+			guiContainer.style.cssText = 'position: absolute; top: 60px; right: 10px; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 5px; color: #fff; font-size: 12px; z-index: 100;';
+			document.body.appendChild(guiContainer);
+
+			const enableLabel = document.createElement('label');
+			enableLabel.style.cssText = 'display: flex; align-items: center; cursor: pointer; margin-bottom: 10px;';
+			const enableCheckbox = document.createElement('input');
+			enableCheckbox.type = 'checkbox';
+			enableCheckbox.checked = params.enable;
+			enableCheckbox.onchange = (e) => { params.enable = e.target.checked; };
+			enableLabel.appendChild(enableCheckbox);
+			enableLabel.appendChild(document.createTextNode(' Enable Path Tracing'));
+			guiContainer.appendChild(enableLabel);
+
+			samplesEl = document.createElement('div');
+			samplesEl.style.cssText = 'margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2);';
+			samplesEl.textContent = 'samples: 0';
+			guiContainer.appendChild(samplesEl);
+
+			log('Starting render...');
+			renderer.setAnimationLoop(() => {
+				renderer.toneMapping = params.toneMapping ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+				const samples = Math.floor(pathTracer.samples || 0);
+				if (samplesEl) samplesEl.textContent = `samples: ${samples}`;
+				pathTracer.enablePathTracing = params.enable;
+				pathTracer.pausePathTracing = params.pause;
+				pathTracer.renderSample();
+			});
+
+			log('Ready!');
+			statusEl.style.display = 'none';
+
+		} catch (error) {
+			log('Error: ' + error.message);
+			console.error(error);
+		}
+
+		function generateRadialFloorTexture(dim) {
+			const data = new Uint8Array(dim * dim * 4);
+			for (let x = 0; x < dim; x++) {
+				for (let y = 0; y < dim; y++) {
+					const xNorm = x / (dim - 1);
+					const yNorm = y / (dim - 1);
+					const xCent = 2.0 * (xNorm - 0.5);
+					const yCent = 2.0 * (yNorm - 0.5);
+					let a = Math.max(Math.min(1.0 - Math.sqrt(xCent ** 2 + yCent ** 2), 1.0), 0.0);
+					a = a ** 1.5;
+					a = a * 1.5;
+					a = Math.min(a, 1.0);
+					const i = y * dim + x;
+					data[i * 4 + 0] = 255;
+					data[i * 4 + 1] = 255;
+					data[i * 4 + 2] = 255;
+					data[i * 4 + 3] = a * 255;
+				}
+			}
+			const tex = new THREE.DataTexture(data, dim, dim);
+			tex.format = THREE.RGBAFormat;
+			tex.type = THREE.UnsignedByteType;
+			tex.minFilter = THREE.LinearFilter;
+			tex.magFilter = THREE.LinearFilter;
+			tex.wrapS = THREE.RepeatWrapping;
+			tex.wrapT = THREE.RepeatWrapping;
+			tex.needsUpdate = true;
+			return tex;
+		}
+	</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

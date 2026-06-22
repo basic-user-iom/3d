@@ -1,0 +1,144 @@
+.todo-panel {
+  position: absolute;
+  width: 360px;
+  background: rgba(18, 18, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  z-index: 120;
+  overflow: hidden;
+}
+
+.todo-panel.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.todo-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.todo-panel-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.todo-panel-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.todo-close-button {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.2s ease;
+}
+
+.todo-close-button:hover {
+  color: #fff;
+}
+
+.todo-panel-content {
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.todo-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.todo-item-title {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.todo-status-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.todo-status-button {
+  flex: 1;
+  min-width: 90px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.todo-status-button.active {
+  background: rgba(100, 150, 255, 0.28);
+  border-color: rgba(100, 150, 255, 0.6);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.todo-status-button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.todo-item.todo-completed {
+  border-color: rgba(120, 200, 120, 0.4);
+  background: rgba(80, 160, 80, 0.08);
+}
+
+.todo-item.todo-in_progress {
+  border-color: rgba(255, 180, 70, 0.4);
+  background: rgba(255, 160, 60, 0.08);
+}
+
+.todo-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Path Tracer Diagnostic Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1e1e1e;
+      color: #00ff00;
+    }
+    #log {
+      white-space: pre-wrap;
+      background: #000;
+      padding: 10px;
+      border: 1px solid #00ff00;
+      height: 80vh;
+      overflow-y: scroll;
+    }
+    .error { color: #ff0000; }
+    .success { color: #00ff00; }
+    .warning { color: #ffaa00; }
+    .info { color: #00aaff; }
+  </style>
+</head>
+<body>
+  <h1>Path Tracer Diagnostic Test</h1>
+  <div id="log"></div>
+  
+  <script type="module">
+    const log = document.getElementById('log');
+    
+    function addLog(msg, type = 'info') {
+      const line = document.createElement('div');
+      line.className = type;
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+      console.log(msg);
+    }
+    
+    async function runDiagnostics() {
+      addLog('🔬 Starting Path Tracer Diagnostics...', 'info');
+      
+      // Wait for viewer to be ready
+      await new Promise(resolve => {
+        const check = setInterval(() => {
+          if (window.__viewer || window.sharedViewer) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 100);
+      });
+      
+      const viewer = window.__viewer || window.sharedViewer;
+      addLog('✅ Viewer found', 'success');
+      
+      // 1. Check scene bounds
+      addLog('\n📏 SCENE ANALYSIS:', 'info');
+      const bbox = new (await import('three')).Box3().setFromObject(viewer.scene);
+      const size = bbox.getSize(new (await import('three')).Vector3());
+      const center = bbox.getCenter(new (await import('three')).Vector3());
+      
+      addLog(`  Scene size: ${size.x.toFixed(0)} x ${size.y.toFixed(0)} x ${size.z.toFixed(0)}`, 'info');
+      addLog(`  Scene center: ${center.x.toFixed(0)}, ${center.y.toFixed(0)}, ${center.z.toFixed(0)}`, 'info');
+      addLog(`  Max dimension: ${Math.max(size.x, size.y, size.z).toFixed(0)}`, 'info');
+      
+      // 2. Check camera setup
+      addLog('\n📷 CAMERA ANALYSIS:', 'info');
+      const camDist = viewer.camera.position.distanceTo(center);
+      addLog(`  Camera position: ${viewer.camera.position.x.toFixed(0)}, ${viewer.camera.position.y.toFixed(0)}, ${viewer.camera.position.z.toFixed(0)}`, 'info');
+      addLog(`  Distance from center: ${camDist.toFixed(0)}`, 'info');
+      addLog(`  Near plane: ${viewer.camera.near}`, 'info');
+      addLog(`  Far plane: ${viewer.camera.far}`, 'info');
+      
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (viewer.camera.far < maxDim * 2) {
+        addLog(`  ⚠️ WARNING: Far plane (${viewer.camera.far}) too small for scene (${maxDim.toFixed(0)})`, 'warning');
+        addLog(`  🔧 FIX: Setting far plane to ${(maxDim * 3).toFixed(0)}`, 'info');
+        viewer.camera.far = maxDim * 3;
+        viewer.camera.updateProjectionMatrix();
+      }
+      
+      if (camDist > maxDim * 3) {
+        addLog(`  ⚠️ WARNING: Camera too far (${camDist.toFixed(0)} vs scene size ${maxDim.toFixed(0)})`, 'warning');
+        addLog(`  🔧 FIX: Moving camera closer`, 'info');
+        viewer.camera.position.set(
+          center.x,
+          center.y + maxDim * 0.3,
+          center.z + maxDim * 0.8
+        );
+        viewer.camera.lookAt(center);
+      }
+      
+      // 3. Count scene objects
+      addLog('\n🎨 SCENE OBJECTS:', 'info');
+      let meshCount = 0;
+      let triangles = 0;
+      viewer.scene.traverse(obj => {
+        if (obj.isMesh) {
+          meshCount++;
+          if (obj.geometry) {
+            const geom = obj.geometry;
+            if (geom.index) {
+              triangles += geom.index.count / 3;
+            } else if (geom.attributes.position) {
+              triangles += geom.attributes.position.count / 3;
+            }
+          }
+        }
+      });
+      addLog(`  Meshes: ${meshCount}`, 'info');
+      addLog(`  Triangles: ${triangles.toFixed(0)}`, 'info');
+      
+      // 4. Check for path tracer
+      addLog('\n🎯 PATH TRACER CHECK:', 'info');
+      const pt = window.__pathTracerDemo;
+      if (pt) {
+        addLog(`  ✅ Path tracer instance found`, 'success');
+        addLog(`  Samples: ${pt.getSampleCount ? pt.getSampleCount() : 'N/A'}`, 'info');
+        addLog(`  Running: ${pt.isRunning ? pt.isRunning() : 'N/A'}`, 'info');
+      } else {
+        addLog(`  ❌ No path tracer instance`, 'error');
+      }
+      
+      // 5. Renderer info
+      addLog('\n🖥️ RENDERER INFO:', 'info');
+      const gl = viewer.renderer.getContext();
+      addLog(`  Max texture size: ${gl.getParameter(gl.MAX_TEXTURE_SIZE)}`, 'info');
+      addLog(`  Max renderbuffer size: ${gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)}`, 'info');
+      addLog(`  Canvas size: ${viewer.renderer.domElement.width} x ${viewer.renderer.domElement.height}`, 'info');
+      
+      addLog('\n✅ Diagnostics complete!', 'success');
+      addLog('\n📊 RECOMMENDATIONS:', 'warning');
+      addLog('  1. Camera and scene size are now optimized', 'warning');
+      addLog('  2. Open Path Tracer panel', 'warning');
+      addLog('  3. Use these settings for first test:', 'warning');
+      addLog('     - Quality: Fast (2 bounces)', 'warning');
+      addLog('     - Resolution: 1080p', 'warning');
+      addLog('     - Tiles: 2', 'warning');
+      addLog('     - Max Samples: 16', 'warning');
+      addLog('  4. Click Start and watch for output', 'warning');
+      addLog('  5. If still blank, try Download Image button', 'warning');
+    }
+    
+    // Auto-run diagnostics
+    window.addEventListener('load', () => {
+      setTimeout(runDiagnostics, 2000);
+    });
+    
+    // Expose for manual re-run
+    window.runPathTracerDiagnostics = runDiagnostics;
+  </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+

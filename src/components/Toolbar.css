@@ -1,0 +1,817 @@
+.toolbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  background: rgba(26, 26, 26, 0.9);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: none;
+  padding: 8px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--toolbar-gap, 10px);
+  z-index: 1000; /* Increased to ensure it's always on top */
+  max-height: calc(100vh - 10px);
+  overflow-y: auto; /* Allow scrolling if content is too tall */
+  overflow-x: visible;
+  pointer-events: auto; /* Ensure toolbar can receive clicks */
+  --toolbar-gap: 10px;
+  --toolbar-item-min: clamp(68px, 15vw, 110px);
+  --toolbar-item-max: clamp(96px, 16vw, 136px);
+  --toolbar-row-gap-x: 6px;
+  --toolbar-row-gap-y: 6px;
+  --toolbar-button-font: clamp(10px, 1.05vw, 12px);
+  --toolbar-button-padding-y: 3px;
+  --toolbar-button-padding-x: 8px;
+  --toolbar-card-bg: rgba(255, 255, 255, 0.05);
+  --toolbar-card-border: rgba(255, 255, 255, 0.08);
+  --toolbar-card-radius: 8px;
+  --toolbar-card-padding: 8px;
+  --toolbar-card-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
+  --toolbar-header-color: rgba(255, 255, 255, 0.85);
+  --toolbar-card-min: clamp(220px, 22vw, 260px);
+  position: relative;
+  overflow: visible;
+}
+
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-divider {
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.toolbar-button {
+  padding: var(--toolbar-button-padding-y) var(--toolbar-button-padding-x);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  cursor: pointer;
+  font-size: var(--toolbar-button-font);
+  line-height: 1.1;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  /* Responsive gap that scales with font size */
+  gap: clamp(3px, 0.4em, 6px);
+  /* Smooth icon scaling on hover */
+  transform-origin: center;
+}
+
+/* Standardize emoji/icon sizes in buttons with responsive scaling */
+.toolbar-button::first-letter {
+  font-size: clamp(1.1em, 1.2em, 1.3em);
+}
+
+.toolbar-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.toolbar-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toolbar-button.active {
+  background: rgba(100, 150, 255, 0.3);
+  border-color: rgba(100, 150, 255, 0.5);
+}
+
+/* Polygon Icon - CSS-based pentagon shape with responsive sizing */
+.polygon-icon-button {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(4px, 0.5em, 8px);
+}
+
+.polygon-icon {
+  display: inline-block;
+  /* Responsive icon sizing using clamp - scales with viewport */
+  width: clamp(14px, 1em, 20px);
+  height: clamp(14px, 1em, 20px);
+  position: relative;
+  flex-shrink: 0;
+  /* Smooth scaling on hover/active */
+  transition: transform 0.2s ease;
+}
+
+.polygon-icon::before {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  background: rgba(255, 255, 255, 0.9);
+  clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%);
+  /* Responsive border width */
+  border: clamp(1px, 0.1em, 2px) solid rgba(255, 255, 255, 0.9);
+  box-sizing: border-box;
+  /* Smooth transitions */
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.toolbar-button:hover .polygon-icon {
+  transform: scale(1.1);
+}
+
+.toolbar-button.active .polygon-icon::before {
+  background: rgba(100, 150, 255, 0.9);
+  border-color: rgba(100, 150, 255, 0.9);
+}
+
+.toolbar-button.active .polygon-icon {
+  transform: scale(1.05);
+}
+
+.url-input {
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 14px;
+  min-width: 300px;
+}
+
+.url-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.url-input:focus {
+  outline: none;
+  border-color: rgba(100, 150, 255, 0.5);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.toolbar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--toolbar-card-min), 1fr));
+  gap: var(--toolbar-row-gap-y);
+  width: 100%;
+  max-height: 50vh;
+  overflow-y: auto;
+  overflow-x: visible; /* Ensure horizontal overflow is visible */
+  padding-right: 2px;
+  align-items: stretch;
+  position: relative; /* Ensure proper stacking context */
+  z-index: 1001; /* Higher than toolbar container */
+  /* When toolbar is at bottom, scrollbar should be on the correct side */
+  direction: ltr;
+}
+
+.toolbar-section-card {
+  background: var(--toolbar-card-bg);
+  border: 1px solid var(--toolbar-card-border);
+  border-radius: var(--toolbar-card-radius);
+  padding: var(--toolbar-card-padding);
+  display: flex;
+  flex-direction: column;
+}
+
+.toolbar-section-header {
+  color: var(--toolbar-header-color);
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toolbar-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--toolbar-row-gap-y);
+  min-height: 40px;
+  flex: 1;
+  align-items: stretch;
+}
+
+.toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  /* FIX: Use column-gap for horizontal spacing, row-gap for vertical spacing when wrapping */
+  column-gap: var(--toolbar-row-gap-x);
+  row-gap: var(--toolbar-row-gap-y);
+  align-items: center;
+}
+
+.section-files {
+  flex: 2 1 320px;
+  min-width: 240px;
+}
+
+.section-modeling,
+.section-rendering,
+.section-presentation {
+  flex: 1 1 220px;
+}
+
+.section-developing {
+  flex: 1 1 320px;
+  min-width: 280px;
+  max-width: 500px;
+}
+
+.section-developing .toolbar-section-body {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--toolbar-row-gap-y) var(--toolbar-row-gap-x);
+}
+
+.section-developing .toolbar-row {
+  display: contents;
+}
+
+.section-developing .toolbar-item {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.section-developing .toolbar-row-break {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.toolbar-drop-zone {
+  height: 6px;
+  border: 1px dashed transparent;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  width: 100%;
+  flex-basis: 100%;
+  cursor: pointer;
+}
+
+/* FIX: Removed inline drop zone styles - using item-based drag detection instead */
+.toolbar-drop-zone.active {
+  border-color: rgba(100, 150, 255, 0.6);
+  background: rgba(100, 150, 255, 0.18);
+  height: 24px;
+}
+
+.toolbar-item {
+  display: inline-flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  background: transparent;
+  border: none;
+  padding: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  cursor: grab;
+  position: relative;
+  flex: 0 1 var(--toolbar-item-max);
+  min-width: var(--toolbar-item-min);
+  max-width: var(--toolbar-item-max);
+  touch-action: none;
+  user-select: none;
+  /* Ensure buttons maintain their size even with drop zones */
+  flex-shrink: 1;
+  flex-grow: 0;
+}
+
+.toolbar-item.is-dragging {
+  opacity: 0.55;
+  transform: scale(0.97);
+  cursor: grabbing;
+}
+
+.toolbar-item.drag-target {
+  outline: 2px dashed rgba(120, 170, 255, 0.7);
+  outline-offset: 2px;
+}
+
+.toolbar-item.drag-target-row-after::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  bottom: -8px;
+  height: 12px;
+  border-radius: 6px;
+  border: 1px dashed rgba(120, 170, 255, 0.6);
+  background: rgba(120, 170, 255, 0.18);
+  pointer-events: none;
+}
+
+.toolbar-item:active {
+  cursor: grabbing;
+}
+
+.toolbar-action-content {
+  display: contents;
+}
+
+.toolbar-action-content > .toolbar-button {
+  width: 100%;
+}
+
+.toolbar-action-content > .toolbar-url-action {
+  min-width: min(260px, calc(var(--toolbar-item-max) * 2));
+}
+
+.toolbar-item.drag-target .toolbar-button {
+  background: rgba(120, 170, 255, 0.25);
+  border-color: rgba(120, 170, 255, 0.6);
+}
+
+/* FIX: Remove margin-bottom from has-row-break - spacing is handled by .toolbar-section-body gap */
+.toolbar-item.has-row-break {
+  margin-bottom: 0;
+}
+
+.toolbar-item.is-dragging .toolbar-button {
+  opacity: 0.85;
+}
+
+.toolbar-drop-zone.empty {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  border-color: rgba(255, 255, 255, 0.15);
+  border-style: dashed;
+  width: 100%;
+}
+
+.toolbar-drop-zone.empty.active {
+  border-color: rgba(100, 150, 255, 0.6);
+  background: rgba(100, 150, 255, 0.18);
+}
+
+.toolbar-row-break {
+  flex-basis: 100%;
+  height: 12px;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+  /* FIX: Remove margins - let .toolbar-section-body gap handle spacing consistently */
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.toolbar-row-break.active {
+  border-color: rgba(100, 150, 255, 0.6);
+  background: rgba(100, 150, 255, 0.18);
+}
+
+.toolbar-url-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  flex-wrap: nowrap;
+}
+
+.toolbar-url-action .url-input {
+  flex: 1 1 auto;
+  min-width: 140px;
+  width: 100%;
+}
+
+.toolbar-url-action .toolbar-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.toolbar-item.span-2 {
+  flex: 0 1 calc(var(--toolbar-item-max) * 2 + var(--toolbar-row-gap-x));
+  min-width: calc(var(--toolbar-item-min) * 2 + var(--toolbar-row-gap-x));
+}
+
+.toolbar-item.span-2 .toolbar-action-content > .toolbar-url-action {
+  min-width: min(320px, calc(var(--toolbar-item-max) * 2 + var(--toolbar-row-gap-x)));
+}
+
+.toolbar-label {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 12px;
+  margin-right: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.toolbar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0; /* Prevent header from shrinking */
+  position: sticky;
+  top: 0;
+  background: rgba(26, 26, 26, 0.95);
+  z-index: 1050;
+  padding: 4px 0;
+  margin: -4px 0;
+  overflow: visible; /* Allow dropdowns to overflow */
+}
+
+.toolbar-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative; /* Ensure dropdown positioning context */
+  overflow: visible; /* Allow dropdown to overflow */
+}
+
+.toolbar-toggle {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  white-space: nowrap;
+}
+
+.toolbar-toggle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.toolbar-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toolbar-toggle.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toolbar-toggle[aria-pressed="true"],
+.toolbar-toggle.active {
+  background: rgba(100, 150, 255, 0.3);
+  border-color: rgba(100, 150, 255, 0.5);
+}
+
+.toolbar-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  overflow: visible;
+}
+
+.toolbar-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  max-width: 320px;
+}
+
+.toolbar-icon-button {
+  padding: 3px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.toolbar-dropdown-wrapper {
+  position: relative;
+  z-index: 3000;
+}
+
+.toolbar-dropdown {
+  position: absolute;
+  top: calc(100% + 6px); /* show below the trigger */
+  right: 0;
+  background: rgba(30, 32, 40, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4);
+  min-width: 180px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 5000;
+  pointer-events: auto;
+}
+
+.toolbar-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: rgba(235, 237, 243, 0.92);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.toolbar-dropdown-item:hover {
+  background: rgba(100, 150, 255, 0.14);
+  color: #e9ecf7;
+}
+
+.toolbar-shadow-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.shadow-label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.toolbar-shadow-inline .toolbar-icon-button {
+  border: none;
+  background: transparent;
+  padding: 3px 4px;
+  min-width: auto;
+}
+
+.shadow-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.shadow-checkbox input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.shadow-checkbox:hover {
+  background: rgba(100, 150, 255, 0.18);
+  border-color: rgba(100, 150, 255, 0.6);
+}
+
+.toolbar-dropdown-icon {
+  width: 18px;
+  text-align: center;
+}
+
+.checkbox-item {
+  cursor: pointer;
+}
+
+.checkbox-item input {
+  margin: 0;
+}
+
+.toolbar-icon-button.active,
+.toolbar-icon-button:hover {
+  background: rgba(100, 150, 255, 0.25);
+  border-color: rgba(100, 150, 255, 0.55);
+}
+
+.toolbar.closed {
+  padding: 6px 14px;
+  background: rgba(26, 26, 26, 0.75);
+}
+
+.toolbar.closed .toolbar-grid {
+  display: none;
+}
+
+.toolbar.closed .toolbar-header-right .toolbar-hint {
+  display: none;
+}
+
+.toolbar-button:focus-visible,
+.toolbar-icon-button:focus-visible,
+.toolbar-toggle:focus-visible {
+  outline: 2px solid rgba(120, 170, 255, 0.7);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1280px) {
+  .toolbar {
+    --toolbar-item-min: clamp(64px, 18vw, 100px);
+    --toolbar-item-max: clamp(88px, 20vw, 124px);
+    --toolbar-card-min: clamp(200px, 28vw, 260px);
+  }
+
+  .toolbar-section-card {
+    min-width: 0;
+  }
+
+  .section-files {
+    grid-column: span 2;
+  }
+
+  .section-developing {
+    grid-column: auto;
+  }
+}
+
+/* Fit Dropdown Styles - Force fully opaque */
+/* Using fixed positioning to break out of parent backdrop-filter context */
+.fit-dropdown {
+  position: fixed !important;
+  /* Position will be set dynamically via inline styles */
+  margin-top: 0 !important;
+  /* Force solid black background - no transparency whatsoever */
+  background: #000000 !important;
+  background-color: #000000 !important;
+  background-image: none !important;
+  /* Remove all transparency effects */
+  opacity: 1 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  /* Break out of parent backdrop-filter context */
+  filter: none !important;
+  -webkit-filter: none !important;
+  /* Solid border */
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 1) !important;
+  min-width: 200px !important;
+  max-width: 300px !important;
+  max-height: 400px !important;
+  overflow-y: auto !important;
+  /* Very high z-index to ensure it's above everything including backdrop-filter */
+  z-index: 99999 !important;
+  padding: 4px 0 !important;
+  /* Break out of parent transparency context completely */
+  isolation: isolate !important;
+  mix-blend-mode: normal !important;
+  transform: translateZ(0) !important;
+  -webkit-transform: translateZ(0) !important;
+  will-change: auto !important;
+  /* Force hardware acceleration and new stacking context */
+  contain: layout style paint !important;
+  transform-style: flat !important;
+  /* Ensure it's on top and fully visible */
+  pointer-events: auto !important;
+  visibility: visible !important;
+  /* Create new layer to break backdrop-filter inheritance */
+  -webkit-backface-visibility: hidden !important;
+  backface-visibility: hidden !important;
+}
+
+/* Ensure dropdown items are clickable */
+.fit-dropdown-item {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.fit-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.9);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fit-dropdown-item:hover:not(:disabled) {
+  background: rgba(100, 150, 255, 0.2);
+}
+
+.fit-dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fit-dropdown-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 0;
+}
+
+.fit-dropdown-label {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: bold;
+}
+
+@media (max-width: 1024px) {
+  .toolbar {
+    padding: 6px 12px 8px;
+    --toolbar-item-min: clamp(60px, 22vw, 96px);
+    --toolbar-item-max: clamp(80px, 24vw, 116px);
+    --toolbar-button-padding-y: 2px;
+    --toolbar-button-padding-x: 6px;
+    --toolbar-card-min: clamp(200px, 42vw, 260px);
+  }
+
+  .toolbar-grid {
+    gap: 8px;
+    max-height: 48vh;
+  }
+
+  .toolbar-section-card {
+    padding: 7px;
+    min-width: 0;
+  }
+
+  .section-files {
+    grid-column: span 2;
+  }
+
+  .toolbar-button {
+    font-size: 11px;
+  }
+
+  .toolbar-drag-handle {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    --toolbar-item-min: clamp(56px, 28vw, 92px);
+    --toolbar-item-max: clamp(72px, 32vw, 110px);
+    --toolbar-row-gap-x: 6px;
+    --toolbar-row-gap-y: 5px;
+    --toolbar-card-min: 100%;
+  }
+
+  .toolbar-grid {
+    max-height: 48vh;
+    grid-template-columns: 1fr;
+  }
+
+  .section-files,
+  .section-modeling,
+  .section-rendering,
+  .section-presentation,
+  .section-developing {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .toolbar-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .toolbar-header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .toolbar-hint {
+    max-width: none;
+    font-size: 11px;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar-item {
+    transition: none;
+  }
+
+  .toolbar-button,
+  .toolbar-icon-button,
+  .toolbar-toggle {
+    transition: none;
+  }
+}
+
