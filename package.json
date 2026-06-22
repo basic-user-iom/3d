@@ -1,6 +1,6 @@
 {
   "name": "3d-test-software",
-  "version": "3.7.0",
+  "version": "3.18.0",
   "description": "Beta desktop and web 3D model viewer built with React, Vite, and Three.js.",
   "author": "Mirjan",
   "type": "module",
