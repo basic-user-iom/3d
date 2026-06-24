@@ -1,0 +1,41 @@
+# Normalize line endings for text files on checkout
+* text=auto eol=lf
+
+# Explicit text
+*.md text
+*.json text
+*.js text
+*.jsx text
+*.ts text
+*.tsx text
+*.css text
+*.html text
+*.yml text
+*.yaml text
+*.sh text
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.cjs text
+*.mjs text
+*.glsl text
+*.vert text
+*.frag text
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.hdr binary
+*.exr binary
+*.glb binary
+*.gltf binary
+*.fbx binary
+*.wasm binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp3 binary
+*.zip binary

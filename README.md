@@ -8,6 +8,7 @@ helpers—all in the browser.
 
 ```bash
 npm install
+# Optional: copy .env.example to .env and add API tokens
 npm run dev
 # http://localhost:3000
 ```
@@ -62,5 +63,5 @@ Need the full setup guide (formats, decoders, troubleshooting)? See
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
 
