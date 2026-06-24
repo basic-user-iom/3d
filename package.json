@@ -3,6 +3,15 @@
   "version": "3.18.0",
   "description": "Beta desktop and web 3D model viewer built with React, Vite, and Three.js.",
   "author": "Mirjan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/basic-user-iom/3d.git"
+  },
+  "bugs": {
+    "url": "https://github.com/basic-user-iom/3d/issues"
+  },
+  "homepage": "https://github.com/basic-user-iom/3d#readme",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

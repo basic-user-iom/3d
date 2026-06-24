@@ -2,6 +2,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_CESIUM_ION_ACCESS_TOKEN?: string
+  readonly VITE_REPLICATE_API_TOKEN?: string
+  readonly VITE_IFC_WASM_PATH?: string
 }
 
 interface ImportMeta {
