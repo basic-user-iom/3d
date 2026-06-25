@@ -199,6 +199,62 @@
   background: #5a8bb3;
 }
 
+.effect-card.planned {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.effect-card.planned:hover {
+  transform: none;
+  background: #2a2a2a;
+  border-color: #3a3a3a;
+  box-shadow: none;
+}
+
+.effect-status-badge {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #bbb;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.effect-control-group {
+  padding: 14px 16px;
+  background: #2a2a2a;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+}
+
+.effect-control-group label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #ddd;
+  font-size: 12px;
+}
+
+.effect-control-group .slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.effect-control-group input[type='range'] {
+  flex: 1;
+}
+
+.effect-control-group .slider-value {
+  min-width: 36px;
+  color: #aaa;
+  font-size: 12px;
+  text-align: right;
+}
+
 .effects-note {
   padding: 16px;
   background: #2a2a2a;

@@ -88,213 +88,59 @@ export type UndoAction =
     }
 
 /**
- * Auto-detect feature implementation status based on codebase
+ * Auto-detect feature implementation status for the in-app backlog.
  */
 function detectFeatureStatus(): Record<string, TodoStatus> {
-  const status: Record<string, TodoStatus> = {}
-  
-  // Task 1: Menu structure audit
-  // Check if MENU_SECTIONS exists and has proper structure
-  try {
-    // Dynamic import check - if this doesn't throw, the structure exists
-    const hasMenuSections = typeof window !== 'undefined' && 
-      localStorage.getItem(MENU_STORAGE_KEY) !== null || true // Menu sections always exist
-    status['task-menu-structure'] = hasMenuSections ? 'completed' : 'in_progress'
-  } catch {
-    status['task-menu-structure'] = 'in_progress'
+  return {
+    'task-rendering-effects-vfx': 'in_progress',
+    'task-openstreetmap-ground': 'completed',
+    'task-ai-image-enhancement': 'completed',
+    'task-pathtracer-ground-shadows': 'pending',
+    'task-camera-views-pathtracer-export': 'pending',
+    'task-weather-panel-controls': 'completed',
+    'task-batch-lod-bvh': 'pending',
+    'task-instancing-performance': 'pending',
+    'task-texture-deduplication': 'pending'
   }
-  
-  // Task 2: Draggable button organization
-  // Check if moveMenuAction and saveMenuLayoutToStorage exist
-  // These are checked at runtime, so we'll verify they're in the store
-  try {
-    // Check if menu layout persistence is working
-    const hasDragSupport = typeof window !== 'undefined' && 
-      typeof localStorage !== 'undefined' &&
-      typeof MENU_STORAGE_KEY !== 'undefined'
-    status['task-implement-drag'] = hasDragSupport ? 'completed' : 'pending'
-  } catch {
-    status['task-implement-drag'] = 'pending'
-  }
-  
-  // Task 3: Project save/load functionality
-  // Check if project persistence utilities exist
-  try {
-    // Check if project save/load functions are available
-    // We'll verify by checking if the functions are imported/used
-    const hasProjectSave = typeof window !== 'undefined'
-    status['task-project-save'] = hasProjectSave ? 'completed' : 'pending'
-  } catch {
-    status['task-project-save'] = 'pending'
-  }
-  
-  // Task 4: TODO UI integration
-  // Check if TodoPanel component exists and is integrated
-  status['task-update-todo-ui'] = 'completed' // Always completed since TodoPanel exists
-  
-  // Task 5: Path Tracer fix
-  // Path tracer has known issues - GPU mode fails, CPU mode works
-  status['task-fix-pathtracer'] = 'completed' // Fixed - button sync, state restoration, helper hiding, preset highlighting. Minor panel/preset adjustments needed later.
-  
-  // Task 6: Face Editing fix
-  // Face editing detection works but geometry doesn't update
-  status['task-fix-face-editing'] = 'completed' // Fixed - geometry now updates correctly
-  
-  // Task 7: Ambient Occlusion fix - REMOVED
-  
-  // Task 8: Screen Space Shadows fix - COMPLETED
-  status['task-fix-screen-space-shadows'] = 'completed' // Fixed - Enhanced depth texture connection, render override, and diagnostics
-  
-  // Task 9: Screen Space Reflections fix - COMPLETED
-  status['task-fix-screen-space-reflections'] = 'completed' // Fixed - Enhanced depth and normal texture connections, render override, normal prepass creation, and diagnostics
-  
-  // Task: Sun Light Verification - COMPLETED
-  status['task-sun-light-verification'] = 'completed' // ✅ Comprehensive verification system created - window.verifySunLight() and window.getSunLightReport() available
-  
-  // Task: HDR Ground Shadows fix
-  // Check if PathTracerDemo has auto-shadow fix
-  status['task-fix-hdr-ground-shadows'] = 'completed' // Fixed with auto-shadow enable
-  
-  // New features - update status based on implementation
-  status['task-primitive-objects-panel'] = 'completed'
-  status['task-rendering-effects-panel'] = 'completed'
-  status['task-merge-maps-menu'] = 'completed'
-  status['task-openstreetmap-ground'] = 'pending' // Placeholder created, full implementation pending
-  status['task-polygon-drawing-tool'] = 'completed'
-  status['task-hotspots-system'] = 'completed'
-  
-  // Recent completions
-  status['task-polygon-control-points'] = 'completed' // Interactive control point editing for polygon tool
-  status['task-internal-shadows'] = 'completed' // Shadows on internal parts (vents, openings, cavities)
-  status['task-color-picker-cursor'] = 'completed' // Dropper cursor icon for color picker
-  
-  // High priority pending tasks
-  status['task-ai-image-enhancement'] = 'pending' // AI image enhancement feature (like Twinmotion)
-  status['task-fix-ground-projection'] = 'completed' // Ground projection fixed - visual effect now working
-  status['task-complete-emissive-bloom'] = 'completed' // Emissive bloom fully integrated with UI controls and state management
-  status['task-batch-lod-bvh'] = 'pending' // Performance optimization
-  status['task-instancing-performance'] = 'pending' // Performance optimization
-  status['task-3d-lut-postprocessing'] = 'pending' // Color grading
-  status['task-anamorphic-lens-flares'] = 'pending' // Post-processing effect
-  // Note: SSR and SSS fixes are tracked by existing tasks:
-  // task-fix-screen-space-reflections, task-fix-screen-space-shadows
-  
-  return status
 }
 
-// Base TODO items with titles
+// Active backlog shown in the TODO panel (completed housekeeping items removed).
 const BASE_TODO_ITEMS: Omit<TodoItem, 'status'>[] = [
   {
-    id: 'task-menu-structure',
-    title:
-      'Audit current toolbar/menu components and design plan for five-section main menu with draggable buttons and persistence requirements'
-  },
-  {
-    id: 'task-implement-drag',
-    title:
-      'Implement draggable button organization allowing movement between Files, Modeling, Rendering, Presentation, and Under consideration sections with state persistence'
-  },
-  {
-    id: 'task-project-save',
-    title:
-      'Add project save/load functionality capturing camera, lighting, HDR, and other tweaks; integrate with UI flow'
-  },
-  {
-    id: 'task-update-todo-ui',
-    title: 'Integrate current feature todo list display into app UI for ongoing items'
-  },
-  {
-    id: 'task-fix-pathtracer',
-    title:
-      '⚠️ Path Tracer not working: GPU mode fails with shader compilation errors ("Fragment shader is not compiled"). CPU mode fallback works but GPU initialization needs investigation. Check WebGL 2.0 support, browser compatibility, GPU drivers, and three-gpu-pathtracer library integration.'
-  },
-  {
-    id: 'task-fix-face-editing',
-    title:
-      '⚠️ Primitives Face Editing (Extend Sides) partially works: Face detection works correctly, but geometry doesn\'t update when dragging faces. The [FaceEdit] logs appear but the box geometry remains unchanged. Need to fix geometry disposal/update flow, verify original geometry parameters storage, and ensure mesh updates trigger scene re-render.'
-  },
-  {
-    id: 'task-fix-screen-space-shadows',
-    title:
-      '⚠️ Screen Space Shadows (SSS) not working: SSS pass is created and parameters are being set, but no visual changes occur. SSS shader requires depth texture (tDepth) from RenderPass or depth render target. Issues: depth texture not properly connected to SSS shader uniforms, depthRenderTarget not being used correctly, or RenderPass not providing depth texture. Need to verify depth texture is available and properly passed to SSSShader uniforms, ensure depth buffer is rendered, and check if depthRenderTarget needs to be explicitly rendered to.'
-  },
-  {
-    id: 'task-fix-screen-space-reflections',
-    title:
-      '⚠️ Screen Space Reflections (SSR) not working: SSR pass is created and parameters are being set, but no visual changes occur. SSR shader requires depth texture (tDepth) and normal texture (tNormal) from RenderPass or render targets. Issues: depth texture not properly connected to SSR shader uniforms, normal texture not available, depthRenderTarget/normalRenderTarget not being used correctly, or RenderPass not providing depth/normal textures. Need to verify depth and normal textures are available and properly passed to SSRShader uniforms, ensure depth buffer is rendered, and check if render targets need to be explicitly rendered to. May need to implement depth prepass and normal prepass.'
-  },
-  {
-    id: 'task-primitive-objects-panel',
-    title: 'Add Primitive Objects Panel (Modeling) - Add planes, spheres, cones, cubes with scaling, movement, and custom texture support'
-  },
-  {
-    id: 'task-rendering-effects-panel',
-    title: 'Add Rendering Effects Panel (Rendering) - Card-based UI with fog, fire effects (Twinmotion style), and other nice effects'
-  },
-  {
-    id: 'task-merge-maps-menu',
-    title: 'Merge Load Ion, Google 3DTiles, and Search Location into one Maps icon with API key management and OpenStreetMap support'
+    id: 'task-rendering-effects-vfx',
+    title: 'Rendering Effects — fire VFX and motion blur (fog, rain, bloom, lens flare wired)'
   },
   {
     id: 'task-openstreetmap-ground',
-    title: 'Implement OpenStreetMap as ground level - object placement, movement, map area selection/projection'
-  },
-  {
-    id: 'task-polygon-drawing-tool',
-    title: 'Add Polygon Drawing Tool (Modeling) - Draw polygons on models, snap to surface, colors, line thickness, fill, transparency, mark things'
-  },
-  {
-    id: 'task-hotspots-system',
-    title: 'Add Hotspots System (Presentation) - Virtual tour style hotspots across 3D model with popup windows for text, images, videos, interactive content'
-  },
-  {
-    id: 'task-fix-hdr-ground-shadows',
-    title: 'Fix HDR Ground Projection Shadows - Auto-enable shadows on directional lights, ensure shadows appear on ground in path tracer'
-  },
-  {
-    id: 'task-polygon-control-points',
-    title: '✅ Interactive Control Point Editing - Drag control points to adjust polygon shape in real-time with spline curve updates'
-  },
-  {
-    id: 'task-internal-shadows',
-    title: '✅ Internal Shadows Enhancement - Enable shadows on internal parts (vents, openings, cavities) with double-sided materials and optimized shadow camera'
-  },
-  {
-    id: 'task-color-picker-cursor',
-    title: '✅ Color Picker Dropper Cursor - Custom dropper icon cursor matching design when color picker is active'
+    title: 'OSM 3D ground — polish Streets GL server workflow and projection UX'
   },
   {
     id: 'task-ai-image-enhancement',
-    title: 'AI Image Enhancement - Add AI-powered image enhancement feature similar to Twinmotion (upscaling, detail refinement, texture enhancement, edge sharpening)'
-  },
-  {
-    id: 'task-fix-ground-projection',
-    title: '✅ Fix Ground Projection - Ground projection visual effect is now working correctly'
+    title: 'AI Image Enhancement — optional offline TensorFlow.js mode (Replicate API works)'
   },
   {
     id: 'task-pathtracer-ground-shadows',
-    title:
-      'Path Tracer: Ground Projection Shadows - Ensure ground-projected environment receives and shows shadows correctly in path tracer (ground plane / GroundedSkybox)'
+    title: 'Path Tracer — verify ground projection shadow reception'
   },
   {
-    id: 'task-complete-emissive-bloom',
-    title: '✅ Complete Emissive Bloom Integration - Full integration with UI controls and state management is now complete'
+    id: 'task-camera-views-pathtracer-export',
+    title: 'Camera Views — re-enable path tracer export from saved views'
+  },
+  {
+    id: 'task-weather-panel-controls',
+    title: 'Weather panel — add fog, rain, and snow sliders (engine already wired)'
   },
   {
     id: 'task-batch-lod-bvh',
-    title: 'Performance: Batch LOD BVH - Add level of detail with bounding volume hierarchy for efficient culling of large scenes'
+    title: 'Performance — batch LOD with bounding volume hierarchy for large scenes'
   },
   {
     id: 'task-instancing-performance',
-    title: 'Performance: GPU Instancing - Optimize rendering of thousands of instances using GPU instancing for better performance'
+    title: 'Performance — GPU instancing for thousands of repeated objects'
   },
   {
-    id: 'task-3d-lut-postprocessing',
-    title: 'Post-Processing: 3D LUT - Add color grading with 3D LUT support for cinematic color correction'
-  },
-  {
-    id: 'task-anamorphic-lens-flares',
-    title: 'Post-Processing: Anamorphic Lens Flares - Add anamorphic lens flare effects for cinematic lighting'
+    id: 'task-texture-deduplication',
+    title: 'Loader — re-enable texture deduplication with safer comparison logic'
   }
 ]
 
