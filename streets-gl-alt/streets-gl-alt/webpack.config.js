@@ -40,7 +40,7 @@ module.exports = (env, argv) => ([{
 	devServer: {
 		hot: true,
 		port: 8081,
-		open: true,
+		open: false,
 		host: 'localhost',
 		client: {
 			overlay: {

@@ -49,6 +49,6 @@ echo ========================================
 echo.
 
 REM Start Vite directly
-npx vite --host --port 3000 --open
+npx vite --host --port 3000
 
 pause

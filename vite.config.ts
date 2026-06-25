@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+﻿import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
@@ -144,7 +144,7 @@ export default defineConfig({
     host: true,
     port: 3000,
     strictPort: false,
-    open: '/',
+    open: false,
     hmr: {
       overlay: true // Show errors in browser overlay
     },

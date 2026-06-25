@@ -1054,7 +1054,61 @@ export class StreetsGLBridge {
   }
 
   /**
-   * Convert a Three.js texture image to a JPEG data URL for postMessage transport.
+   * Wait until texture images used by a model are decoded (GLB textures often load async).
+   */
+  static async ensureTexturesReady(root: THREE.Object3D, timeoutMs = 12000): Promise<void> {
+    const waits: Promise<void>[] = []
+    const textureKeys = ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'] as const
+
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (!mesh.isMesh) return
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (const mat of materials) {
+        if (!mat) continue
+        for (const key of textureKeys) {
+          const tex = (mat as any)[key] as THREE.Texture | undefined
+          if (tex instanceof THREE.Texture) {
+            waits.push(StreetsGLBridge.waitForTexture(tex, timeoutMs))
+          }
+        }
+      }
+    })
+
+    if (waits.length > 0) {
+      await Promise.all(waits)
+    }
+  }
+
+  private static waitForTexture(texture: THREE.Texture, timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const image = texture.image as HTMLImageElement | undefined
+      if (!image || !(image instanceof HTMLImageElement)) {
+        resolve()
+        return
+      }
+      if (image.complete && image.naturalWidth > 0) {
+        resolve()
+        return
+      }
+
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        image.removeEventListener('load', finish)
+        image.removeEventListener('error', finish)
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(finish, timeoutMs)
+      image.addEventListener('load', finish)
+      image.addEventListener('error', finish)
+    })
+  }
+
+  /**
+   * Convert a Three.js texture image to a data URL for postMessage transport.
    * Resizes to maxSize to stay within structured-clone / postMessage limits.
    */
   static textureToDataURL(texture: THREE.Texture, maxSize = 512): string | undefined {
@@ -1107,23 +1161,36 @@ export class StreetsGLBridge {
       if (!source || srcW <= 0 || srcH <= 0) return undefined
 
       const scale = Math.min(1, maxSize / Math.max(srcW, srcH))
+      const drawSource = (ctx: CanvasRenderingContext2D, targetW: number, targetH: number) => {
+        ctx.clearRect(0, 0, targetW, targetH)
+        // glTF/GLB textures use flipY=false in Three.js; canvas drawImage matches that convention.
+        if (texture.flipY === true) {
+          ctx.translate(0, targetH)
+          ctx.scale(1, -1)
+        }
+        ctx.drawImage(source as CanvasImageSource, 0, 0, targetW, targetH)
+      }
+
       if (source !== canvas) {
         canvas.width = Math.max(1, Math.round(srcW * scale))
         canvas.height = Math.max(1, Math.round(srcH * scale))
         const ctx = canvas.getContext('2d')
         if (!ctx) return undefined
-        ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
+        drawSource(ctx, canvas.width, canvas.height)
       } else if (scale < 1) {
         const scaled = document.createElement('canvas')
         scaled.width = Math.max(1, Math.round(srcW * scale))
         scaled.height = Math.max(1, Math.round(srcH * scale))
         const sctx = scaled.getContext('2d')
         if (!sctx) return undefined
-        sctx.drawImage(canvas, 0, 0, scaled.width, scaled.height)
-        return scaled.toDataURL('image/jpeg', 0.85)
+        drawSource(sctx, scaled.width, scaled.height)
+        return scaled.toDataURL(texture.format === THREE.RGBAFormat ? 'image/png' : 'image/jpeg', 0.9)
       }
 
-      return canvas.toDataURL('image/jpeg', 0.85)
+      const usePng =
+        texture.format === THREE.RGBAFormat ||
+        (texture as any).premultiplyAlpha === true
+      return canvas.toDataURL(usePng ? 'image/png' : 'image/jpeg', usePng ? undefined : 0.9)
     } catch (e) {
       console.warn('[StreetsGLBridge] Could not serialize texture to data URL:', e)
       return undefined
@@ -1189,13 +1256,17 @@ export class StreetsGLBridge {
         dominantColor = color
       }
 
-      if (mat.map instanceof THREE.Texture) {
-        const texUrl = StreetsGLBridge.textureToDataURL(mat.map)
+      const baseColorTex = (mat.map instanceof THREE.Texture ? mat.map : undefined)
+        ?? (mat.emissiveMap instanceof THREE.Texture ? mat.emissiveMap : undefined)
+
+      if (baseColorTex instanceof THREE.Texture) {
+        const texUrl = StreetsGLBridge.textureToDataURL(baseColorTex)
         if (texUrl && weight >= texturedWeight) {
           texturedWeight = weight
           baseColorTextureDataUrl = texUrl
-          texturedMaterialColor = color
-        } else if (!texUrl && mat.map.image instanceof HTMLImageElement && !mat.map.image.complete) {
+          // Sample the texture untinted in Streets GL (shader multiplies by color).
+          texturedMaterialColor = { r: 1, g: 1, b: 1 }
+        } else if (!texUrl && baseColorTex.image instanceof HTMLImageElement && !baseColorTex.image.complete) {
           console.warn('[StreetsGLBridge] Base color texture not yet loaded — Streets GL will use material color fallback')
         }
       }

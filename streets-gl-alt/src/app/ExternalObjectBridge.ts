@@ -198,6 +198,19 @@ export class ExternalObjectBridge {
     try {
       this.debugLog('[ExternalObjectBridge] Adding object:', data)
 
+      if (data.position) {
+        const { x, y, z } = data.position
+        if (
+          !Number.isFinite(x) ||
+          !Number.isFinite(y) ||
+          !Number.isFinite(z) ||
+          Math.abs(x) > 20_037_508 ||
+          Math.abs(z) > 20_037_508
+        ) {
+          throw new Error(`Invalid Mercator position for object ${data.id}`)
+        }
+      }
+
       let object: Object3D
 
       // If geometry data is provided, create a renderable object
@@ -250,21 +263,28 @@ export class ExternalObjectBridge {
         }
 
         // Use provided color or default to white
-        const objectColor = data.color || { r: 1.0, g: 1.0, b: 1.0 }
+        let objectColor = data.color || { r: 1.0, g: 1.0, b: 1.0 }
         this.debugLog('[ExternalObjectBridge] Received color from data:', {
           dataColor: data.color,
           objectColor,
           colorType: typeof data.color,
           colorKeys: data.color ? Object.keys(data.color) : []
         })
+
+        const textureDataUrl = data.metadata?.baseColorTextureDataUrl
+          || data.metadata?.material?.baseColorTextureDataUrl
+
+        // When a base-color map is present, keep the shader tint white so the texture is not multiplied by a stale averaged color.
+        if (textureDataUrl && typeof textureDataUrl === 'string') {
+          objectColor = { r: 1.0, g: 1.0, b: 1.0 }
+        }
+
         const renderableObject = new ExternalRenderableObject(geometryData, objectColor)
         this.debugLog('[ExternalObjectBridge] Object color after creation:', {
           objectColor: renderableObject.color,
           matches: renderableObject.color.r === objectColor.r && renderableObject.color.g === objectColor.g && renderableObject.color.b === objectColor.b
         })
 
-        const textureDataUrl = data.metadata?.baseColorTextureDataUrl
-          || data.metadata?.material?.baseColorTextureDataUrl
         if (textureDataUrl && typeof textureDataUrl === 'string' && this.renderSystem) {
           const renderer = this.renderSystem.getRenderer()
           if (renderer) {
@@ -530,9 +550,25 @@ export class ExternalObjectBridge {
       const oldPosition = { x: object.position.x, y: object.position.y, z: object.position.z }
       
       if (data.position) {
-        object.position.x = data.position.x
-        object.position.y = data.position.y
-        object.position.z = data.position.z
+        const { x, y, z } = data.position
+        if (
+          !Number.isFinite(x) ||
+          !Number.isFinite(y) ||
+          !Number.isFinite(z) ||
+          Math.abs(x) > 20_037_508 ||
+          Math.abs(z) > 20_037_508
+        ) {
+          console.warn('[ExternalObjectBridge] Rejected invalid Mercator update position:', data.id, data.position)
+          this.sendResponse('STREETS_GL_OBJECT_UPDATED', {
+            success: false,
+            error: 'Invalid Mercator position',
+            objectId: data.id
+          })
+          return
+        }
+        object.position.x = x
+        object.position.y = y
+        object.position.z = z
       }
 
       if (data.rotation) {
@@ -542,9 +578,23 @@ export class ExternalObjectBridge {
       }
 
       if (data.scale) {
-        object.scale.x = data.scale.x
-        object.scale.y = data.scale.y
-        object.scale.z = data.scale.z
+        const sx = data.scale.x
+        const sy = data.scale.y
+        const sz = data.scale.z
+        if (
+          !Number.isFinite(sx) ||
+          !Number.isFinite(sy) ||
+          !Number.isFinite(sz) ||
+          Math.abs(sx) < 1e-8 ||
+          Math.abs(sy) < 1e-8 ||
+          Math.abs(sz) < 1e-8
+        ) {
+          console.warn('[ExternalObjectBridge] Rejected near-zero scale update:', data.id, data.scale)
+        } else {
+          object.scale.x = sx
+          object.scale.y = sy
+          object.scale.z = sz
+        }
       }
 
       if (data.visible !== undefined) {

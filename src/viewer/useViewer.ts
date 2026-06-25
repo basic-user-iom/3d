@@ -42,7 +42,108 @@ export const STREETS_GL_OBJECT_SCALE = 1
 /** Default local authoring offset used when mirroring Streets GL absolute positions into the registry. */
 const STREETS_GL_DEFAULT_LOCAL_OFFSET = { x: 0, y: 1.5, z: 0 }
 
+/** Reject Mercator coords that would place objects off-map or break culling. */
+export const STREETS_GL_MERCATOR_ABS_MAX = 20_037_508
+
 type Vec3 = { x: number; y: number; z: number }
+
+const _streetsGLTargetWorld = new THREE.Vector3()
+const _streetsGLLocalPos = new THREE.Vector3()
+
+/**
+ * Resolve whether an object should render in the Streets GL iframe.
+ * Hybrid/city imports hide the Three.js root (visible=false) while still expecting
+ * iframe rendering — do not propagate that flag to bridge updates.
+ */
+export function getStreetsGLVisibleFromObject(
+  obj: THREE.Object3D,
+  descriptor?: ProjectObject
+): boolean {
+  const ud = obj.userData as any
+  if (ud.renderInStreetsGL === true) {
+    return ud.streetsGLVisible !== false
+  }
+  const descriptorVisible = descriptor?.visible
+  if (descriptorVisible === false) return false
+  return obj.visible !== false
+}
+
+/**
+ * Validate Web-Mercator position before sync. Returns null when coords are unusable.
+ */
+export function validateStreetsGLMercatorPosition(
+  position: Vec3,
+  context?: { objectId?: string; source?: string }
+): Vec3 | null {
+  const { x, y, z } = position
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    console.warn('[StreetsGLSync] Rejected invalid Mercator position (NaN/Infinity):', {
+      ...context,
+      position
+    })
+    return null
+  }
+
+  const absMax = STREETS_GL_MERCATOR_ABS_MAX
+  if (Math.abs(x) > absMax || Math.abs(z) > absMax) {
+    console.warn('[StreetsGLSync] Rejected off-map Mercator position:', {
+      ...context,
+      position,
+      absMax
+    })
+    return null
+  }
+
+  if (Math.abs(y) > 50_000) {
+    console.warn('[StreetsGLSync] Suspicious Mercator altitude — clamping Y:', {
+      ...context,
+      position
+    })
+    return { x, y: Math.sign(y) * 50_000, z }
+  }
+
+  return { x, y, z }
+}
+
+const _streetsGLWorldPos = new THREE.Vector3()
+const _streetsGLWorldQuat = new THREE.Quaternion()
+const _streetsGLWorldEuler = new THREE.Euler()
+const _streetsGLBakeMatrix = new THREE.Matrix4()
+const _streetsGLBakeParentInv = new THREE.Matrix4()
+const _streetsGLBakePos = new THREE.Vector3()
+const _streetsGLBakeQuat = new THREE.Quaternion()
+const _streetsGLBakeScale = new THREE.Vector3()
+
+/** World-space euler rotation for Streets GL iframe sync (includes pivot-wrapper rotation). */
+export function getStreetsGLWorldRotationFromObject(obj: THREE.Object3D): Vec3 {
+  obj.updateMatrixWorld(true)
+  obj.getWorldQuaternion(_streetsGLWorldQuat)
+  _streetsGLWorldEuler.setFromQuaternion(_streetsGLWorldQuat, obj.rotation.order)
+  return { x: _streetsGLWorldEuler.x, y: _streetsGLWorldEuler.y, z: _streetsGLWorldEuler.z }
+}
+
+/**
+ * Local rotation to persist in the registry when a pivot wrapper owns the gizmo rotation.
+ * Decomposes world rotation relative to the pivot's parent so reload matches the baked pose.
+ */
+export function getStreetsGLRegistryRotationFromObject(obj: THREE.Object3D): Vec3 {
+  const pivot = obj.parent?.userData?.isPivotWrapper ? obj.parent : null
+  if (!pivot) {
+    return { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z }
+  }
+
+  obj.updateMatrixWorld(true)
+  _streetsGLBakeMatrix.copy(obj.matrixWorld)
+  const pivotParent = pivot.parent
+  if (pivotParent) {
+    pivotParent.updateMatrixWorld(true)
+    _streetsGLBakeParentInv.copy(pivotParent.matrixWorld).invert()
+    _streetsGLBakeMatrix.premultiply(_streetsGLBakeParentInv)
+  }
+  _streetsGLBakeMatrix.decompose(_streetsGLBakePos, _streetsGLBakeQuat, _streetsGLBakeScale)
+  _streetsGLWorldEuler.setFromQuaternion(_streetsGLBakeQuat, obj.rotation.order)
+  return { x: _streetsGLWorldEuler.x, y: _streetsGLWorldEuler.y, z: _streetsGLWorldEuler.z }
+}
 
 /** Resolve the Streets GL bridge object id from a mesh or registry proxy. */
 export function getStreetsGLObjectId(obj: THREE.Object3D): string | undefined {
@@ -105,9 +206,19 @@ export function resolveFocusTarget(
 /** Three.js position captured when streetsGLPosition was first assigned (anchor for offsets). */
 export function captureStreetsGLBaseTransform(model: THREE.Object3D): void {
   const ud = model.userData as any
-  if (ud.streetsGLBaseTransform) return
-  ud.streetsGLBaseTransform = {
-    position: { x: model.position.x, y: model.position.y, z: model.position.z }
+  model.updateMatrixWorld(true)
+  if (!ud.streetsGLBaseTransform) {
+    ud.streetsGLBaseTransform = {
+      position: { x: model.position.x, y: model.position.y, z: model.position.z }
+    }
+  }
+  if (!ud.streetsGLPlacementWorldPosition) {
+    model.getWorldPosition(_streetsGLWorldPos)
+    ud.streetsGLPlacementWorldPosition = {
+      x: _streetsGLWorldPos.x,
+      y: _streetsGLWorldPos.y,
+      z: _streetsGLWorldPos.z
+    }
   }
 }
 
@@ -116,6 +227,13 @@ function getStreetsGLBaseTransform(obj: THREE.Object3D, descriptor?: ProjectObje
   const fromUserData = ud.streetsGLBaseTransform?.position as Vec3 | undefined
   const fromDescriptor = descriptor?.userData?.streetsGLBaseTransform?.position as Vec3 | undefined
   return fromUserData ?? fromDescriptor ?? { x: 0, y: 1.5, z: 0 }
+}
+
+function getStreetsGLPlacementWorld(obj: THREE.Object3D, descriptor?: ProjectObject): Vec3 | undefined {
+  const ud = obj.userData as any
+  const fromUserData = ud.streetsGLPlacementWorldPosition as Vec3 | undefined
+  const fromDescriptor = descriptor?.userData?.streetsGLPlacementWorldPosition as Vec3 | undefined
+  return fromUserData ?? fromDescriptor
 }
 
 /**
@@ -131,6 +249,18 @@ export function computeStreetsGLPositionFromObject(
   const stored = (ud.streetsGLPosition ?? descriptor?.userData?.streetsGLPosition) as Vec3 | undefined
 
   if (stored && typeof stored.x === 'number' && typeof stored.z === 'number') {
+    const placementWorld = getStreetsGLPlacementWorld(obj, descriptor)
+    if (placementWorld) {
+      // Use world-space delta so pivot-wrapper transforms (gizmo moves pivot, not model.local) sync correctly.
+      obj.updateMatrixWorld(true)
+      obj.getWorldPosition(_streetsGLWorldPos)
+      return {
+        x: stored.x + (_streetsGLWorldPos.x - placementWorld.x),
+        y: stored.y + (_streetsGLWorldPos.y - placementWorld.y),
+        z: stored.z + (_streetsGLWorldPos.z - placementWorld.z)
+      }
+    }
+
     const base = getStreetsGLBaseTransform(obj, descriptor)
     // streetsGLPosition is the immutable placement anchor; apply Three.js offset from base.
     return {
@@ -232,11 +362,28 @@ export function applyStreetsGLWorldToProxy(
   const base = getStreetsGLBaseTransform(proxy, descriptor)
 
   if (stored && typeof stored.x === 'number' && typeof stored.z === 'number') {
-    proxy.position.set(
-      base.x + (worldPosition.x - stored.x),
-      base.y + (worldPosition.y - stored.y),
-      base.z + (worldPosition.z - stored.z)
-    )
+    const placementWorld = getStreetsGLPlacementWorld(proxy, descriptor)
+    if (placementWorld) {
+      _streetsGLTargetWorld.set(
+        placementWorld.x + (worldPosition.x - stored.x),
+        placementWorld.y + (worldPosition.y - stored.y),
+        placementWorld.z + (worldPosition.z - stored.z)
+      )
+      if (proxy.parent) {
+        proxy.parent.updateMatrixWorld(true)
+        _streetsGLLocalPos.copy(_streetsGLTargetWorld)
+        proxy.parent.worldToLocal(_streetsGLLocalPos)
+        proxy.position.copy(_streetsGLLocalPos)
+      } else {
+        proxy.position.copy(_streetsGLTargetWorld)
+      }
+    } else {
+      proxy.position.set(
+        base.x + (worldPosition.x - stored.x),
+        base.y + (worldPosition.y - stored.y),
+        base.z + (worldPosition.z - stored.z)
+      )
+    }
   } else {
     // Proxy stores local authoring coords — invert the map-center fallback used by
     // computeStreetsGLPositionFromObject instead of writing absolute Web Mercator values.
@@ -274,17 +421,23 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
   if (!objectId) return
 
   const descriptor = projectId ? store.projectObjects.find((p) => p.id === projectId) : undefined
-  const position = computeStreetsGLPositionFromObject(obj, descriptor)
-  const rotation = { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z }
+  // Backfill placement anchor fields when missing (legacy projects saved before placementWorld existed).
+  captureStreetsGLBaseTransform(obj)
+
+  ud.streetsGLPosition = ud.streetsGLPosition ?? descriptor?.userData?.streetsGLPosition
+  const rawPosition = computeStreetsGLPositionFromObject(obj, descriptor)
+  const position = validateStreetsGLMercatorPosition(rawPosition, {
+    objectId,
+    source: 'syncProjectObjectTransformToStreetsGL'
+  })
+  if (!position) return
+
+  const rotation = getStreetsGLWorldRotationFromObject(obj)
+  const registryRotation = getStreetsGLRegistryRotationFromObject(obj)
   const scale = {
     x: obj.scale.x * STREETS_GL_OBJECT_SCALE,
     y: obj.scale.y * STREETS_GL_OBJECT_SCALE,
     z: obj.scale.z * STREETS_GL_OBJECT_SCALE
-  }
-
-  ud.streetsGLPosition = ud.streetsGLPosition ?? descriptor?.userData?.streetsGLPosition
-  if (!ud.streetsGLBaseTransform) {
-    captureStreetsGLBaseTransform(obj)
   }
 
   let gps: { lat: number; lon: number } | undefined = descriptor?.gps
@@ -303,13 +456,15 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
     store.updateProjectObject(projectId, {
       transform: {
         position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
-        rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+        rotation: registryRotation,
         scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
       },
       gps,
       userData: {
         ...(descriptor?.userData || {}),
         streetsGLBaseTransform: ud.streetsGLBaseTransform ?? descriptor?.userData?.streetsGLBaseTransform,
+        streetsGLPlacementWorldPosition:
+          ud.streetsGLPlacementWorldPosition ?? descriptor?.userData?.streetsGLPlacementWorldPosition,
         streetsGLAdded: true
       }
     })
@@ -320,7 +475,7 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
       position,
       rotation,
       scale,
-      visible: obj.visible !== false
+      visible: getStreetsGLVisibleFromObject(obj, descriptor)
     })
     .catch((err) => console.warn('[CityTransform] Failed to sync transform to Streets GL:', err))
 }
@@ -376,6 +531,7 @@ export async function mergeStreetsGLObjectsIntoRegistry(
         streetsGLAdded: true,
         streetsGLPosition: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
         streetsGLBaseTransform: { position: { ...STREETS_GL_DEFAULT_LOCAL_OFFSET } },
+        streetsGLPlacementWorldPosition: { ...STREETS_GL_DEFAULT_LOCAL_OFFSET },
         externalType: obj.type,
         externalMetadata: obj.metadata
       }
@@ -411,6 +567,7 @@ function mirrorImportedModelPlacementToRegistry(objectId: string, scene: THREE.O
       streetsGLPending: false,
       streetsGLPosition: ud.streetsGLPosition,
       streetsGLBaseTransform: ud.streetsGLBaseTransform,
+      streetsGLPlacementWorldPosition: ud.streetsGLPlacementWorldPosition,
       fileName: ud.fileName
     }
   })
@@ -898,6 +1055,7 @@ export function syncModelToStreetsGL(model: THREE.Object3D, bridge: StreetsGLBri
       return
     }
 
+    void (async () => {
   // Check if this model was already synced to Streets GL.
   // `streetsGLAdded` tells us the object actually exists (or is queued) in Streets GL and
   // should be UPDATED rather than ADDED again. `streetsGLObjectId` may be reserved
@@ -916,6 +1074,9 @@ export function syncModelToStreetsGL(model: THREE.Object3D, bridge: StreetsGLBri
 
   const store = useAppStore.getState()
 
+  // Wait for embedded GLB/GLTF texture images before serializing materials for the iframe.
+  await StreetsGLBridge.ensureTexturesReady(model)
+
   // Convert Three.js object to Streets GL format (use consistent ID)
   let streetsGLObject = StreetsGLBridge.fromThreeJSObject(model, objectId)
 
@@ -932,10 +1093,12 @@ export function syncModelToStreetsGL(model: THREE.Object3D, bridge: StreetsGLBri
   const mapLat = store.streetsGLGroundLat ?? 32.89917 // Default to Dallas/Fort Worth
   const mapLon = store.streetsGLGroundLon ?? -97.03813
 
+  captureStreetsGLBaseTransform(model)
+
   if (model.userData.streetsGLPosition) {
-    streetsGLObject.position = model.userData.streetsGLPosition
-    captureStreetsGLBaseTransform(model)
-    streetsGLDebugLog('[StreetsGLSync] Using stored Streets GL coordinates:', streetsGLObject.position)
+    // Apply current transform delta from placement anchors — do not send the raw anchor alone.
+    streetsGLObject.position = computeStreetsGLPositionFromObject(model)
+    streetsGLDebugLog('[StreetsGLSync] Using stored Streets GL anchor + transform delta:', streetsGLObject.position)
   } else {
     // Always compute Web Mercator position so object appears on the map when city mode is used
     const isAtOrigin = Math.abs(model.position.x) < 0.1 && Math.abs(model.position.y) < 0.1 && Math.abs(model.position.z) < 0.1
@@ -954,8 +1117,17 @@ export function syncModelToStreetsGL(model: THREE.Object3D, bridge: StreetsGLBri
       streetsGLDebugLog('[StreetsGLSync] Positioned with offset (Web Mercator):', streetsGLObject.position)
     }
     model.userData.streetsGLPosition = streetsGLObject.position
-    captureStreetsGLBaseTransform(model)
   }
+
+  const validatedPosition = validateStreetsGLMercatorPosition(streetsGLObject.position, {
+    objectId,
+    source: 'syncModelToStreetsGL'
+  })
+  if (!validatedPosition) {
+    if (reject) reject(new Error('Invalid Streets GL Mercator position'))
+    return
+  }
+  streetsGLObject.position = validatedPosition
 
   // If we have a valid Streets GL position, store corresponding GPS coordinates on the model
   try {
@@ -1029,6 +1201,10 @@ export function syncModelToStreetsGL(model: THREE.Object3D, bridge: StreetsGLBri
 
   // Sync object (either with converted coordinates or original if not using Streets GL coords)
   syncObjectToStreetsGLInternal(model, bridge, streetsGLObject, objectId, alreadyAdded, resolve, reject)
+    })().catch((err) => {
+      console.error('[StreetsGLSync] Error preparing model for Streets GL:', err)
+      if (reject) reject(err instanceof Error ? err : new Error(String(err)))
+    })
   })
 }
 

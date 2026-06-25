@@ -120,7 +120,7 @@ echo ========================================
 echo.
 
 REM Start Vite directly to see any errors
-npx vite --host --port 3000 --open
+npx vite --host --port 3000
 
 echo.
 echo ========================================

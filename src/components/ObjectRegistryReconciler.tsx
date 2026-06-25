@@ -107,7 +107,8 @@ export default function ObjectRegistryReconciler() {
               streetsGLAdded: true,
               streetsGLPending: false,
               streetsGLPosition: ud.streetsGLPosition,
-              streetsGLBaseTransform: ud.streetsGLBaseTransform
+              streetsGLBaseTransform: ud.streetsGLBaseTransform,
+              streetsGLPlacementWorldPosition: ud.streetsGLPlacementWorldPosition
             }
           })
         })
