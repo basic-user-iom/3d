@@ -25,6 +25,7 @@ import {
   restartAnimationLoopIfIdle
 } from './utils/renderLoopIdle'
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
+import { applySceneFog, enableFogOnSceneMeshes, isWeatherVisualActive } from './utils/sceneFog'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
 import { ToneMappingType } from './postprocessing/ToneMappingShader'
@@ -7004,27 +7005,15 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
 
     if (!atmosphericFogActive) {
       if (fogDensity > 0) {
-        const fogColorObj = new THREE.Color(fogColor)
-        const fogDensityValue = fogDensity * 0.015
-        scene.fog = new THREE.FogExp2(fogColorObj, fogDensityValue)
-
-        scene.traverse((object) => {
-          if (!(object instanceof THREE.Mesh) || !object.material) return
-          if (object.userData.excludeFromSkyModifications === true) return
-
-          const materials = Array.isArray(object.material) ? object.material : [object.material]
-          materials.forEach((mat: THREE.Material) => {
-            if ('fog' in mat && (mat as any).fog !== true) {
-              (mat as any).fog = true
-              mat.needsUpdate = true
-            }
-          })
-        })
+        applySceneFog(scene, fogDensity, fogColor)
       } else {
         scene.fog = null
       }
     } else if (fogDensity <= 0) {
       scene.fog = null
+    } else {
+      // AtmosphericPerspective owns scene.fog — still enable fog on imported model materials
+      enableFogOnSceneMeshes(scene)
     }
 
     // Apply time of day lighting changes
@@ -8875,6 +8864,16 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   }, [rainIntensity, snowIntensity, fogDensity, windIntensity, rainParticleScale, rainParticleSpeed, 
 rainCollisionEnabled, snowParticleScale, snowParticleSpeed, snowCollisionEnabled, waterEnabled, waterLevel, 
 waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistortionScale, oceanSize, windGustsEnabled, hdrEnabled, weatherQuality])
+
+  // Keep rain/snow/fog visible above Streets GL iframe (iframe z-index 25, default canvas 20)
+  useEffect(() => {
+    const canvas = viewerRef.current?.renderer?.domElement
+    if (!canvas) return
+
+    const weatherActive = isWeatherVisualActive({ fogDensity, rainIntensity, snowIntensity })
+    const aboveStreetsGL = weatherActive && streetsGLIframeOverlay
+    canvas.style.zIndex = aboveStreetsGL ? '30' : '20'
+  }, [fogDensity, rainIntensity, snowIntensity, streetsGLIframeOverlay])
 
   // Update scene background and renderer when iframe overlay state changes
   useEffect(() => {

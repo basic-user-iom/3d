@@ -216,6 +216,9 @@ function App() {
     streetsGLGroundZoom,
     streetsGLIframeReloadKey,
     transformMode,
+    fogDensity,
+    rainIntensity,
+    snowIntensity,
     setTransformMode,
     addToUndoStack,
     undo,
@@ -552,7 +555,10 @@ function App() {
             showWeatherPanel ? 'with-weather-panel' : ''
           }`}>
             {/* Three.js Viewer - hidden in city mode, visible in product/hybrid */}
-            {renderMode !== 'city' && (
+            {(renderMode !== 'city' ||
+              fogDensity > 0 ||
+              rainIntensity > 0 ||
+              snowIntensity > 0) && (
               <ViewerCanvas key="viewer-canvas-stable" onViewerReady={handleViewerReady} />
             )}
             {/* Streets GL iframe overlay - the actual Streets GL renderer */}
