@@ -20,6 +20,8 @@ inside `docs/archive/`.
   lights, CSM shadows, and HDR/ground projection.
 - [`guides/dev-workflow.md`](guides/dev-workflow.md) – contributor checklist
   (docs, tests, manual sanity).
+- [`guides/desktop-windows.md`](guides/desktop-windows.md) – Windows desktop
+  build, code signing, installer upgrades, and auto-update.
 - [`guides/streets-gl-troubleshooting.md`](guides/streets-gl-troubleshooting.md)
   – diagnose iframe/bridge/server issues quickly.
 - [`guides/testing-playbook.md`](guides/testing-playbook.md) – scripts +

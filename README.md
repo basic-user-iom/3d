@@ -30,6 +30,7 @@ Need the full setup guide (formats, decoders, troubleshooting)? See
 | `npm run build` | Production build into `dist/` |
 | `npm run typecheck` | App-focused TypeScript validation for the shipped viewer |
 | `npm run desktop:dist` | Builds the viewer, bundled Streets GL assets, and Windows desktop artifacts |
+| `npm run desktop:dist:publish` | Same as above, then publishes to GitHub Releases (needs `GH_TOKEN`) |
 | `npm run preview` | Serve the compiled build locally |
 | `npm run docs:check` | Ensures no stray Markdown files live in the repo root |
 
@@ -45,6 +46,7 @@ Need the full setup guide (formats, decoders, troubleshooting)? See
   - [`docs/guides/lighting-hdr.md`](docs/guides/lighting-hdr.md) – lighting panel + HDR helpers
   - [`docs/guides/shader-editor.md`](docs/guides/shader-editor.md) – GLSL demo panel
   - [`docs/guides/dev-workflow.md`](docs/guides/dev-workflow.md) – lint/test/docs checklist
+  - [`docs/guides/desktop-windows.md`](docs/guides/desktop-windows.md) – Windows installer, signing, and updates
 - `docs/archive/*` – historical investigations, now grouped by filename prefix
 
 ## Tech Stack
