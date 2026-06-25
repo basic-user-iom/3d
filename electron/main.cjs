@@ -37,6 +37,14 @@ function getViewerIndexPath() {
   return candidates.find(pathExists) || candidates[0]
 }
 
+function getPreloadPath() {
+  if (app.isPackaged) {
+    return path.join(getAppRoot(), 'electron', 'preload.cjs')
+  }
+
+  return path.join(__dirname, 'preload.cjs')
+}
+
 function getStreetsGLBuildRoots() {
   const roots = []
 
@@ -310,6 +318,11 @@ function cleanupBackgroundServices() {
 }
 
 async function createMainWindow() {
+  const viewerIndexPath = app.isPackaged ? getViewerIndexPath() : null
+  if (app.isPackaged && !pathExists(viewerIndexPath)) {
+    throw new Error(`Viewer build not found at ${viewerIndexPath}`)
+  }
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 1000,
@@ -320,7 +333,7 @@ async function createMainWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: path.join(__dirname, 'preload.cjs')
+      preload: getPreloadPath()
     }
   })
 
@@ -338,11 +351,10 @@ async function createMainWindow() {
     return
   }
 
-  const viewerIndexPath = getViewerIndexPath()
   await mainWindow.loadFile(viewerIndexPath)
 }
 
-app.whenReady().then(async () => {
+async function bootstrapDesktopApp() {
   ipcMain.handle('app:start-streets-gl-server', async () => {
     try {
       return await ensureStreetsGLServer()
@@ -371,9 +383,30 @@ app.whenReady().then(async () => {
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      await createMainWindow()
+      try {
+        await createMainWindow()
+      } catch (error) {
+        console.error(
+          '[Electron] Failed to recreate main window:',
+          error instanceof Error ? error.message : String(error)
+        )
+      }
     }
   })
+}
+
+process.on('unhandledRejection', (error) => {
+  console.error(
+    '[Electron] Unhandled rejection:',
+    error instanceof Error ? error.stack || error.message : String(error)
+  )
+})
+
+app.whenReady().then(bootstrapDesktopApp).catch((error) => {
+  console.error(
+    '[Electron] Startup failed:',
+    error instanceof Error ? error.stack || error.message : String(error)
+  )
 })
 
 app.on('window-all-closed', () => {
