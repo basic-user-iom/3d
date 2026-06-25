@@ -96,7 +96,7 @@ function detectFeatureStatus(): Record<string, TodoStatus> {
     'task-openstreetmap-ground': 'completed',
     'task-ai-image-enhancement': 'completed',
     'task-pathtracer-ground-shadows': 'pending',
-    'task-camera-views-pathtracer-export': 'pending',
+    'task-camera-views-pathtracer-export': 'completed',
     'task-weather-panel-controls': 'completed',
     'task-batch-lod-bvh': 'pending',
     'task-instancing-performance': 'pending',
@@ -124,7 +124,7 @@ const BASE_TODO_ITEMS: Omit<TodoItem, 'status'>[] = [
   },
   {
     id: 'task-camera-views-pathtracer-export',
-    title: 'Camera Views — re-enable path tracer export from saved views'
+    title: 'Camera Views — path tracer export from saved views (✅ re-enabled)'
   },
   {
     id: 'task-weather-panel-controls',
