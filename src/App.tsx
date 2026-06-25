@@ -219,6 +219,8 @@ function App() {
     fogDensity,
     rainIntensity,
     snowIntensity,
+    enableStandaloneWeather,
+    cloudDensity,
     setTransformMode,
     addToUndoStack,
     undo,
@@ -556,6 +558,8 @@ function App() {
           }`}>
             {/* Three.js Viewer - hidden in city mode, visible in product/hybrid */}
             {(renderMode !== 'city' ||
+              enableStandaloneWeather ||
+              cloudDensity > 0 ||
               fogDensity > 0 ||
               rainIntensity > 0 ||
               snowIntensity > 0) && (

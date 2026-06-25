@@ -7881,7 +7881,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                   }
                   
                   // Darken material colors for dark weather presets to reduce white appearance
-                  if (mat.color) {
+                  // Skip when standalone weather is active — lighting presets already dim the scene
+                  if (mat.color && !enableStandaloneWeather) {
                     // Always store original color if not already stored (before any modifications)
                     if (!(mat as any).__originalColor) {
                       (mat as any).__originalColor = mat.color.clone()
@@ -8116,7 +8117,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                   }
                   
                   // Darken material colors for dark weather presets to reduce white appearance
-                  if (mat.color) {
+                  // Skip when standalone weather is active — lighting presets already dim the scene
+                  if (mat.color && !enableStandaloneWeather) {
                     // Always store original color if not already stored (before any modifications)
                     if (!(mat as any).__originalColor) {
                       (mat as any).__originalColor = mat.color.clone()
@@ -8870,10 +8872,12 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
     const canvas = viewerRef.current?.renderer?.domElement
     if (!canvas) return
 
-    const weatherActive = isWeatherVisualActive({ fogDensity, rainIntensity, snowIntensity })
+    const weatherActive =
+      isWeatherVisualActive({ fogDensity, rainIntensity, snowIntensity }) ||
+      (cloudDensity > 0 && enableStandaloneWeather)
     const aboveStreetsGL = weatherActive && streetsGLIframeOverlay
     canvas.style.zIndex = aboveStreetsGL ? '30' : '20'
-  }, [fogDensity, rainIntensity, snowIntensity, streetsGLIframeOverlay])
+  }, [fogDensity, rainIntensity, snowIntensity, cloudDensity, enableStandaloneWeather, streetsGLIframeOverlay])
 
   // Update scene background and renderer when iframe overlay state changes
   useEffect(() => {

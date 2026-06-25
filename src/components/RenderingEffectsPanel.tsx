@@ -3,7 +3,9 @@ import { useAppStore } from '../store/useAppStore'
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
-import './RenderingEffectsPanel.css'
+import {
+  WEATHER_PRESET_DEFINITIONS
+} from '../viewer/utils/weatherPresets'
 
 type EffectType = 'fog' | 'fire' | 'particles' | 'atmospheric' | 'lensFlare' | 'bloom' | 'motionBlur'
 
@@ -55,6 +57,10 @@ export default function RenderingEffectsPanel() {
     setFogDensity,
     fogColor,
     setFogColor,
+    cloudDensity,
+    setCloudDensity,
+    windIntensity,
+    setWindIntensity,
     rainIntensity,
     setRainIntensity,
     snowIntensity,
@@ -133,8 +139,12 @@ export default function RenderingEffectsPanel() {
           setWeatherPreset('clear')
           setFogDensity(0)
         } else {
+          const foggy = WEATHER_PRESET_DEFINITIONS.foggy
           setWeatherPreset('foggy')
-          setFogDensity(0.5)
+          setFogDensity(foggy.fogDensity)
+          setFogColor(foggy.fogColor)
+          setCloudDensity(foggy.cloudDensity)
+          setWindIntensity(foggy.windIntensity)
         }
         break
       case 'particles':
