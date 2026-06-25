@@ -215,6 +215,9 @@ export default function ObjectsPanel() {
       if (extra?.streetsGLBaseTransform) {
         ;(proxy.userData as any).streetsGLBaseTransform = extra.streetsGLBaseTransform
       }
+      if (extra?.streetsGLPlacementWorldPosition) {
+        ;(proxy.userData as any).streetsGLPlacementWorldPosition = extra.streetsGLPlacementWorldPosition
+      }
       if (extra?.streetsGLAdded) {
         ;(proxy.userData as any).streetsGLAdded = true
       }
@@ -719,6 +722,9 @@ export default function ObjectsPanel() {
       if (!projectObjectId) return
       const newVisible = !node.object.visible
       node.object.visible = newVisible
+      if ((node.object.userData as any).renderInStreetsGL === true) {
+        ;(node.object.userData as any).streetsGLVisible = newVisible
+      }
       setObjectVisible(projectObjectId, newVisible)
       if (streetsGLBridge && streetsGLId) {
         streetsGLBridge.updateObject(streetsGLId, { visible: newVisible }).catch(() => {})
@@ -738,6 +744,9 @@ export default function ObjectsPanel() {
     
     // Set visibility on the object
     node.object.visible = newVisible
+    if ((node.object.userData as any).renderInStreetsGL === true) {
+      ;(node.object.userData as any).streetsGLVisible = newVisible
+    }
     
     // Update matrix world to ensure changes are reflected
     node.object.updateMatrixWorld(true)

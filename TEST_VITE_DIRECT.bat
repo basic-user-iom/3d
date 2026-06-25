@@ -14,6 +14,6 @@ echo.
 echo ========================================
 echo.
 
-npx vite --host --port 3000 --open
+npx vite --host --port 3000
 
 pause

@@ -10,6 +10,6 @@ echo Server will be at: http://localhost:3000
 echo Press Ctrl+C to stop
 echo.
 
-npx vite --host --port 3000 --open
+npx vite --host --port 3000
 
 pause

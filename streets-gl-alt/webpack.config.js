@@ -1,4 +1,4 @@
-const path = require('path');
+﻿const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
 const {CleanWebpackPlugin} = require('clean-webpack-plugin');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
@@ -40,7 +40,7 @@ module.exports = (env, argv) => ([{
 	devServer: {
 		hot: true,
 		port: 8081,
-		open: true,
+		open: false,
 		host: 'localhost',
 		client: {
 			overlay: {

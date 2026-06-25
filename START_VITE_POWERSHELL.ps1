@@ -15,7 +15,7 @@ Write-Host "Press Ctrl+C to stop" -ForegroundColor Yellow
 Write-Host ""
 
 # Start Vite
-npx vite --host --port 3000 --open
+npx vite --host --port 3000
 
 Write-Host ""
 Write-Host "Vite stopped." -ForegroundColor Yellow

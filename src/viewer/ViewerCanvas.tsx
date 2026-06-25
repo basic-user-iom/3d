@@ -1284,23 +1284,23 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           if (attachedObject && attachedObject.userData.isPivotWrapper) {
             const pivot = attachedObject as THREE.Group
             const model = pivot.userData.originalModel as THREE.Object3D
-            
+
             if (model) {
               // The model scale has already been applied during dragging
               // We just need to:
               // 1. Reset pivot scale to 1,1,1 (pivot should never be scaled)
               // 2. Update pivot position to keep it centered after scaling
-              
+
               // Reset pivot scale back to 1,1,1 (pivot should never be scaled)
               // This ensures the pivot is always at scale 1 for future operations
               pivot.scale.set(1, 1, 1)
               pivot.updateMatrixWorld()
-              
+
               // Update pivot position to keep it centered (or at bottom) after scaling
               // This recalculates the pivot position based on the new model bounding box
               // and adjusts the model's local position relative to the pivot
               updatePivotPosition(pivot, model)
-              
+
               // Reattach transform controls to ensure they work correctly with the reset pivot
               // CRITICAL: Only attach if pivot is in scene graph
               if (pivot.parent !== null) {
@@ -1308,6 +1308,30 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                   transformControls.attach(pivot)
                 } catch (error) {
                   console.warn(`[ViewerCanvas] Failed to reattach transform controls to pivot:`, error)
+                }
+              }
+            }
+          }
+        }
+
+        // After translating or rotating via a pivot wrapper, bake the world-space transform into
+        // the model and recreate the pivot so registry local transforms and Streets GL sync align.
+        const modeAtDragEnd = transformControls.getMode()
+        if (modeAtDragEnd === 'translate' || modeAtDragEnd === 'rotate') {
+          const attachedObject = (transformControls as any).object as THREE.Object3D | undefined
+          if (attachedObject?.userData?.isPivotWrapper) {
+            const pivot = attachedObject as THREE.Group
+            const model = pivot.userData.originalModel as THREE.Object3D | undefined
+            if (model?.userData?.streetsGLObjectId) {
+              const pivotMode = (pivot.userData.pivotMode as 'center' | 'bottom') || 'center'
+              removePivotWrapper(pivot)
+              const newPivot = createPivotWrapper(model, pivotMode)
+              pivotWrappers.set(model, newPivot)
+              if (newPivot.parent !== null) {
+                try {
+                  transformControls.attach(newPivot)
+                } catch (error) {
+                  console.warn('[ViewerCanvas] Failed to reattach transform controls after pivot bake:', error)
                 }
               }
             }
