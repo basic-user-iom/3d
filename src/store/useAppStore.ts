@@ -2203,7 +2203,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setHdrUrl: (url) => set({ hdrUrl: url }),
   setHdrFile: (file) => set({ hdrFile: file }),
   setHdrIntensity: (intensity) => set({ hdrIntensity: intensity }),
-  setHdrGroundProjectionEnabled: (enabled) => set({ hdrGroundProjectionEnabled: enabled }),
+  setHdrGroundProjectionEnabled: (enabled) => {
+    const state = get()
+    if (enabled && state.enableStandaloneWeather) {
+      console.warn(
+        '[Weather] Disabling standalone weather — HDR ground projection conflicts with standalone CSM/sun.'
+      )
+      set({ hdrGroundProjectionEnabled: enabled, enableStandaloneWeather: false })
+      return
+    }
+    set({ hdrGroundProjectionEnabled: enabled })
+  },
   setHdrGroundProjectionHeight: (height) => set({ hdrGroundProjectionHeight: height }),
   setHdrGroundProjectionRadius: (radius) => set({ hdrGroundProjectionRadius: radius }),
   setHdrGroundProjectionResolution: (resolution) => set({ hdrGroundProjectionResolution: resolution }),
@@ -2363,7 +2373,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSkyElevation: (rad) => set({ skyElevation: Math.max(0, Math.min(Math.PI / 2, rad)) }),
   setSkyAzimuth: (rad) => set({ skyAzimuth: Math.max(-Math.PI, Math.min(Math.PI, rad)) }),
   setDynamicSkyEnabled: (enabled) => set({ dynamicSkyEnabled: enabled }),
-  setEnableStandaloneWeather: (enabled: boolean) => set({ enableStandaloneWeather: enabled }),
+  setEnableStandaloneWeather: (enabled: boolean) => {
+    const state = get()
+    if (enabled && state.hdrGroundProjectionEnabled) {
+      console.warn(
+        '[Weather] Disabling HDR ground projection — conflicts with standalone weather and can darken materials.'
+      )
+      set({ enableStandaloneWeather: enabled, hdrGroundProjectionEnabled: false })
+      return
+    }
+    set({ enableStandaloneWeather: enabled })
+  },
   setSunSize: (size) => set({ sunSize: Math.max(0.1, Math.min(5.0, size)) }),
   setMoonSize: (size) => set({ moonSize: Math.max(0.1, Math.min(5.0, size)) }),
   setWeatherQuality: (quality) => set({ weatherQuality: quality }),
