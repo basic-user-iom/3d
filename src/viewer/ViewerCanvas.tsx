@@ -365,7 +365,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     maxFPS,
     streetsGLIframeOverlay,
     renderMode,
-    streetsGLIframeInteractive
+    streetsGLIframeInteractive,
+    pathTracerActive
   } = useAppStore()
 
   useEffect(() => {
@@ -5505,6 +5506,50 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
     }
   }, [transformMode, selectedObject, pivotMode, streetsGLIframeOverlay, renderMode, streetsGLIframeInteractive])
+
+  // Re-enable transform gizmo + orbit controls after path tracer exits
+  useEffect(() => {
+    if (!viewerRef.current?.transformControls || pathTracerActive) return
+
+    const viewer = viewerRef.current
+    const transformControls = viewer.transformControls
+    if (!transformControls) return
+
+    ;(transformControls as any).enabled = true
+
+    const controls = viewer.controls
+    if (controls) {
+      controls.enabled = true
+      controls.enableRotate = true
+      controls.enablePan = true
+      controls.enableZoom = true
+      controls.update()
+    }
+
+    const { selectedObject: currentSelection, transformMode: currentMode } = useAppStore.getState()
+    const effectiveMode =
+      currentMode || (currentSelection instanceof THREE.Light ? 'translate' : null)
+
+    if (!effectiveMode || !currentSelection || !viewer.selectObject) return
+
+    const reattach = () => {
+      if (useAppStore.getState().pathTracerActive) return
+      viewer.selectObject?.(currentSelection)
+      if (viewer.renderer) {
+        applyViewerCanvasPointerEvents(
+          viewer.renderer.domElement,
+          useAppStore.getState(),
+          transformControls
+        )
+      }
+    }
+
+    requestAnimationFrame(() => {
+      reattach()
+      setTimeout(reattach, 0)
+      setTimeout(reattach, 100)
+    })
+  }, [pathTracerActive, selectedObject, transformMode])
 
   useEffect(() => {
     if (!viewerRef.current) return
