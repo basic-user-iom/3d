@@ -3031,6 +3031,68 @@ export class PathTracerDemo {
     schedulePathTracerMovementRestore(this.scene, viewer, this._prePathTracerMovement)
   }
 
+  private getViewerTransformControls(): THREE.Object3D | null {
+    return (window as any).__viewer?.transformControls ?? null
+  }
+
+  private isTransformControlsDescendant(obj: THREE.Object3D): boolean {
+    const root = this.getViewerTransformControls()
+    if (!root || obj === root) return false
+    let node: THREE.Object3D | null = obj
+    while (node) {
+      if (node === root) return true
+      node = node.parent
+    }
+    return false
+  }
+
+  private isExcludedFromMaterialBasedHelperHide(obj: THREE.Object3D): boolean {
+    const data = obj.userData
+    return !!(
+      data?.isShadowPlane ||
+      data?.isPathTracerGroundPlane ||
+      data?.isGroundedSkybox ||
+      data?.isGridHelper ||
+      data?.isAxesHelper ||
+      data?.isNativeObjectsGroup ||
+      data?.isPivotWrapper
+    )
+  }
+
+  private removePathTracerTransientMeshes(): void {
+    if (this.groundPlaneMesh) {
+      if (this.groundPlaneMesh.parent) {
+        this.groundPlaneMesh.parent.remove(this.groundPlaneMesh)
+      } else {
+        this.scene.remove(this.groundPlaneMesh)
+      }
+      this.groundPlaneMesh.geometry?.dispose()
+      const materials = Array.isArray(this.groundPlaneMesh.material)
+        ? this.groundPlaneMesh.material
+        : [this.groundPlaneMesh.material]
+      materials.forEach((mat) => {
+        if (mat instanceof THREE.Material) mat.dispose()
+      })
+      this.groundPlaneMesh = null
+    }
+
+    const toRemove: THREE.Mesh[] = []
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.Mesh && obj.userData?.isPathTracerGroundPlane === true) {
+        toRemove.push(obj)
+      }
+    })
+    toRemove.forEach((obj) => {
+      if (obj.parent) obj.parent.remove(obj)
+      else this.scene.remove(obj)
+      obj.geometry?.dispose()
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
+      materials.forEach((mat) => {
+        if (mat instanceof THREE.Material) mat.dispose()
+      })
+    })
+  }
+
   /**
    * Hide all helpers and gizmos in the scene
    * This is called both during initialize() and start() to ensure everything is hidden
@@ -3102,39 +3164,19 @@ export class PathTracerDemo {
       }
     })
     
-    // Hide transform controls and ALL their children/gizmos (axes, boxes, lines, etc.)
-    const hideTransformControlsAndChildren = (transformControls: any) => {
-      if (!transformControls) return 0
-      
-      let hidden = 0
-      
-      // Hide the transform controls itself
-      if (transformControls.visible && !this._originalHelperStates.find(s => s.obj === transformControls)) {
-        this._originalHelperStates.push({ 
-          obj: transformControls, 
-          wasVisible: transformControls.visible, 
-          helperType: 'transformControls' 
-        })
-        transformControls.visible = false
-        hidden++
-      }
-      
-      // Hide ALL children of transform controls (axes, boxes, lines, etc.)
-      transformControls.traverse((child: any) => {
-        if (child !== transformControls && child.visible && !this._originalHelperStates.find(s => s.obj === child)) {
-          this._originalHelperStates.push({ 
-            obj: child, 
-            wasVisible: child.visible, 
-            helperType: 'transformControls' 
-          })
-          child.visible = false
-          hidden++
-        }
+    // Hide transform controls root only — child visibility is managed by TransformControls
+    const hideTransformControlsRoot = (transformControls: THREE.Object3D) => {
+      if (!transformControls?.visible) return 0
+      if (this._originalHelperStates.find((s) => s.obj === transformControls)) return 0
+      this._originalHelperStates.push({
+        obj: transformControls,
+        wasVisible: transformControls.visible,
+        helperType: 'transformControls'
       })
-      
-      return hidden
+      transformControls.visible = false
+      return 1
     }
-    
+
     // Hide transform controls from viewer - COMPLETE DISABLE METHOD
     const viewer = (window as any).__viewer
     if (viewer?.transformControls) {
@@ -3153,7 +3195,7 @@ export class PathTracerDemo {
       }
       
       // Hide the transform controls itself
-      const hidden = hideTransformControlsAndChildren(transformControls)
+      const hidden = hideTransformControlsRoot(transformControls)
       hiddenCount += hidden
       if (hidden > 0) {
         console.log('[PathTracerDemo] 🔒 Hiding transform controls and children from viewer:', hidden)
@@ -3177,7 +3219,7 @@ export class PathTracerDemo {
           console.log('[PathTracerDemo] 🔒 Detached transform controls from object in scene')
         }
         
-        const hidden = hideTransformControlsAndChildren(transformControls)
+        const hidden = hideTransformControlsRoot(transformControls)
         hiddenCount += hidden
         if (hidden > 0) {
           console.log('[PathTracerDemo] 🔒 Hiding transform controls and children from scene:', hidden)
@@ -3230,6 +3272,9 @@ export class PathTracerDemo {
     
     // Hide axes helpers (red/green/blue arrows), yellow cubes, green gizmos, and semi-transparent planes
     this.scene.traverse((obj) => {
+      if (this.isExcludedFromMaterialBasedHelperHide(obj) || this.isTransformControlsDescendant(obj)) {
+        return
+      }
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Line || obj instanceof THREE.ArrowHelper || obj instanceof THREE.PlaneHelper) {
         const mat = (obj as any).material
         const isArray = Array.isArray(mat)
@@ -3530,7 +3575,7 @@ export class PathTracerDemo {
       }
       
       // Hide the transform controls itself
-      const hidden = hideTransformControlsAndChildren(transformControls)
+      const hidden = hideTransformControlsRoot(transformControls)
       hiddenCount += hidden
       if (hidden > 0) {
         console.log('[PathTracerDemo] 🔒 Hiding transform controls and children from viewer:', hidden)
@@ -3554,7 +3599,7 @@ export class PathTracerDemo {
           console.log('[PathTracerDemo] 🔒 Detached transform controls from object in scene')
         }
         
-        const hidden = hideTransformControlsAndChildren(transformControls)
+        const hidden = hideTransformControlsRoot(transformControls)
         hiddenCount += hidden
         if (hidden > 0) {
           console.log('[PathTracerDemo] 🔒 Hiding transform controls and children from scene:', hidden)
@@ -3848,67 +3893,27 @@ export class PathTracerDemo {
         }
       })()
 
-      // CRITICAL: Restore helpers (gizmos, transform controls, grid, axes, light helpers) after path tracing
+      // Remove path-tracer-only meshes before restoring viewer helpers
+      this.removePathTracerTransientMeshes()
+
+      // Restore helpers (grid, axes, light helpers) — skip transform-control internals
       if (this._originalHelperStates && this._originalHelperStates.length > 0) {
         console.log('[PathTracerDemo] 🔓 Restoring helpers after path tracing:', this._originalHelperStates.length)
         this._originalHelperStates.forEach(({ obj, wasVisible, helperType }) => {
-          if (obj && typeof obj.visible !== 'undefined') {
-            obj.visible = wasVisible
-            console.log(`[PathTracerDemo] ✅ Restored ${helperType} visibility:`, wasVisible)
+          if (!obj || typeof obj.visible === 'undefined') return
+          if (helperType === 'transformControls' && this.isTransformControlsDescendant(obj)) {
+            return
           }
+          if (obj.userData?.isShadowPlane || obj.userData?.isPathTracerGroundPlane) {
+            return
+          }
+          obj.visible = wasVisible
+          console.log(`[PathTracerDemo] ✅ Restored ${helperType} visibility:`, wasVisible)
         })
         this._originalHelperStates = []
       }
 
       this.restoreTransformControlsAfterPathTracer()
-      
-      // CRITICAL: Remove path tracer ground plane FIRST (before restoring shadow plane)
-      // This ensures the standard shadow plane is visible and not covered by the path tracer ground plane
-      if (this.groundPlaneMesh) {
-        console.log('[PathTracerDemo] 🗑️ Removing path tracer ground plane to restore original state')
-        if (this.groundPlaneMesh.parent) {
-          this.scene.remove(this.groundPlaneMesh)
-        }
-        if (this.groundPlaneMesh.geometry) {
-          this.groundPlaneMesh.geometry.dispose()
-        }
-        const materials = Array.isArray(this.groundPlaneMesh.material) 
-          ? this.groundPlaneMesh.material 
-          : [this.groundPlaneMesh.material]
-        materials.forEach(mat => {
-          if (mat instanceof THREE.Material) {
-            mat.dispose()
-          }
-        })
-        this.groundPlaneMesh = null
-        console.log('[PathTracerDemo] ✅ Removed path tracer ground plane')
-      }
-      
-      // Also check for any ground planes marked with isPathTracerGroundPlane in the scene
-      // (in case groundPlaneMesh reference was lost)
-      this.scene.traverse((obj) => {
-        if (obj instanceof THREE.Mesh && obj.userData?.isPathTracerGroundPlane === true) {
-          console.log('[PathTracerDemo] 🗑️ Removing path tracer ground plane (found via traverse):', {
-            name: obj.name || 'Unnamed',
-            uuid: obj.uuid
-          })
-          if (obj.parent) {
-            obj.parent.remove(obj)
-          } else {
-            this.scene.remove(obj)
-          }
-          if (obj.geometry) {
-            obj.geometry.dispose()
-          }
-          const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
-          materials.forEach(mat => {
-            if (mat instanceof THREE.Material) {
-              mat.dispose()
-            }
-          })
-          console.log('[PathTracerDemo] ✅ Removed path tracer ground plane (via traverse)')
-        }
-      })
 
       // Restore shadow plane visibility and properties if it was hidden
       const hiddenShadowPlanes = (this as any)._hiddenShadowPlanes as Array<{ 

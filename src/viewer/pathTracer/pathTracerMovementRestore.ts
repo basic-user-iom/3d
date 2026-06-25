@@ -73,13 +73,13 @@ export function capturePathTracerMovementState(
   }
 }
 
-function showTransformControlsHierarchy(transformControls: THREE.Object3D): void {
-  transformControls.visible = true
-  transformControls.traverse((child) => {
-    if (child !== transformControls) {
-      child.visible = true
-    }
-  })
+function refreshTransformControlsVisibility(
+  transformControls: THREE.Object3D,
+  hasSelection: boolean
+): void {
+  transformControls.visible = hasSelection
+  const tc = transformControls as { updateMatrixWorld?: (force?: boolean) => void }
+  tc.updateMatrixWorld?.(true)
 }
 
 export function restorePathTracerMovementState(
@@ -98,7 +98,7 @@ export function restorePathTracerMovementState(
   }
 
   transformControls.enabled = snapshot.transformControlsWasEnabled !== false
-  showTransformControlsHierarchy(transformControls)
+  refreshTransformControlsVisibility(transformControls, !!snapshot.selectedObject)
 
   const controls = viewer.controls
   if (controls && snapshot.orbitControls) {
@@ -140,6 +140,11 @@ export function restorePathTracerMovementState(
   if (snapshot.selectedObject && typeof viewer.selectObject === 'function') {
     viewer.selectObject(snapshot.selectedObject)
   }
+
+  refreshTransformControlsVisibility(
+    transformControls,
+    !!(snapshot.selectedObject || (transformControls as { object?: THREE.Object3D }).object)
+  )
 
   if (viewer.renderer) {
     applyViewerCanvasPointerEvents(

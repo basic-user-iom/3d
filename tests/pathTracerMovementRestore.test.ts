@@ -130,4 +130,41 @@ describe('pathTracerMovementRestore', () => {
     expect(viewer.controls.enableRotate).toBe(true)
     expect(viewer.controls.enablePan).toBe(true)
   })
+
+  it('does not force hidden transform control children visible on restore', () => {
+    const scene = new THREE.Scene()
+    const mesh = new THREE.Mesh()
+    mesh.userData.isModel = true
+
+    const hiddenPlane = new THREE.Mesh()
+    hiddenPlane.visible = false
+
+    const transformControls = Object.assign(new THREE.Object3D(), {
+      enabled: false,
+      visible: false,
+      parent: null as THREE.Object3D | null,
+      setMode: vi.fn(),
+      getMode: () => 'translate' as const,
+      object: mesh,
+      updateMatrixWorld: vi.fn()
+    })
+    transformControls.add(hiddenPlane)
+    transformControls.traverse = (cb: (child: THREE.Object3D) => void) => {
+      cb(transformControls)
+      cb(hiddenPlane)
+    }
+
+    const snapshot: PathTracerMovementSnapshot = {
+      selectedObject: mesh,
+      transformMode: 'translate',
+      transformControlsWasEnabled: true,
+      transformControlsMode: 'translate',
+      orbitControls: null
+    }
+
+    restorePathTracerMovementState(scene, { transformControls } as any, snapshot)
+
+    expect(transformControls.visible).toBe(true)
+    expect(hiddenPlane.visible).toBe(false)
+  })
 })
