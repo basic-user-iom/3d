@@ -13,6 +13,7 @@ import {
   readRenderTargetToDataUrl,
   readRendererFrameToDataUrl
 } from '../utils/screenshotCapture'
+import { useAppStore } from '../../store/useAppStore'
 // Note: MaskedHDRTexture utility is available but not used (rolled back to original HDR with ground)
 // import { createBlackMaskedHDRTexture } from './utils/MaskedHDRTexture'
 
@@ -213,7 +214,7 @@ export class PathTracerDemo {
     // CRITICAL: Also hide path tracer ground plane if HDR ground projection is enabled
     // The gray ground plane is not needed when GroundedSkybox handles the ground surface
     // Shadows will appear on GroundedSkybox lower hemisphere instead of the gray plane
-    const hdrGroundProjectionEnabled = (window as any).__appStore?.getState?.()?.hdrGroundProjectionEnabled ?? false
+    const hdrGroundProjectionEnabled = useAppStore.getState()?.hdrGroundProjectionEnabled ?? false
     if (hdrGroundProjectionEnabled) {
       // Hide path tracer ground plane - GroundedSkybox handles ground and shadows
       if (this.groundPlaneMesh && this.groundPlaneMesh.visible) {
@@ -264,15 +265,10 @@ export class PathTracerDemo {
     // CRITICAL: Also clear selectedObject from store every frame to prevent re-attachment
     // This is the most reliable way to prevent the viewer from re-attaching transform controls
     try {
-      const store = (window as any).__appStore
-      if (store && typeof store.getState === 'function') {
-        const state = store.getState()
-        if (state && typeof state.setSelectedObject === 'function') {
-          const currentSelected = state.selectedObject
-          if (currentSelected !== null && currentSelected !== undefined) {
-            state.setSelectedObject(null)
-          }
-        }
+      const state = useAppStore.getState()
+      const currentSelected = state.selectedObject
+      if (currentSelected !== null && currentSelected !== undefined) {
+        state.setSelectedObject(null)
       }
     } catch (error) {
       // Silently fail if store is not available
@@ -1214,7 +1210,7 @@ export class PathTracerDemo {
         // CRITICAL FIX: Check if ground projection is enabled
         // If ground projection is enabled, we should NOT set scene.background to full HDR
         // GroundedSkybox handles the ground surface - setting background would show both full HDR AND ground projection
-        const hdrGroundProjectionEnabled = (window as any).__appStore?.getState?.()?.hdrGroundProjectionEnabled ?? false
+        const hdrGroundProjectionEnabled = useAppStore.getState()?.hdrGroundProjectionEnabled ?? false
         
         // Always set environment for lighting (path tracer needs this for reflections and global illumination)
         this.scene.environment = hdrTextureForPathTracer
@@ -1619,7 +1615,7 @@ export class PathTracerDemo {
     try {
       // CRITICAL: Check if HDR ground projection is enabled - if so, don't create/hide ground plane
       // GroundedSkybox handles the ground surface and shadows, so we don't need a separate gray ground plane
-      const hdrGroundProjectionEnabled = (window as any).__appStore?.getState?.()?.hdrGroundProjectionEnabled ?? false
+      const hdrGroundProjectionEnabled = useAppStore.getState()?.hdrGroundProjectionEnabled ?? false
       
       if (hdrGroundProjectionEnabled) {
         // HDR ground projection is enabled - hide any existing path tracer ground plane
@@ -1950,7 +1946,7 @@ export class PathTracerDemo {
         
         // Save HDR state
         const hdrSystem = (window as any).__hdrSystem
-        const store = (window as any).__appStore?.getState?.()
+        const store = useAppStore.getState()
         ;(this as any)._originalHdrState = {
           hdrEnabled: store?.hdrEnabled ?? false,
           hdrBackgroundVisible: store?.hdrBackgroundVisible ?? true,
@@ -2997,11 +2993,8 @@ export class PathTracerDemo {
   /** Save transform gizmo state before path tracing hides/detaches it. */
   private captureTransformStateForRestore(): void {
     try {
-      const store = (window as any).__appStore
-      const state = store?.getState?.()
-      if (state) {
-        this._prePathTracerSelectedObject = state.selectedObject ?? null
-      }
+      const state = useAppStore.getState()
+      this._prePathTracerSelectedObject = state.selectedObject ?? null
     } catch {
       // store unavailable
     }
@@ -3042,11 +3035,8 @@ export class PathTracerDemo {
 
     if (savedSelection) {
       try {
-        const store = (window as any).__appStore
-        const setSelectedObject = store?.getState?.()?.setSelectedObject
-        if (typeof setSelectedObject === 'function') {
-          setSelectedObject(savedSelection)
-        }
+        const { setSelectedObject } = useAppStore.getState()
+        setSelectedObject(savedSelection)
         if (typeof viewer.selectObject === 'function') {
           viewer.selectObject(savedSelection)
         }
@@ -3067,13 +3057,8 @@ export class PathTracerDemo {
       viewerForDeselect.selectObject(null)
     }
     try {
-      const store = (window as any).__appStore
-      if (store && typeof store.getState === 'function') {
-        const state = store.getState()
-        if (state && typeof state.setSelectedObject === 'function') {
-          state.setSelectedObject(null)
-        }
-      }
+      const { setSelectedObject } = useAppStore.getState()
+      setSelectedObject(null)
     } catch {
       // store unavailable
     }
@@ -3850,7 +3835,7 @@ export class PathTracerDemo {
         console.warn('[PathTracerDemo] Unable to reset animation loop:', error)
       }
       // Cache store flag for consistent shadow plane restore + desired bounds for positioning
-      const showShadowPlaneFlag = (window as any).__appStore?.getState?.().showShadowPlane
+      const showShadowPlaneFlag = useAppStore.getState().showShadowPlane
       const shadowPlaneVisibility = new Map<THREE.Object3D, boolean>()
       const sceneBounds = (() => {
         const bbox = new THREE.Box3()
@@ -4006,7 +3991,7 @@ export class PathTracerDemo {
             // CRITICAL: Check user's current transparency setting BEFORE restoring material
             // We will NOT set restoration flags - let ViewerCanvas handle material type based on user setting
             // This allows user to toggle transparency on/off after path tracer exits
-            const userStore = (window as any).__appStore?.getState?.()
+            const userStore = useAppStore.getState()
             const currentUserWantsTransparent = userStore?.shadowPlaneTransparent ?? false
             const restoredIsShadowMaterial = originalMaterial instanceof THREE.ShadowMaterial
             const materialTypeMatchesUserSetting = (currentUserWantsTransparent && restoredIsShadowMaterial) ||
@@ -4588,7 +4573,7 @@ export class PathTracerDemo {
         const hdrSystem = (window as any).__hdrSystem
         if (hdrSystem) {
           // CRITICAL: Check current HDR state in store to avoid unnecessary operations
-          const currentStore = (window as any).__appStore?.getState?.()
+          const currentStore = useAppStore.getState()
           const currentHdrEnabled = currentStore?.hdrEnabled ?? false
           
           // CRITICAL: Only restore HDR state if HDR was actually enabled before path tracer
@@ -4739,7 +4724,7 @@ export class PathTracerDemo {
         // Fallback: Use current store state if we didn't save original state
         const hdrSystem = (window as any).__hdrSystem
         if (hdrSystem) {
-          const store = (window as any).__appStore?.getState?.()
+          const store = useAppStore.getState()
           if (store) {
             const hdrEnabled = store.hdrEnabled
             const hdrBackgroundVisible = store.hdrBackgroundVisible ?? true
@@ -4871,7 +4856,7 @@ export class PathTracerDemo {
           autoClear: this.renderer.autoClear
         },
         hdrState: (() => {
-          const store = (window as any).__appStore?.getState?.()
+          const store = useAppStore.getState()
           return store ? {
             hdrEnabled: store.hdrEnabled,
             hdrBackgroundVisible: store.hdrBackgroundVisible,

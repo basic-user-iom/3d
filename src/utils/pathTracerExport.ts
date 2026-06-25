@@ -35,6 +35,8 @@ export async function exportPathTracerFromCameraView(
     throw new Error('Path tracer is already running. Stop it in the Path Tracer panel first.')
   }
 
+  ;(window as any).__pathTracerDemoRunning = true
+
   const oldState = viewer.getCameraState()
   const position = new THREE.Vector3(
     view.cameraPosition.x,
@@ -82,6 +84,7 @@ export async function exportPathTracerFromCameraView(
       }
       pathTracer = null
     }
+    ;(window as any).__pathTracerDemoRunning = false
     viewer.setCameraState(oldState.position, oldState.target, false)
     viewer.controls?.update()
     viewer.renderer.render(viewer.scene, viewer.camera)
