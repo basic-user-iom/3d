@@ -18,12 +18,20 @@ export default function WeatherPanel() {
     streetsGLIframeOverlay,
     enableStandaloneWeather,
     setEnableStandaloneWeather,
+    weatherPreset,
+    setWeatherPreset,
     fogDensity,
     setFogDensity,
+    fogColor,
+    setFogColor,
     rainIntensity,
     setRainIntensity,
     snowIntensity,
-    setSnowIntensity
+    setSnowIntensity,
+    windIntensity,
+    setWindIntensity,
+    cloudDensity,
+    setCloudDensity
   } = useAppStore()
 
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -80,6 +88,67 @@ export default function WeatherPanel() {
       z: sunDir.z
     })
   }, [timeOfDay, northOffset, streetsGLIframeOverlay, streetsGLBridge])
+
+  const WEATHER_PRESETS: Array<{
+    id: string
+    label: string
+    icon: string
+    apply: () => void
+  }> = [
+    {
+      id: 'clear',
+      label: 'Clear',
+      icon: '☀️',
+      apply: () => {
+        setWeatherPreset('clear')
+        setFogDensity(0)
+        setRainIntensity(0)
+        setSnowIntensity(0)
+        setCloudDensity(0)
+        setWindIntensity(0)
+      }
+    },
+    {
+      id: 'overcast',
+      label: 'Overcast',
+      icon: '☁️',
+      apply: () => {
+        setWeatherPreset('overcast')
+        setFogDensity(0.15)
+        setRainIntensity(0)
+        setSnowIntensity(0)
+        setCloudDensity(0.75)
+        setWindIntensity(0.2)
+      }
+    },
+    {
+      id: 'foggy',
+      label: 'Foggy',
+      icon: '🌫️',
+      apply: () => {
+        setWeatherPreset('foggy')
+        setFogDensity(0.55)
+        setFogColor('#c8d0d8')
+        setRainIntensity(0)
+        setSnowIntensity(0)
+        setCloudDensity(0.35)
+        setWindIntensity(0.1)
+      }
+    },
+    {
+      id: 'stormy',
+      label: 'Stormy',
+      icon: '⛈️',
+      apply: () => {
+        setWeatherPreset('stormy')
+        setFogDensity(0.25)
+        setRainIntensity(0.75)
+        setSnowIntensity(0)
+        setCloudDensity(0.9)
+        setWindIntensity(0.65)
+      }
+    }
+  ]
 
   if (!showWeatherPanel) return null
 
@@ -153,10 +222,28 @@ export default function WeatherPanel() {
           </div>
 
           <div className="weather-section">
-            <h3>Precipitation &amp; Fog</h3>
+            <h3>Weather Preset</h3>
             <small style={{ display: 'block', color: '#888', marginBottom: '8px' }}>
-              Scene fog and particle weather. Also available from the Effects panel.
+              Quick atmosphere presets — adjusts fog, clouds, rain, and lighting together.
             </small>
+            <div className="weather-preset-grid">
+              {WEATHER_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={`weather-preset-button ${weatherPreset === preset.id ? 'active' : ''}`}
+                  onClick={preset.apply}
+                  title={preset.label}
+                >
+                  <span className="weather-preset-icon">{preset.icon}</span>
+                  <span className="weather-preset-label">{preset.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="weather-section">
+            <h3>Atmosphere &amp; Precipitation</h3>
             <div className="control-group">
               <label>
                 Fog density
@@ -164,14 +251,42 @@ export default function WeatherPanel() {
                   type="range"
                   min="0"
                   max="1"
-                  step="0.05"
+                  step="0.01"
                   value={fogDensity}
                   onChange={(e) => {
                     const newValue = parseFloat(e.target.value)
                     trackSliderInteraction('Fog Density', newValue, 'WeatherPanel', () => setFogDensity(newValue))
                   }}
                 />
-                <span className="value-label">{fogDensity.toFixed(2)}</span>
+                <span className="value-label">{(fogDensity * 100).toFixed(0)}%</span>
+              </label>
+            </div>
+            <div className="control-group">
+              <label>
+                Fog color
+                <input
+                  type="color"
+                  value={fogColor}
+                  onChange={(e) => setFogColor(e.target.value)}
+                  style={{ marginLeft: '8px', cursor: 'pointer' }}
+                />
+              </label>
+            </div>
+            <div className="control-group">
+              <label>
+                Cloud density
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={cloudDensity}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value)
+                    trackSliderInteraction('Cloud Density', newValue, 'WeatherPanel', () => setCloudDensity(newValue))
+                  }}
+                />
+                <span className="value-label">{(cloudDensity * 100).toFixed(0)}%</span>
               </label>
             </div>
             <div className="control-group">
@@ -181,14 +296,17 @@ export default function WeatherPanel() {
                   type="range"
                   min="0"
                   max="1"
-                  step="0.05"
+                  step="0.01"
                   value={rainIntensity}
                   onChange={(e) => {
                     const newValue = parseFloat(e.target.value)
-                    trackSliderInteraction('Rain Intensity', newValue, 'WeatherPanel', () => setRainIntensity(newValue))
+                    trackSliderInteraction('Rain Intensity', newValue, 'WeatherPanel', () => {
+                      setRainIntensity(newValue)
+                      if (newValue > 0) setSnowIntensity(0)
+                    })
                   }}
                 />
-                <span className="value-label">{rainIntensity.toFixed(2)}</span>
+                <span className="value-label">{(rainIntensity * 100).toFixed(0)}%</span>
               </label>
             </div>
             <div className="control-group">
@@ -198,19 +316,39 @@ export default function WeatherPanel() {
                   type="range"
                   min="0"
                   max="1"
-                  step="0.05"
+                  step="0.01"
                   value={snowIntensity}
                   onChange={(e) => {
                     const newValue = parseFloat(e.target.value)
-                    trackSliderInteraction('Snow Intensity', newValue, 'WeatherPanel', () => setSnowIntensity(newValue))
+                    trackSliderInteraction('Snow Intensity', newValue, 'WeatherPanel', () => {
+                      setSnowIntensity(newValue)
+                      if (newValue > 0) setRainIntensity(0)
+                    })
                   }}
                 />
-                <span className="value-label">{snowIntensity.toFixed(2)}</span>
+                <span className="value-label">{(snowIntensity * 100).toFixed(0)}%</span>
+              </label>
+            </div>
+            <div className="control-group">
+              <label>
+                Wind intensity
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={windIntensity}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value)
+                    trackSliderInteraction('Wind Intensity', newValue, 'WeatherPanel', () => setWindIntensity(newValue))
+                  }}
+                />
+                <span className="value-label">{(windIntensity * 100).toFixed(0)}%</span>
               </label>
             </div>
           </div>
 
-          {/* Weather Controls - Show when either Streets GL OR Standalone Weather is enabled */}
+          {/* Sun controls — show when Streets GL or Standalone Weather is enabled */}
           {(streetsGLIframeOverlay && streetsGLBridge) || enableStandaloneWeather ? (
             <>
               <div className="weather-section" style={{ 

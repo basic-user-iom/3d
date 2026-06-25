@@ -149,6 +149,44 @@
   box-shadow: 0 4px 12px rgba(74, 123, 163, 0.4);
 }
 
+.effect-card.selected {
+  outline: 2px solid rgba(74, 158, 255, 0.5);
+}
+
+.effect-controls {
+  background: #242424;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.effect-controls h4 {
+  margin: 0;
+  color: #f0f0f0;
+  font-size: 14px;
+}
+
+.effect-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #ccc;
+  font-size: 13px;
+}
+
+.effect-controls input[type='range'] {
+  width: 100%;
+}
+
+.effect-hint {
+  color: #888;
+  font-size: 12px;
+}
+
+
 .effect-icon {
   font-size: 36px;
   margin-bottom: 8px;
