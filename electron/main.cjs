@@ -37,13 +37,30 @@ function getViewerIndexPath() {
   return candidates.find(pathExists) || candidates[0]
 }
 
-function getStreetsGLBuildPath() {
-  const candidates = [
-    path.join(getAppRoot(), 'streets-gl-alt', 'build'),
-    path.join(path.resolve(__dirname, '..'), 'streets-gl-alt', 'build')
-  ]
+function getStreetsGLBuildRoots() {
+  const roots = []
 
-  return candidates.find(pathExists) || null
+  if (app.isPackaged) {
+    // Unpacked assets are preferred for large wasm/model files when asarUnpack is configured.
+    roots.push(path.join(process.resourcesPath, 'app.asar.unpacked'))
+    roots.push(getAppRoot())
+  } else {
+    roots.push(path.resolve(__dirname, '..'))
+  }
+
+  return roots
+}
+
+function getStreetsGLBuildPath() {
+  for (const root of getStreetsGLBuildRoots()) {
+    const buildPath = path.join(root, 'streets-gl-alt', 'build')
+    const indexPath = path.join(buildPath, 'index.html')
+    if (pathExists(indexPath)) {
+      return buildPath
+    }
+  }
+
+  return null
 }
 
 function getMimeType(filePath) {
@@ -168,15 +185,18 @@ function createStaticFileHandler(rootDir) {
   }
 }
 
-function startBundledStreetsGLServer(rootDir) {
+async function startBundledStreetsGLServer(rootDir) {
   if (staticStreetsServer) {
-    return Promise.resolve({
-      started: false,
-      message: `Bundled Streets GL server already running on http://localhost:${STREETS_GL_PORT}`
-    })
+    const ready = await isLocalServerReachable(STREETS_GL_PORT)
+    return {
+      started: ready,
+      message: ready
+        ? `Bundled Streets GL server already running on http://127.0.0.1:${STREETS_GL_PORT}`
+        : 'Bundled Streets GL server handle exists but port is not responding'
+    }
   }
 
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const server = http.createServer(createStaticFileHandler(rootDir))
 
     server.once('error', (error) => {
@@ -185,12 +205,19 @@ function startBundledStreetsGLServer(rootDir) {
 
     server.listen(STREETS_GL_PORT, '127.0.0.1', () => {
       staticStreetsServer = server
-      resolve({
-        started: true,
-        message: `Serving bundled Streets GL assets from ${rootDir}`
-      })
+      resolve()
     })
   })
+
+  const ready = await waitForLocalServer(STREETS_GL_PORT, 10000)
+  if (!ready) {
+    throw new Error('Bundled Streets GL server started but did not become reachable')
+  }
+
+  return {
+    started: true,
+    message: `Serving bundled Streets GL assets from ${rootDir}`
+  }
 }
 
 async function startManagedStreetsGLServer() {
@@ -230,20 +257,21 @@ async function startManagedStreetsGLServer() {
 async function ensureStreetsGLServer() {
   if (await isLocalServerReachable(STREETS_GL_PORT)) {
     return {
-      started: false,
-      message: `Streets GL server already running on http://localhost:${STREETS_GL_PORT}`
+      started: true,
+      message: `Streets GL server already running on http://127.0.0.1:${STREETS_GL_PORT}`
     }
   }
 
-  const bundledBuildPath = getStreetsGLBuildPath()
-  if (bundledBuildPath) {
-    return startBundledStreetsGLServer(bundledBuildPath)
-  }
-
   if (app.isPackaged) {
+    const bundledBuildPath = getStreetsGLBuildPath()
+    if (bundledBuildPath) {
+      return startBundledStreetsGLServer(bundledBuildPath)
+    }
+
     return {
       started: false,
-      message: 'Bundled Streets GL assets were not found in this desktop build'
+      message:
+        'Bundled Streets GL assets were not found in this desktop build. Rebuild with: npm run desktop:dist'
     }
   }
 
@@ -325,6 +353,19 @@ app.whenReady().then(async () => {
       }
     }
   })
+
+  // Packaged desktop: serve pre-built Streets GL assets on 8081 before the window loads.
+  if (app.isPackaged) {
+    try {
+      const streetsGLResult = await ensureStreetsGLServer()
+      console.log('[Electron] Streets GL:', streetsGLResult.message)
+    } catch (error) {
+      console.error(
+        '[Electron] Streets GL startup failed:',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
+  }
 
   await createMainWindow()
 

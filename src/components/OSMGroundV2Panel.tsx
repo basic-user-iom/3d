@@ -53,7 +53,14 @@ export default function OSMGroundV2Panel() {
     hasTriggeredAutoStartRef.current = true
     setServerStarting(true)
     try {
-      await window.electronAPI.startStreetsGLServer()
+      const result = await window.electronAPI.startStreetsGLServer()
+      if (!result?.started && result?.message?.includes('not found')) {
+        setError(result.message)
+        setServerStarting(false)
+        hasTriggeredAutoStartRef.current = false
+        useAppStore.getState().setStreetsGLStartRequestedAt(null)
+        return
+      }
     } catch {
       setServerStarting(false)
       hasTriggeredAutoStartRef.current = false
