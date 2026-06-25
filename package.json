@@ -96,7 +96,8 @@
       "output": "dist/desktop-build"
     },
     "asarUnpack": [
-      "streets-gl-alt/build/**/*"
+      "streets-gl-alt/build/**/*",
+      "electron/preload.cjs"
     ],
     "files": [
       "dist/**/*",
@@ -112,8 +113,7 @@
         "nsis",
         "portable"
       ],
-      "sign": null,
-      "signAndEditExecutable": false
+      "sign": null
     },
     "nsis": {
       "artifactName": "3D-Viewer-Setup-${version}-${arch}.${ext}",
