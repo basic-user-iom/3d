@@ -6,6 +6,8 @@ import { usePanelStacking } from '../hooks/usePanelStacking'
 import './OSMGroundV2Panel.css'
 
 const STREETS_GL_ALT_URL = 'http://localhost:8081'
+const SERVER_CHECK_TIMEOUT_MS = 8000
+const SERVER_STARTUP_GRACE_MS = 120000
 
 export default function OSMGroundV2Panel() {
   const { 
@@ -46,6 +48,39 @@ export default function OSMGroundV2Panel() {
   const [serverStarting, setServerStarting] = useState(false)
   const [copyFeedback, setCopyFeedback] = useState(false)
   const hasTriggeredAutoStartRef = useRef(false)
+  const overlayEnabledAtRef = useRef<number | null>(null)
+
+  const isInStartupGrace = () =>
+    overlayEnabledAtRef.current != null &&
+    Date.now() - overlayEnabledAtRef.current < SERVER_STARTUP_GRACE_MS
+
+  const probeStreetsGLServer = async (timeoutMs = SERVER_CHECK_TIMEOUT_MS): Promise<boolean> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      await fetch(`${STREETS_GL_ALT_URL}/`, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-cache',
+        signal: controller.signal
+      })
+      clearTimeout(timer)
+      return true
+    } catch (err: unknown) {
+      clearTimeout(timer)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return false
+      }
+
+      return await new Promise<boolean>((resolve) => {
+        const img = new Image()
+        img.onload = () => resolve(true)
+        img.onerror = () => resolve(false)
+        img.src = `${STREETS_GL_ALT_URL}/images/favicon.png?t=${Date.now()}`
+      })
+    }
+  }
 
   // Start server (Electron) and poll until up; or copy command (browser)
   const runStartServerAndPoll = useRef(async () => {
@@ -76,25 +111,14 @@ export default function OSMGroundV2Panel() {
         useAppStore.getState().setStreetsGLStartRequestedAt(null)
         return
       }
-      try {
-        const controller = new AbortController()
-        const t = setTimeout(() => controller.abort(), 3000)
-        await fetch(`${STREETS_GL_ALT_URL}/`, { method: 'HEAD', mode: 'no-cors', cache: 'no-cache', signal: controller.signal })
-        clearTimeout(t)
+      const isUp = await probeStreetsGLServer()
+      if (isUp) {
         setServerAvailable(true)
         setServerStarting(false)
         hasTriggeredAutoStartRef.current = false
         return
-      } catch {
-        const img = new Image()
-        img.onload = () => {
-          setServerAvailable(true)
-          setServerStarting(false)
-          hasTriggeredAutoStartRef.current = false
-        }
-        img.onerror = () => setTimeout(poll, pollInterval)
-        img.src = `${STREETS_GL_ALT_URL}/?t=${Date.now()}`
       }
+      setTimeout(poll, pollInterval)
     }
     setTimeout(poll, pollInterval)
   }).current
@@ -114,70 +138,33 @@ export default function OSMGroundV2Panel() {
   // Check if Streets GL server is available
   useEffect(() => {
     if (!streetsGLIframeOverlay) {
+      overlayEnabledAtRef.current = null
       setServerAvailable(null)
       return
     }
 
-    let timeoutId: NodeJS.Timeout | null = null
+    overlayEnabledAtRef.current = Date.now()
     let isMounted = true
 
     const checkServer = async () => {
-      let resolved = false
-      
-      // Use fetch with no-cors to check if server responds
-      // This will succeed even if CORS blocks the response
-      const controller = new AbortController()
-      timeoutId = setTimeout(() => {
-        controller.abort()
-        if (isMounted && !resolved) {
-          resolved = true
-          setServerAvailable(false)
-        }
-      }, 3000)
-      
-      try {
-        // Try to fetch the main page - even with no-cors, we can detect if server is up
-        await fetch(`${STREETS_GL_ALT_URL}/`, {
-          method: 'HEAD',
-          mode: 'no-cors',
-          cache: 'no-cache',
-          signal: controller.signal
-        })
-        // If we get here without error, server is likely up
-        if (isMounted && !resolved) {
-          resolved = true
-          setServerAvailable(true)
-        }
-      } catch (err: any) {
-        // If it's an abort, we already handled it
-        if (err.name === 'AbortError') {
-          return
-        }
-        // For other errors, try alternative method
-        const img = new Image()
-        img.onload = () => {
-          if (isMounted && !resolved) {
-            resolved = true
-            setServerAvailable(true)
-          }
-        }
-        img.onerror = () => {
-          if (isMounted && !resolved) {
-            resolved = true
-            setServerAvailable(false)
-          }
-        }
-        img.src = `${STREETS_GL_ALT_URL}/?t=${Date.now()}`
+      const isUp = await probeStreetsGLServer()
+      if (!isMounted) return
+
+      if (isUp) {
+        setServerAvailable(true)
+        return
+      }
+
+      if (!isInStartupGrace()) {
+        setServerAvailable(false)
       }
     }
 
     checkServer()
-    // Re-check every 5 seconds when overlay is enabled
     const interval = setInterval(checkServer, 5000)
 
     return () => {
       isMounted = false
-      if (timeoutId) clearTimeout(timeoutId)
       clearInterval(interval)
     }
   }, [streetsGLIframeOverlay])
@@ -197,22 +184,29 @@ export default function OSMGroundV2Panel() {
     }
   }, [serverAvailable, setStreetsGLStartRequestedAt, setStreetsGLIframeReloadKey])
 
-  // After 90s, clear "start requested" so we show "Server Not Running" with the button if still down
+  // After startup grace, clear "start requested" so we show the manual fix UI if still down
   useEffect(() => {
     if (streetsGLStartRequestedAt == null || serverAvailable === true) return
     const t = setTimeout(() => {
       setStreetsGLStartRequestedAt(null)
-    }, 90000)
+    }, SERVER_STARTUP_GRACE_MS)
     return () => clearTimeout(t)
   }, [streetsGLStartRequestedAt, serverAvailable, setStreetsGLStartRequestedAt])
 
   const showStarting =
     serverStarting ||
+    (streetsGLIframeOverlay &&
+      serverAvailable !== true &&
+      isInStartupGrace()) ||
     (typeof window !== 'undefined' &&
       window.electronAPI?.startStreetsGLServer &&
       streetsGLStartRequestedAt != null &&
-      Date.now() - streetsGLStartRequestedAt < 90000 &&
+      Date.now() - streetsGLStartRequestedAt < SERVER_STARTUP_GRACE_MS &&
       serverAvailable !== true)
+
+  const showServerStatusBanner =
+    streetsGLIframeOverlay &&
+    (serverAvailable === false || (serverAvailable === null && isInStartupGrace()))
 
   if (!showOSMGroundV2Panel) {
     return null
@@ -274,7 +268,7 @@ export default function OSMGroundV2Panel() {
             Make sure Streets GL server is running on <code>http://localhost:8081</code>
           </p>
           
-          {streetsGLIframeOverlay && serverAvailable === false && (
+          {showServerStatusBanner && (
             <div style={{ 
               marginTop: '12px', 
               padding: '12px', 
@@ -287,7 +281,7 @@ export default function OSMGroundV2Panel() {
                 <>
                   <strong>🔄 Starting Streets GL server</strong>
                   <p style={{ margin: '8px 0 0 0', fontSize: '12px' }}>
-                    The server is starting in the background. This may take 30–60 seconds. The map will appear when ready—no need to refresh.
+                    The server is starting in the background. This may take up to 2 minutes on first run. The map will appear when ready—no need to refresh.
                   </p>
                 </>
               ) : (
