@@ -95,6 +95,9 @@
     "directories": {
       "output": "dist/desktop-build"
     },
+    "asarUnpack": [
+      "streets-gl-alt/build/**/*"
+    ],
     "files": [
       "dist/**/*",
       "!dist/desktop-build/**",
