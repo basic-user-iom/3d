@@ -105,6 +105,8 @@ export class PathTracerDemo {
     wasVisible: boolean
     helperType: 'grid' | 'axes' | 'lightHelper' | 'lightGizmo' | 'transformControls' | 'otherHelper'
   }> = []
+  private _prePathTracerSelectedObject: THREE.Object3D | null = null
+  private _transformControlsWasEnabled = true
   // Helper for debugging layout/sizing issues
   private getElementSizeInfo(el: HTMLElement | null) {
     if (!el) return null
@@ -2992,6 +2994,68 @@ export class PathTracerDemo {
     }
   }
 
+  /** Save transform gizmo state before path tracing hides/detaches it. */
+  private captureTransformStateForRestore(): void {
+    try {
+      const store = (window as any).__appStore
+      const state = store?.getState?.()
+      if (state) {
+        this._prePathTracerSelectedObject = state.selectedObject ?? null
+      }
+    } catch {
+      // store unavailable
+    }
+    const viewer = (window as any).__viewer
+    if (viewer?.transformControls) {
+      this._transformControlsWasEnabled = viewer.transformControls.enabled !== false
+    }
+  }
+
+  /** Re-attach transform gizmo after path tracing stops. */
+  private restoreTransformControlsAfterPathTracer(): void {
+    const viewer = (window as any).__viewer
+    if (!viewer?.transformControls) {
+      this._prePathTracerSelectedObject = null
+      return
+    }
+
+    const transformControls = viewer.transformControls as THREE.Object3D & {
+      enabled: boolean
+      object?: THREE.Object3D | null
+      visible: boolean
+    }
+
+    if (!transformControls.parent && this.scene) {
+      this.scene.add(transformControls)
+    }
+
+    transformControls.enabled = this._transformControlsWasEnabled
+    transformControls.visible = true
+    transformControls.traverse((child: THREE.Object3D) => {
+      if (child !== transformControls) {
+        child.visible = true
+      }
+    })
+
+    const savedSelection = this._prePathTracerSelectedObject
+    this._prePathTracerSelectedObject = null
+
+    if (savedSelection) {
+      try {
+        const store = (window as any).__appStore
+        const setSelectedObject = store?.getState?.()?.setSelectedObject
+        if (typeof setSelectedObject === 'function') {
+          setSelectedObject(savedSelection)
+        }
+        if (typeof viewer.selectObject === 'function') {
+          viewer.selectObject(savedSelection)
+        }
+      } catch {
+        // viewer/store unavailable
+      }
+    }
+  }
+
   /**
    * Hide all helpers and gizmos in the scene
    * This is called both during initialize() and start() to ensure everything is hidden
@@ -3261,6 +3325,9 @@ export class PathTracerDemo {
     this._frameSampleIncremented = false
     this._lastPathTracerSamples = 0
     this._lastTotalTiles = 0
+
+    // Capture selection before hiding — user may have re-selected after panel init
+    this.captureTransformStateForRestore()
 
     // CRITICAL: Hide all helpers and gizmos when starting path tracer
     this.hideAllHelpersAndGizmos()
@@ -3822,6 +3889,8 @@ export class PathTracerDemo {
         })
         this._originalHelperStates = []
       }
+
+      this.restoreTransformControlsAfterPathTracer()
       
       // CRITICAL: Remove path tracer ground plane FIRST (before restoring shadow plane)
       // This ensures the standard shadow plane is visible and not covered by the path tracer ground plane
