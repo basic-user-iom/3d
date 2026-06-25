@@ -14,6 +14,12 @@ import {
   readRendererFrameToDataUrl
 } from '../utils/screenshotCapture'
 import { useAppStore } from '../../store/useAppStore'
+import {
+  capturePathTracerMovementState,
+  schedulePathTracerMovementRestore,
+  shouldSuppressPathTracerTransformInteraction,
+  type PathTracerMovementSnapshot
+} from './pathTracerMovementRestore'
 // Note: MaskedHDRTexture utility is available but not used (rolled back to original HDR with ground)
 // import { createBlackMaskedHDRTexture } from './utils/MaskedHDRTexture'
 
@@ -106,8 +112,7 @@ export class PathTracerDemo {
     wasVisible: boolean
     helperType: 'grid' | 'axes' | 'lightHelper' | 'lightGizmo' | 'transformControls' | 'otherHelper'
   }> = []
-  private _prePathTracerSelectedObject: THREE.Object3D | null = null
-  private _transformControlsWasEnabled = true
+  private _prePathTracerMovement: PathTracerMovementSnapshot | null = null
   // Helper for debugging layout/sizing issues
   private getElementSizeInfo(el: HTMLElement | null) {
     if (!el) return null
@@ -228,66 +233,75 @@ export class PathTracerDemo {
       })
     }
     
-    // CRITICAL: Continuously disable and hide transform controls (they might be re-enabled/re-attached)
-    // This must run every frame because the viewer's useEffect might re-attach them
-    const viewer = (window as any).__viewer
-    if (viewer?.transformControls) {
-      const transformControls = viewer.transformControls
-      
-      // Force disable (prevents interaction)
-      if (transformControls.enabled !== false) {
-        transformControls.enabled = false
-      }
-      
-      // Force detach from any object (removes gizmo from object)
-      if (transformControls.object) {
-        transformControls.detach()
-      }
-      
-      // Force hide (prevents rendering)
-      if (transformControls.visible) {
-        transformControls.visible = false
-      }
-      
-      // Also hide all children continuously (axes, boxes, lines, etc.)
-      transformControls.traverse((child: any) => {
-        if (child !== transformControls && child.visible) {
-          child.visible = false
+    const suppressTransformInteraction = shouldSuppressPathTracerTransformInteraction(
+      this._isRunning,
+      this.pausedAtMax,
+      this.maxSamplesReached,
+      this.params.pause === true
+    )
+
+    if (suppressTransformInteraction) {
+      // CRITICAL: Continuously disable and hide transform controls (they might be re-enabled/re-attached)
+      // This must run every frame because the viewer's useEffect might re-attach them
+      const viewer = (window as any).__viewer
+      if (viewer?.transformControls) {
+        const transformControls = viewer.transformControls
+
+        // Force disable (prevents interaction)
+        if (transformControls.enabled !== false) {
+          transformControls.enabled = false
         }
-      })
-      
-      // CRITICAL: Also check if transform controls are in the scene and remove them
-      if (this.scene && transformControls.parent) {
-        transformControls.parent.remove(transformControls)
-      }
-    }
-    
-    // CRITICAL: Also clear selectedObject from store every frame to prevent re-attachment
-    // This is the most reliable way to prevent the viewer from re-attaching transform controls
-    try {
-      const state = useAppStore.getState()
-      const currentSelected = state.selectedObject
-      if (currentSelected !== null && currentSelected !== undefined) {
-        state.setSelectedObject(null)
-      }
-    } catch (error) {
-      // Silently fail if store is not available
-    }
-    
-    // CRITICAL: Also check scene for any TransformControls objects and hide them
-    this.scene.traverse((obj) => {
-      if (obj.type === 'TransformControls' || obj.constructor?.name === 'TransformControls') {
-        const tc = obj as any
-        if (tc.enabled !== false) tc.enabled = false
-        if (tc.object) tc.detach()
-        if (tc.visible) tc.visible = false
-        tc.traverse((child: any) => {
-          if (child !== tc && child.visible) {
+
+        // Force detach from any object (removes gizmo from object)
+        if (transformControls.object) {
+          transformControls.detach()
+        }
+
+        // Force hide (prevents rendering)
+        if (transformControls.visible) {
+          transformControls.visible = false
+        }
+
+        // Also hide all children continuously (axes, boxes, lines, etc.)
+        transformControls.traverse((child: any) => {
+          if (child !== transformControls && child.visible) {
             child.visible = false
           }
         })
+
+        // CRITICAL: Also check if transform controls are in the scene and remove them
+        if (this.scene && transformControls.parent) {
+          transformControls.parent.remove(transformControls)
+        }
       }
-    })
+
+      // CRITICAL: Also clear selectedObject from store every frame to prevent re-attachment
+      // This is the most reliable way to prevent the viewer from re-attaching transform controls
+      try {
+        const state = useAppStore.getState()
+        const currentSelected = state.selectedObject
+        if (currentSelected !== null && currentSelected !== undefined) {
+          state.setSelectedObject(null)
+        }
+      } catch {
+        // Silently fail if store is not available
+      }
+
+      // CRITICAL: Also check scene for any TransformControls objects and hide them
+      this.scene.traverse((obj) => {
+        if (obj.type === 'TransformControls' || obj.constructor?.name === 'TransformControls') {
+          const tc = obj as any
+          if (tc.enabled !== false) tc.enabled = false
+          if (tc.object) tc.detach()
+          if (tc.visible) tc.visible = false
+          tc.traverse((child: any) => {
+            if (child !== tc && child.visible) {
+              child.visible = false
+            }
+          })
+        }
+      })
+    }
     
     // CRITICAL: Ensure ground plane stays fixed in world space (not linked to car position)
     if (this.groundPlaneMesh && this.groundPlaneMesh.userData.fixedWorldPosition) {
@@ -693,6 +707,7 @@ export class PathTracerDemo {
           note: 'Using accumulatedSamples (complete frames), not pathTracer.samples (which counts tiles)'
         })
         this.callbacks.onMaxSamplesReached?.({ sampleCount: sampleCountPost, maxSamples })
+        this.releaseTransformInteractionForPausedViewing()
         return
       }
 
@@ -2992,58 +3007,28 @@ export class PathTracerDemo {
 
   /** Save transform gizmo state before path tracing hides/detaches it. */
   private captureTransformStateForRestore(): void {
-    try {
-      const state = useAppStore.getState()
-      this._prePathTracerSelectedObject = state.selectedObject ?? null
-    } catch {
-      // store unavailable
-    }
     const viewer = (window as any).__viewer
-    if (viewer?.transformControls) {
-      this._transformControlsWasEnabled = viewer.transformControls.enabled !== false
-    }
+    this._prePathTracerMovement = capturePathTracerMovementState(viewer)
   }
 
   /** Re-attach transform gizmo after path tracing stops. */
   private restoreTransformControlsAfterPathTracer(): void {
     const viewer = (window as any).__viewer
-    if (!viewer?.transformControls) {
-      this._prePathTracerSelectedObject = null
+    const snapshot = this._prePathTracerMovement
+    this._prePathTracerMovement = null
+
+    if (!snapshot || !viewer?.transformControls) {
       return
     }
 
-    const transformControls = viewer.transformControls as THREE.Object3D & {
-      enabled: boolean
-      object?: THREE.Object3D | null
-      visible: boolean
-    }
+    schedulePathTracerMovementRestore(this.scene, viewer, snapshot)
+  }
 
-    if (!transformControls.parent && this.scene) {
-      this.scene.add(transformControls)
-    }
-
-    transformControls.enabled = this._transformControlsWasEnabled
-    transformControls.visible = true
-    transformControls.traverse((child: THREE.Object3D) => {
-      if (child !== transformControls) {
-        child.visible = true
-      }
-    })
-
-    const savedSelection = this._prePathTracerSelectedObject
-    this._prePathTracerSelectedObject = null
-
-    if (savedSelection) {
-      try {
-        const { setSelectedObject } = useAppStore.getState()
-        setSelectedObject(savedSelection)
-        if (typeof viewer.selectObject === 'function') {
-          viewer.selectObject(savedSelection)
-        }
-      } catch {
-        // viewer/store unavailable
-      }
-    }
+  /** Allow gizmo movement while path tracer is paused (max samples or user pause). */
+  private releaseTransformInteractionForPausedViewing(): void {
+    if (!this._prePathTracerMovement) return
+    const viewer = (window as any).__viewer
+    schedulePathTracerMovementRestore(this.scene, viewer, this._prePathTracerMovement)
   }
 
   /**
@@ -5248,6 +5233,10 @@ export class PathTracerDemo {
     // CRITICAL: Immediately update pausePathTracing flag so pause/resume works correctly
     if (this.pathTracer) {
       this.pathTracer.pausePathTracing = paused
+    }
+
+    if (paused) {
+      this.releaseTransformInteractionForPausedViewing()
     }
     
     // CRITICAL: If resuming from pause at max, clear the pause-at-max flags
