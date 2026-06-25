@@ -120,7 +120,7 @@ function isLocalServerReachable(port) {
   })
 }
 
-async function waitForLocalServer(port, timeoutMs = 15000) {
+async function waitForLocalServer(port, timeoutMs = 120000) {
   const startedAt = Date.now()
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -222,7 +222,7 @@ async function startBundledStreetsGLServer(rootDir) {
 
 async function startManagedStreetsGLServer() {
   if (streetsGLProcess && !streetsGLProcess.killed) {
-    const ready = await waitForLocalServer(STREETS_GL_PORT, 10000)
+    const ready = await waitForLocalServer(STREETS_GL_PORT, 120000)
     return {
       started: ready,
       message: ready

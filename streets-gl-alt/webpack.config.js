@@ -41,7 +41,8 @@ module.exports = (env, argv) => ([{
 		hot: true,
 		port: 8081,
 		open: false,
-		host: 'localhost',
+		// Bind IPv4 explicitly so Windows does not collide with stale ::1 listeners.
+		host: '127.0.0.1',
 		client: {
 			overlay: {
 				errors: true,
