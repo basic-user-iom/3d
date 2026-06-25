@@ -10,6 +10,7 @@ import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
+import { exportPathTracerFromCameraView } from '../utils/pathTracerExport'
 import './CameraViewsPanel.css'
 
 // Resolution presets for export
@@ -599,20 +600,47 @@ export default function CameraViewsPanel() {
       }, 150)
     }
 
-      // Path tracer export functionality disabled - use PathTracerDemoPanel instead
-    const handleExportPathTracer = async (view: CameraView) => {
-      // TODO: Re-implement using PathTracerDemo if needed
-      console.warn('Path tracer export from camera views is disabled. Use PathTracerDemoPanel instead.')
+    const handleExportPathTracer = (view: CameraView) => {
+      if (!viewer || view.type !== 'static') return
+      setPathTracerView(view)
+      setShowPathTracerDialog(true)
     }
 
-    // Path tracer export functionality disabled - use PathTracerDemoPanel instead
     const executePathTracerExport = async () => {
-      // TODO: Re-implement using PathTracerDemo if needed
-      console.warn('Path tracer export from camera views is disabled. Use PathTracerDemoPanel instead.')
-      setIsPathTracing(false)
-      setShowPathTracerDialog(false)
+      if (!viewer || !pathTracerView) return
+
+      setIsPathTracing(true)
       setPathTracerProgress(0)
-      setPathTracerView(null)
+
+      try {
+        await exportPathTracerFromCameraView(
+          viewer,
+          pathTracerView,
+          {
+            samples: pathTracerSettings.samples,
+            bounces: pathTracerSettings.bounces,
+            width: pathTracerSettings.width,
+            height: pathTracerSettings.height,
+            denoiseEnabled: pathTracerSettings.denoiseEnabled,
+            denoiseStrength: pathTracerSettings.denoiseStrength
+          },
+          {
+            onProgress: (progress, message) => {
+              setPathTracerProgress(progress)
+              if (message) console.log('[CameraViewsPanel] Path tracer:', message)
+            }
+          }
+        )
+        alert(`✅ Path traced image exported for "${pathTracerView.name}"`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        alert(`Failed to export path traced image:\n\n${message}`)
+      } finally {
+        setIsPathTracing(false)
+        setShowPathTracerDialog(false)
+        setPathTracerProgress(0)
+        setPathTracerView(null)
+      }
     }
 
     // Export 360 panorama from a camera view

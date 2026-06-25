@@ -49,7 +49,46 @@
   cursor: grabbing;
 }
 
-.weather-panel-header h3 {
+.weather-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.weather-preset-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  color: #ddd;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.weather-preset-button:hover {
+  background: #333;
+  border-color: #555;
+}
+
+.weather-preset-button.active {
+  background: #2a4a6a;
+  border-color: #4a9eff;
+  color: #fff;
+}
+
+.weather-preset-icon {
+  font-size: 20px;
+}
+
+.weather-preset-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
   margin: 0;
   color: #f5f5f5;
   font-size: 17px;

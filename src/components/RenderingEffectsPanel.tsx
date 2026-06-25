@@ -1,110 +1,82 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
+import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './RenderingEffectsPanel.css'
 
-type EffectType =
-  | 'fog'
-  | 'fire'
-  | 'particles'
-  | 'atmospheric'
-  | 'lensFlare'
-  | 'bloom'
-  | 'motionBlur'
+type EffectType = 'fog' | 'fire' | 'particles' | 'atmospheric' | 'lensFlare' | 'bloom' | 'motionBlur'
 
-interface EffectCard {
-  id: string
-  type: EffectType
+interface EffectDefinition {
+  id: EffectType
   name: string
   icon: string
   description: string
-  available: boolean
-  statusNote?: string
 }
 
-const DEFAULT_FOG_DENSITY = 0.35
-const DEFAULT_RAIN_INTENSITY = 0.5
-
-const EFFECT_CARDS: EffectCard[] = [
-  {
-    id: 'fog',
-    type: 'fog',
-    name: 'Fog',
-    icon: '🌫️',
-    description: 'Exponential height fog for depth and atmosphere',
-    available: true
-  },
-  {
-    id: 'fire',
-    type: 'fire',
-    name: 'Fire',
-    icon: '🔥',
-    description: 'Twinmotion-style fire VFX',
-    available: false,
-    statusNote: 'Planned'
-  },
-  {
-    id: 'particles',
-    type: 'particles',
-    name: 'Rain',
-    icon: '✨',
-    description: 'Rain particle system',
-    available: true
-  },
-  {
-    id: 'atmospheric',
-    type: 'atmospheric',
-    name: 'Atmospheric',
-    icon: '🌅',
-    description: 'Standalone sky, sun, and haze (offline weather)',
-    available: true
-  },
-  {
-    id: 'lensFlare',
-    type: 'lensFlare',
-    name: 'Lens Flare',
-    icon: '💫',
-    description: 'Anamorphic lens flare post-processing',
-    available: true
-  },
-  {
-    id: 'bloom',
-    type: 'bloom',
-    name: 'Bloom',
-    icon: '🌟',
-    description: 'Emissive glow on bright materials',
-    available: true
-  },
-  {
-    id: 'motionBlur',
-    type: 'motionBlur',
-    name: 'Motion Blur',
-    icon: '⚡',
-    description: 'Camera motion blur',
-    available: false,
-    statusNote: 'Planned'
-  }
+const EFFECT_DEFINITIONS: EffectDefinition[] = [
+  { id: 'fog', name: 'Fog', icon: '🌫️', description: 'Exponential height fog in the scene' },
+  { id: 'fire', name: 'Fire', icon: '🔥', description: 'Warm bloom + lens streaks (emissive glow)' },
+  { id: 'particles', name: 'Particles', icon: '✨', description: 'Rain particle system' },
+  { id: 'atmospheric', name: 'Atmospheric', icon: '🌅', description: 'Foggy weather preset with haze' },
+  { id: 'lensFlare', name: 'Lens Flare', icon: '💫', description: 'Anamorphic lens flare streaks' },
+  { id: 'bloom', name: 'Bloom', icon: '🌟', description: 'HDR bloom post-processing' },
+  { id: 'motionBlur', name: 'Motion Blur', icon: '⚡', description: 'Camera motion blur (preview)' }
 ]
 
 const PANEL_WIDTH = 420
+
+function isEffectActive(type: EffectType, state: ReturnType<typeof useAppStore.getState>): boolean {
+  switch (type) {
+    case 'fog':
+      return state.fogDensity > 0
+    case 'fire':
+      return state.bloomEnabled && state.anamorphicEnabled && state.anamorphicColor.toLowerCase() === '#ff6633'
+    case 'particles':
+      return state.rainIntensity > 0
+    case 'atmospheric':
+      return state.weatherPreset === 'foggy' || state.weatherPreset === 'overcast'
+    case 'lensFlare':
+      return state.anamorphicEnabled
+    case 'bloom':
+      return state.bloomEnabled
+    case 'motionBlur':
+      return false
+    default:
+      return false
+  }
+}
 
 export default function RenderingEffectsPanel() {
   const {
     showRenderingEffectsPanel,
     toggleRenderingEffectsPanel,
-    bloomEnabled,
-    setBloomEnabled,
-    anamorphicEnabled,
-    setAnamorphicEnabled,
     fogDensity,
     setFogDensity,
+    fogColor,
+    setFogColor,
     rainIntensity,
     setRainIntensity,
+    snowIntensity,
+    setSnowIntensity,
+    weatherPreset,
+    setWeatherPreset,
+    bloomEnabled,
+    setBloomEnabled,
+    bloomStrength,
+    setBloomStrength,
+    bloomRadius,
+    setBloomRadius,
+    bloomThreshold,
+    setBloomThreshold,
+    anamorphicEnabled,
+    setAnamorphicEnabled,
+    anamorphicIntensity,
+    setAnamorphicIntensity,
+    anamorphicColor,
+    setAnamorphicColor,
     postProcessingEnabled,
-    setPostProcessingEnabled,
-    enableStandaloneWeather,
-    setEnableStandaloneWeather
+    setPostProcessingEnabled
   } = useAppStore()
 
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -119,46 +91,80 @@ export default function RenderingEffectsPanel() {
     }
   )
 
+  const [selectedEffect, setSelectedEffect] = useState<EffectType | null>(null)
   const [isMinimized, setIsMinimized] = useState(false)
 
-  const activeEffects = useMemo(() => {
-    const active = new Set<string>()
-    if (fogDensity > 0) active.add('fog')
-    if (rainIntensity > 0) active.add('particles')
-    if (enableStandaloneWeather) active.add('atmospheric')
-    if (anamorphicEnabled) active.add('lensFlare')
-    if (bloomEnabled) active.add('bloom')
-    return active
-  }, [fogDensity, rainIntensity, enableStandaloneWeather, anamorphicEnabled, bloomEnabled])
+  const storeSnapshot = useAppStore()
+  const activeEffects = useMemo(
+    () => new Set(EFFECT_DEFINITIONS.filter((effect) => isEffectActive(effect.id, storeSnapshot)).map((e) => e.id)),
+    [storeSnapshot, fogDensity, rainIntensity, weatherPreset, bloomEnabled, anamorphicEnabled, anamorphicColor]
+  )
 
-  const toggleEffect = (effect: EffectCard) => {
-    if (!effect.available) return
+  useEffect(() => {
+    if (!selectedEffect && activeEffects.size > 0) {
+      setSelectedEffect([...activeEffects][0] ?? null)
+    }
+  }, [activeEffects, selectedEffect])
 
-    switch (effect.type) {
+  const enablePostProcessing = () => {
+    if (!postProcessingEnabled) setPostProcessingEnabled(true)
+  }
+
+  const toggleEffect = (effectId: EffectType) => {
+    const currentlyActive = isEffectActive(effectId, useAppStore.getState())
+
+    switch (effectId) {
       case 'fog':
-        setFogDensity(fogDensity > 0 ? 0 : DEFAULT_FOG_DENSITY)
-        break
-      case 'particles':
-        setRainIntensity(rainIntensity > 0 ? 0 : DEFAULT_RAIN_INTENSITY)
-        break
-      case 'atmospheric':
-        setEnableStandaloneWeather(!enableStandaloneWeather)
-        break
-      case 'lensFlare':
-        if (!anamorphicEnabled && !postProcessingEnabled) {
-          setPostProcessingEnabled(true)
-        }
-        setAnamorphicEnabled(!anamorphicEnabled)
+        setFogDensity(currentlyActive ? 0 : 0.45)
         break
       case 'bloom':
-        if (!bloomEnabled && !postProcessingEnabled) {
-          setPostProcessingEnabled(true)
-        }
-        setBloomEnabled(!bloomEnabled)
+        enablePostProcessing()
+        setBloomEnabled(!currentlyActive)
         break
-      default:
+      case 'lensFlare':
+        enablePostProcessing()
+        setAnamorphicEnabled(!currentlyActive)
+        if (!currentlyActive && anamorphicColor.toLowerCase() === '#ff6633') {
+          setAnamorphicColor('#ffe6cc')
+        }
+        break
+      case 'atmospheric':
+        if (currentlyActive) {
+          setWeatherPreset('clear')
+          setFogDensity(0)
+        } else {
+          setWeatherPreset('foggy')
+          setFogDensity(0.5)
+        }
+        break
+      case 'particles':
+        if (currentlyActive) {
+          setRainIntensity(0)
+        } else {
+          setRainIntensity(0.55)
+          setSnowIntensity(0)
+        }
+        break
+      case 'fire':
+        if (currentlyActive) {
+          setBloomEnabled(false)
+          setAnamorphicEnabled(false)
+        } else {
+          enablePostProcessing()
+          setBloomEnabled(true)
+          setBloomStrength(Math.max(bloomStrength, 1.8))
+          setAnamorphicEnabled(true)
+          setAnamorphicIntensity(Math.max(anamorphicIntensity, 0.8))
+          setAnamorphicColor('#ff6633')
+        }
+        break
+      case 'motionBlur':
+        alert('Motion blur requires a velocity buffer pass and is not yet available in the raster pipeline. Use video export from Camera Views for animated sequences.')
         break
     }
+
+    setSelectedEffect(effectId)
+    console.log('[RenderingEffectsPanel] Toggled effect:', effectId, '→', !currentlyActive)
   }
 
   if (!showRenderingEffectsPanel) {
@@ -194,80 +200,132 @@ export default function RenderingEffectsPanel() {
       {!isMinimized && (
         <div className="rendering-effects-panel-content">
           <div className="effects-grid">
-            {EFFECT_CARDS.map((effect) => (
+            {EFFECT_DEFINITIONS.map((effect) => (
               <div
                 key={effect.id}
-                className={`effect-card ${activeEffects.has(effect.id) ? 'active' : ''} ${effect.available ? '' : 'planned'}`}
-                onClick={() => toggleEffect(effect)}
-                role="button"
-                tabIndex={effect.available ? 0 : -1}
-                aria-disabled={!effect.available}
-                onKeyDown={(event) => {
-                  if (!effect.available) return
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    toggleEffect(effect)
-                  }
-                }}
+                className={`effect-card ${activeEffects.has(effect.id) ? 'active' : ''} ${selectedEffect === effect.id ? 'selected' : ''}`}
+                onClick={() => toggleEffect(effect.id)}
               >
                 <div className="effect-icon">{effect.icon}</div>
                 <div className="effect-name">{effect.name}</div>
                 <div className="effect-description">{effect.description}</div>
-                <div
-                  className={`effect-toggle ${activeEffects.has(effect.id) ? 'enabled' : 'disabled'}`}
-                >
-                  {effect.available ? (activeEffects.has(effect.id) ? '✓' : '○') : '…'}
+                <div className={`effect-toggle ${activeEffects.has(effect.id) ? 'enabled' : 'disabled'}`}>
+                  {activeEffects.has(effect.id) ? '✓' : '○'}
                 </div>
-                {!effect.available && effect.statusNote && (
-                  <div className="effect-status-badge">{effect.statusNote}</div>
-                )}
               </div>
             ))}
           </div>
 
-          {fogDensity > 0 && (
-            <div className="effect-control-group">
+          {selectedEffect === 'fog' && activeEffects.has('fog') && (
+            <div className="effect-controls">
+              <h4>Fog Controls</h4>
               <label>
-                <span>Fog density</span>
-                <div className="slider-row">
-                  <input
-                    type="range"
-                    min="0.05"
-                    max="1"
-                    step="0.05"
-                    value={fogDensity}
-                    onChange={(e) => setFogDensity(parseFloat(e.target.value))}
-                  />
-                  <span className="slider-value">{fogDensity.toFixed(2)}</span>
-                </div>
+                Density
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={fogDensity}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value)
+                    trackSliderInteraction('Effect Fog Density', value, 'RenderingEffectsPanel', () => setFogDensity(value))
+                  }}
+                />
+                <span>{(fogDensity * 100).toFixed(0)}%</span>
+              </label>
+              <label>
+                Color
+                <input type="color" value={fogColor} onChange={(e) => setFogColor(e.target.value)} />
               </label>
             </div>
           )}
 
-          {rainIntensity > 0 && (
-            <div className="effect-control-group">
+          {selectedEffect === 'bloom' && activeEffects.has('bloom') && (
+            <div className="effect-controls">
+              <h4>Bloom Controls</h4>
               <label>
-                <span>Rain intensity</span>
-                <div className="slider-row">
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="1"
-                    step="0.05"
-                    value={rainIntensity}
-                    onChange={(e) => setRainIntensity(parseFloat(e.target.value))}
-                  />
-                  <span className="slider-value">{rainIntensity.toFixed(2)}</span>
-                </div>
+                Strength
+                <input
+                  type="range"
+                  min="0"
+                  max="3"
+                  step="0.1"
+                  value={bloomStrength}
+                  onChange={(e) => setBloomStrength(parseFloat(e.target.value))}
+                />
+                <span>{bloomStrength.toFixed(1)}</span>
               </label>
+              <label>
+                Radius
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={bloomRadius}
+                  onChange={(e) => setBloomRadius(parseFloat(e.target.value))}
+                />
+                <span>{bloomRadius.toFixed(2)}</span>
+              </label>
+              <label>
+                Threshold
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={bloomThreshold}
+                  onChange={(e) => setBloomThreshold(parseFloat(e.target.value))}
+                />
+                <span>{bloomThreshold.toFixed(2)}</span>
+              </label>
+            </div>
+          )}
+
+          {selectedEffect === 'lensFlare' && activeEffects.has('lensFlare') && (
+            <div className="effect-controls">
+              <h4>Lens Flare Controls</h4>
+              <label>
+                Intensity
+                <input
+                  type="range"
+                  min="0"
+                  max="3"
+                  step="0.1"
+                  value={anamorphicIntensity}
+                  onChange={(e) => setAnamorphicIntensity(parseFloat(e.target.value))}
+                />
+                <span>{anamorphicIntensity.toFixed(1)}</span>
+              </label>
+              <label>
+                Color
+                <input type="color" value={anamorphicColor} onChange={(e) => setAnamorphicColor(e.target.value)} />
+              </label>
+            </div>
+          )}
+
+          {selectedEffect === 'particles' && activeEffects.has('particles') && (
+            <div className="effect-controls">
+              <h4>Particle Controls</h4>
+              <label>
+                Rain intensity
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={rainIntensity}
+                  onChange={(e) => setRainIntensity(parseFloat(e.target.value))}
+                />
+                <span>{(rainIntensity * 100).toFixed(0)}%</span>
+              </label>
+              <small className="effect-hint">Use the Weather panel for snow and wind controls.</small>
             </div>
           )}
 
           <div className="effects-note">
-            <p>
-              Bloom and lens flare use the post-processing pipeline. Fine-tune strength in the
-              Quality panel. Fire and motion blur are planned for a future release.
-            </p>
+            <p>Effects are wired to the live scene. Bloom and lens flare use the post-processing pipeline (enable Quality → Post-Processing for advanced tuning).</p>
           </div>
         </div>
       )}
