@@ -85,10 +85,10 @@ export default function CameraViewsPanel() {
   // Path tracer settings
   const [pathTracerSettings, setPathTracerSettings] = useState({
     enabled: false,
-    samples: 64,
+    samples: 32,
     bounces: 3,
-    width: 2048,
-    height: 2048,
+    width: 1920,
+    height: 1080,
     denoiseEnabled: true,
     denoiseStrength: 0.5
   })

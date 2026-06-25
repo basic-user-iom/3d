@@ -170,11 +170,7 @@ export class PathTracerDemo {
       return
     }
     
-    // CRITICAL: Hide all helpers and gizmos at the START of every render frame
-    // This ensures gizmos are hidden before any rendering happens, even if they were re-shown
-    // This is the most reliable way to ensure gizmos never appear during path tracing
-    this.hideAllHelpersAndGizmos()
-    
+    // Lightweight re-hide only — full scene traverse runs once in start()/initialize()
     // CRITICAL: Continuously hide gizmos that might reappear (defensive check every frame)
     // Some gizmos might be re-shown by other code, so we need to keep hiding them
     if (this._originalHelperStates && this._originalHelperStates.length > 0) {
@@ -1014,8 +1010,8 @@ export class PathTracerDemo {
       // Default is 500ms fade, which might cause white screen initially
       this.pathTracer.fadeDuration = 0
       
-      // Ensure a small floor on minSamples to avoid extreme flicker
-      this.pathTracer.minSamples = Math.max(this.config.minSamples, 4)
+      // Respect configured minSamples (0 = immediate preview); cap at 1 to avoid library edge cases
+      this.pathTracer.minSamples = Math.max(this.config.minSamples, 0)
       this.config.minSamples = this.pathTracer.minSamples
       
       // PERFORMANCE: Optimize bounces for speed/quality balance
@@ -3001,26 +2997,21 @@ export class PathTracerDemo {
    * This is called both during initialize() and start() to ensure everything is hidden
    */
   private hideAllHelpersAndGizmos(): void {
-    // CRITICAL: Deselect all objects to hide movement gizmo
-    // This is the easiest and most reliable way to hide transform controls
+    // Deselect once at start — not every frame (selectObject + scene traverse is expensive)
     const viewerForDeselect = (window as any).__viewer
     if (viewerForDeselect?.selectObject) {
       viewerForDeselect.selectObject(null)
-      console.log('[PathTracerDemo] 🔒 Deselected all objects to hide movement gizmo')
     }
-    
-    // CRITICAL: Also clear selectedObject from store to prevent re-attachment
     try {
       const store = (window as any).__appStore
       if (store && typeof store.getState === 'function') {
         const state = store.getState()
         if (state && typeof state.setSelectedObject === 'function') {
           state.setSelectedObject(null)
-          console.log('[PathTracerDemo] 🔒 Cleared selectedObject from store')
         }
       }
-    } catch (error) {
-      // Silently fail if store is not available
+    } catch {
+      // store unavailable
     }
 
     // CRITICAL: Hide ALL helpers and gizmos during path tracing

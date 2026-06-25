@@ -216,6 +216,10 @@ export default function RenderingEffectsPanel() {
             ))}
           </div>
 
+          <small className="effect-hint" style={{ display: 'block', marginBottom: '8px', color: '#888' }}>
+            Fog, rain, and atmospheric presets share state with the Weather panel.
+          </small>
+
           {selectedEffect === 'fog' && activeEffects.has('fog') && (
             <div className="effect-controls">
               <h4>Fog Controls</h4>

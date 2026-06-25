@@ -29,7 +29,7 @@ export class AtmosphericPerspective {
    * Setup atmospheric perspective (fog)
    */
   private setup(): void {
-    if (!this.config.enabled) {
+    if (!this.config.enabled || this.config.density <= 0) {
       this.destroy()
       return
     }
@@ -55,8 +55,8 @@ export class AtmosphericPerspective {
       if (object instanceof THREE.Mesh && object.material) {
         const materials = Array.isArray(object.material) ? object.material : [object.material]
         materials.forEach((material) => {
-          // Only enable fog on non-imported models (atmospheric perspective should affect scene, not imported models)
-          if (!object.userData.isImportedModel && !object.userData.excludeFromWeatherModifications) {
+          // Enable fog unless explicitly excluded via userData flag
+          if (!object.userData.excludeFromSkyModifications && !object.userData.excludeFromWeatherModifications) {
             if ('fog' in material) {
               (material as any).fog = true
               material.needsUpdate = true

@@ -6959,54 +6959,32 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       : 1.0
 
     // Apply exponential height fog (Twinmotion style)
-    // Fog density increases with height, creating more realistic volumetric fog
-    // Industry-standard: Fog should only affect lighting dynamics, NOT visual textures on imported objects
-    if (fogDensity > 0) {
-      const fogColorObj = new THREE.Color(fogColor)
-      // Calculate fog density based on height - fog is denser at ground level
-      // Use FogExp2 which naturally creates height-based fog effect
-      const fogDensityValue = fogDensity * 0.015 // Adjusted for better visual balance
-      scene.fog = new THREE.FogExp2(fogColorObj, fogDensityValue)
-      
-      // Industry-standard: Ensure imported models are excluded from fog rendering
-      // Fog should only affect lighting calculations, not visual appearance of imported objects
-      let fogExcludedCount = 0
-      scene.traverse((object) => {
-        // Check if object should be excluded from fog
-        const shouldExcludeFromFog = (obj: THREE.Object3D): boolean => {
-          if (obj.userData.excludeFromSkyModifications === true) return true
-          if (obj.userData.isModel || obj.userData.isImportedModel) return true
-          
-          // Check parent chain
-          let parent = obj.parent
-          while (parent) {
-            if (parent.userData.excludeFromSkyModifications === true) return true
-            if (parent.userData.isModel || parent.userData.isImportedModel) return true
-            parent = parent.parent
-          }
-          return false
-        }
-        
-        if (object instanceof THREE.Mesh && object.material && shouldExcludeFromFog(object)) {
+    // When standalone weather is active, AtmosphericPerspective owns scene.fog to avoid double-application.
+    const atmosphericFogActive =
+      enableStandaloneWeather && !!viewerRef.current?.atmosphericPerspective
+
+    if (!atmosphericFogActive) {
+      if (fogDensity > 0) {
+        const fogColorObj = new THREE.Color(fogColor)
+        const fogDensityValue = fogDensity * 0.015
+        scene.fog = new THREE.FogExp2(fogColorObj, fogDensityValue)
+
+        scene.traverse((object) => {
+          if (!(object instanceof THREE.Mesh) || !object.material) return
+          if (object.userData.excludeFromSkyModifications === true) return
+
           const materials = Array.isArray(object.material) ? object.material : [object.material]
           materials.forEach((mat: THREE.Material) => {
-            // Disable fog on imported models - fog only affects lighting, not visual textures
-            // Industry-standard: Disable fog on imported models
-            if ('fog' in mat && (mat as any).fog !== false) {
-              (mat as any).fog = false
+            if ('fog' in mat && (mat as any).fog !== true) {
+              (mat as any).fog = true
               mat.needsUpdate = true
-              fogExcludedCount++
             }
           })
-        }
-      })
-      
-      if (fogExcludedCount > 0) {
-        try {
-          throttledDebugLog.log(`[FogDebug] Excluded ${fogExcludedCount} imported model materials from fog rendering - fog only affects lighting, not visual textures`)
-        } catch {}
+        })
+      } else {
+        scene.fog = null
       }
-    } else {
+    } else if (fogDensity <= 0) {
       scene.fog = null
     }
 
@@ -7355,8 +7333,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           initialFogColor = '#5dade2'
         }
         const atmosphericPerspective = new AtmosphericPerspective(scene, {
-          enabled: true,
-          density: fogDensity || 0.3,
+          enabled: fogDensity > 0,
+          density: fogDensity,
           color: initialFogColor,
           near: 100,
           far: 5000,
@@ -7464,34 +7442,27 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cloudColor: new THREE.Color(currentStore.cloudColor || '#ffffff'),
           windIntensity: currentStore.windIntensity || 0.0
         })
-        
-        // Update atmospheric perspective (fog/haze) to match sky color for realistic atmospheric perspective
-        // Streets GL uses aerial perspective that matches the sky color based on time of day
-        if (viewerRef.current.atmosphericPerspective) {
-          // Calculate approximate sky color based on sun elevation
-          // Higher sun = bluer sky, lower sun = more orange/red (sunrise/sunset)
-          const sunElevation = elevation
-          let fogColor = '#87ceeb' // Default sky blue
-          
-          if (sunElevation < 0.1) {
-            // Sunrise/sunset - orange/red fog
-            fogColor = '#ff8c42'
-          } else if (sunElevation < 0.3) {
-            // Early morning/evening - orange-yellow fog
-            fogColor = '#ffb347'
-          } else if (sunElevation < 0.5) {
-            // Morning/afternoon - light blue fog
-            fogColor = '#87ceeb'
-          } else {
-            // Midday - bright blue fog
-            fogColor = '#5dade2'
-          }
-          
-          viewerRef.current.atmosphericPerspective.update({
-            color: fogColor,
-            density: currentStore.fogDensity || 0.3 // Use fog density from store if available
-          })
+      }
+
+      // Update atmospheric perspective (fog/haze) for standalone weather
+      if (viewerRef.current.atmosphericPerspective) {
+        const currentStore = useAppStore.getState()
+        const { elevation } = timeOfDayToSkyAngles(timeOfDay, currentStore.northOffset)
+        let aerialFogColor = '#87ceeb'
+        if (elevation < 0.1) {
+          aerialFogColor = '#ff8c42'
+        } else if (elevation < 0.3) {
+          aerialFogColor = '#ffb347'
+        } else if (elevation < 0.5) {
+          aerialFogColor = '#87ceeb'
+        } else {
+          aerialFogColor = '#5dade2'
         }
+        viewerRef.current.atmosphericPerspective.update({
+          color: currentStore.fogDensity > 0 ? currentStore.fogColor : aerialFogColor,
+          density: currentStore.fogDensity,
+          enabled: currentStore.fogDensity > 0
+        })
       }
       
       // Update Three.js sun light direction for consistency (but CSM provides shadows)
@@ -8864,7 +8835,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
   }, [rainIntensity, snowIntensity, fogDensity, windIntensity, rainParticleScale, rainParticleSpeed, 
 rainCollisionEnabled, snowParticleScale, snowParticleSpeed, snowCollisionEnabled, waterEnabled, waterLevel, 
-waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistortionScale, oceanSize, windGustsEnabled, hdrEnabled])
+waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistortionScale, oceanSize, windGustsEnabled, hdrEnabled, weatherQuality])
 
   // Update scene background and renderer when iframe overlay state changes
   useEffect(() => {
@@ -9143,8 +9114,8 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         }
         
         const atmosphericPerspective = new AtmosphericPerspective(scene, {
-          enabled: true,
-          density: store.fogDensity || 0.3, // Use fog density from store, default to 0.3
+          enabled: store.fogDensity > 0,
+          density: store.fogDensity,
           color: initialFogColor, // Match sky color based on time of day
           near: 100,
           far: 5000,
