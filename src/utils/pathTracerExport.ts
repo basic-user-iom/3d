@@ -25,17 +25,36 @@ type ViewerForExport = {
   getCameraState: () => { position: THREE.Vector3; target: THREE.Vector3 }
 }
 
+/** Lock id used by camera-view export so the panel does not clear the global mutex. */
+export const PATH_TRACER_EXPORT_LOCK_ID = 'path-tracer-camera-view-export'
+
+export function tryAcquirePathTracerLock(ownerId: string): boolean {
+  if ((window as any).__pathTracerDemoRunning) {
+    return false
+  }
+  ;(window as any).__pathTracerDemoRunning = true
+  ;(window as any).__pathTracerDemoId = ownerId
+  return true
+}
+
+export function releasePathTracerLock(ownerId: string): void {
+  if ((window as any).__pathTracerDemoId !== ownerId) {
+    return
+  }
+  delete (window as any).__pathTracerDemoRunning
+  delete (window as any).__pathTracerDemoId
+  delete (window as any).__pathTracerDemo
+}
+
 export async function exportPathTracerFromCameraView(
   viewer: ViewerForExport,
   view: CameraView,
   settings: PathTracerExportSettings,
   callbacks?: PathTracerExportCallbacks
 ): Promise<void> {
-  if ((window as any).__pathTracerDemoRunning) {
+  if (!tryAcquirePathTracerLock(PATH_TRACER_EXPORT_LOCK_ID)) {
     throw new Error('Path tracer is already running. Stop it in the Path Tracer panel first.')
   }
-
-  ;(window as any).__pathTracerDemoRunning = true
 
   const oldState = viewer.getCameraState()
   const position = new THREE.Vector3(
@@ -84,7 +103,7 @@ export async function exportPathTracerFromCameraView(
       }
       pathTracer = null
     }
-    ;(window as any).__pathTracerDemoRunning = false
+    releasePathTracerLock(PATH_TRACER_EXPORT_LOCK_ID)
     viewer.setCameraState(oldState.position, oldState.target, false)
     viewer.controls?.update()
     viewer.renderer.render(viewer.scene, viewer.camera)
@@ -132,6 +151,7 @@ export async function exportPathTracerFromCameraView(
     }
 
     pathTracer = new PathTracerDemo(config, ptCallbacks)
+    ;(window as any).__pathTracerDemo = pathTracer
 
     progressInterval = setInterval(() => {
       if (!pathTracer || completed) return
