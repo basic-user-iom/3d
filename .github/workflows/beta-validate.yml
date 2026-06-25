@@ -57,3 +57,4 @@ jobs:
 
       - name: Build desktop distribution
         run: npm run desktop:dist
+        # Optional: add WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD repo secrets to sign artifacts in CI.

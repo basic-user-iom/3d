@@ -29,7 +29,8 @@
     "start:desktop": "npm run desktop:dev",
     "desktop:build": "npm run build && npm --prefix streets-gl-alt run build && electron .",
     "desktop:clean": "node -e \"try{require('fs').rmSync('dist/desktop-build',{recursive:true,force:true})}catch(e){}\"",
-    "desktop:dist": "npm run desktop:clean && npm run build && npm --prefix streets-gl-alt run build && electron-builder --win nsis portable",
+    "desktop:dist": "npm run desktop:clean && npm run build && npm --prefix streets-gl-alt run build && electron-builder --win nsis portable --publish never",
+    "desktop:dist:publish": "npm run desktop:clean && npm run build && npm --prefix streets-gl-alt run build && electron-builder --win nsis portable --publish always",
     "streets-gl": "cd streets-gl-alt && npm run dev",
     "streets-gl:managed": "node scripts/start-streets-gl-server.js",
     "build": "vite build",
@@ -48,6 +49,7 @@
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
     "3d-tiles-renderer": "^0.4.18",
     "dxf-parser": "^1.1.2",
+    "electron-updater": "^6.8.9",
     "gltf-pipeline": "^4.3.0",
     "jszip": "^3.10.1",
     "ktx2-encoder": "^0.5.1",
@@ -81,8 +83,8 @@
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
-    "globals": "^15.14.0",
     "express": "^5.1.0",
+    "globals": "^15.14.0",
     "typescript": "^5.2.2",
     "vite": "^7.2.2",
     "vitest": "^4.0.10",
@@ -104,6 +106,7 @@
       "!dist/desktop-build/**",
       "!dist/files-upload/**",
       "electron/main.cjs",
+      "electron/auto-updater.cjs",
       "electron/preload.cjs",
       "streets-gl-alt/build/**/*",
       "package.json"
@@ -112,18 +115,25 @@
       "target": [
         "nsis",
         "portable"
-      ],
-      "sign": null
+      ]
     },
     "nsis": {
       "artifactName": "3D-Viewer-Setup-${version}-${arch}.${ext}",
       "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "3D Viewer"
     },
     "portable": {
       "artifactName": "3D-Viewer-Portable-${version}-${arch}.${ext}"
     },
-    "publish": []
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "basic-user-iom",
+        "repo": "3d"
+      }
+    ]
   }
 }

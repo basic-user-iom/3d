@@ -3,6 +3,11 @@ const fs = require('fs')
 const http = require('http')
 const path = require('path')
 const { spawn } = require('child_process')
+const { APP_ID, setupAutoUpdater } = require('./auto-updater.cjs')
+
+if (app.isPackaged) {
+  app.setAppUserModelId(APP_ID)
+}
 
 const VIEWER_DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000'
 const STREETS_GL_PORT = 8081
@@ -380,6 +385,7 @@ async function bootstrapDesktopApp() {
   }
 
   await createMainWindow()
+  setupAutoUpdater()
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
