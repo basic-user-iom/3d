@@ -1,4 +1,8 @@
 import * as THREE from 'three'
+import {
+  enableFogOnSceneMeshes,
+  fogDensityToSceneValue
+} from '../utils/sceneFog'
 
 export interface AtmosphericPerspectiveConfig {
   enabled: boolean
@@ -45,26 +49,11 @@ export class AtmosphericPerspective {
     // For exponential fog, we match the visual density at typical viewing distances
     // Streets GL's aerial perspective is more visible at medium distances (100-1000m)
     // Density calculation matches Streets GL's pow(depth/1000, 1/1.4) curve visually
-    const fogDensityValue = density * 0.0008 // Optimized to match Streets GL's aerial perspective visibility
-    
+    const fogDensityValue = fogDensityToSceneValue(density)
+
     this.fog = new THREE.FogExp2(fogColor, fogDensityValue)
     this.scene.fog = this.fog
-
-    // Enable fog on all materials that should receive atmospheric perspective
-    this.scene.traverse((object) => {
-      if (object instanceof THREE.Mesh && object.material) {
-        const materials = Array.isArray(object.material) ? object.material : [object.material]
-        materials.forEach((material) => {
-          // Enable fog unless explicitly excluded via userData flag
-          if (!object.userData.excludeFromSkyModifications && !object.userData.excludeFromWeatherModifications) {
-            if ('fog' in material) {
-              (material as any).fog = true
-              material.needsUpdate = true
-            }
-          }
-        })
-      }
-    })
+    enableFogOnSceneMeshes(this.scene)
 
     console.log('[AtmosphericPerspective] Atmospheric perspective enabled:', {
       density: this.config.density,
@@ -103,7 +92,7 @@ export class AtmosphericPerspective {
   public setDensity(density: number): void {
     this.config.density = Math.max(0, Math.min(1, density))
     if (this.fog instanceof THREE.FogExp2) {
-      this.fog.density = this.config.density * 0.0008 // Match Streets GL aerial perspective density
+      this.fog.density = fogDensityToSceneValue(this.config.density)
     }
   }
 
