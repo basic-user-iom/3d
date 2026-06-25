@@ -17,7 +17,13 @@ export default function WeatherPanel() {
     streetsGLBridge,
     streetsGLIframeOverlay,
     enableStandaloneWeather,
-    setEnableStandaloneWeather
+    setEnableStandaloneWeather,
+    fogDensity,
+    setFogDensity,
+    rainIntensity,
+    setRainIntensity,
+    snowIntensity,
+    setSnowIntensity
   } = useAppStore()
 
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -144,6 +150,64 @@ export default function WeatherPanel() {
                 ✓ CSM shadows and sun system active. Works offline, no internet required.
               </small>
             )}
+          </div>
+
+          <div className="weather-section">
+            <h3>Precipitation &amp; Fog</h3>
+            <small style={{ display: 'block', color: '#888', marginBottom: '8px' }}>
+              Scene fog and particle weather. Also available from the Effects panel.
+            </small>
+            <div className="control-group">
+              <label>
+                Fog density
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={fogDensity}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value)
+                    trackSliderInteraction('Fog Density', newValue, 'WeatherPanel', () => setFogDensity(newValue))
+                  }}
+                />
+                <span className="value-label">{fogDensity.toFixed(2)}</span>
+              </label>
+            </div>
+            <div className="control-group">
+              <label>
+                Rain intensity
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={rainIntensity}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value)
+                    trackSliderInteraction('Rain Intensity', newValue, 'WeatherPanel', () => setRainIntensity(newValue))
+                  }}
+                />
+                <span className="value-label">{rainIntensity.toFixed(2)}</span>
+              </label>
+            </div>
+            <div className="control-group">
+              <label>
+                Snow intensity
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={snowIntensity}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value)
+                    trackSliderInteraction('Snow Intensity', newValue, 'WeatherPanel', () => setSnowIntensity(newValue))
+                  }}
+                />
+                <span className="value-label">{snowIntensity.toFixed(2)}</span>
+              </label>
+            </div>
           </div>
 
           {/* Weather Controls - Show when either Streets GL OR Standalone Weather is enabled */}
