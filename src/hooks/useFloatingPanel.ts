@@ -32,6 +32,8 @@ export interface FloatingPanelOptions {
 
 const TOOLBAR_SELECTOR = '.toolbar'
 const DEFAULT_MARGIN = 16
+/** Minimum visible strip kept on-screen when dragging tall scrollable panels. */
+const MIN_VISIBLE_HEIGHT = 48
 const SNAP_DISTANCE = 20 // pixels - distance threshold for snapping
 const SNAP_GAP = 8 // pixels - gap between snapped panels
 const PANEL_GAP = 8 // Gap between auto-stacked panels
@@ -171,8 +173,23 @@ export function useFloatingPanel<T extends HTMLElement = HTMLElement>(
   const clampTop = useCallback(
     (candidate: number) => {
       const minTop = getToolbarBaseline(anchorGap)
-      const panelHeight = panelRef.current?.offsetHeight ?? 300
-      const maxTop = Math.max(minTop, windowSize.height - panelHeight - DEFAULT_MARGIN)
+      const panel = panelRef.current
+      if (!panel) {
+        return Math.max(candidate, minTop)
+      }
+
+      const visibleHeight = panel.getBoundingClientRect().height
+      const contentHeight = panel.scrollHeight
+      const availableViewport = windowSize.height - minTop - DEFAULT_MARGIN
+      const contentOverflows = contentHeight > availableViewport
+
+      // Tall scrollable panels fill the viewport below the toolbar, so offsetHeight
+      // equals available space and maxTop would collapse to minTop (no vertical drag).
+      // Allow full vertical movement while keeping a header strip visible.
+      const maxTop = contentOverflows
+        ? Math.max(minTop, windowSize.height - MIN_VISIBLE_HEIGHT - DEFAULT_MARGIN)
+        : Math.max(minTop, windowSize.height - visibleHeight - DEFAULT_MARGIN)
+
       return Math.min(Math.max(candidate, minTop), maxTop)
     },
     [anchorGap, panelRef, windowSize.height]
