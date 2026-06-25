@@ -4390,14 +4390,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // This ensures camera controls remain responsive during path tracing
       // Check if path tracer is running (with guard to prevent conflicts from multiple sessions)
       const pathTracerDemoRunning = (window as any).__pathTracerDemoRunning === true
-      const pathTracerDemo = (window as any).__pathTracerDemo
-      // Only skip rendering if path tracer is actually running and valid
-      if (
-        pathTracerDemoRunning &&
-        pathTracerDemo &&
-        typeof pathTracerDemo.isRunning === 'function' &&
-        pathTracerDemo.isRunning()
-      ) {
+      // Skip viewer raster render while any path tracer owns the WebGL context (panel or export).
+      if (pathTracerDemoRunning) {
         // PathTracerDemo owns the render loop; keep controls responsive but skip viewer render.
         scheduleAnimationFrame()
         // Still update controls for camera interaction

@@ -78,6 +78,7 @@ export default function PathTracerDemoPanel({ viewer, onClose }: PathTracerDemoP
       ;(window as any).__pathTracerDemoId = pathTracerIdRef.current
     } else if ((window as any).__pathTracerDemoId === pathTracerIdRef.current) {
       ;(window as any).__pathTracerDemoRunning = false
+      delete (window as any).__pathTracerDemo
     }
     return () => {
       if ((window as any).__pathTracerDemoId === pathTracerIdRef.current) {
@@ -269,9 +270,12 @@ export default function PathTracerDemoPanel({ viewer, onClose }: PathTracerDemoP
           pathTracer.stop(true)
         }
         pathTracer.dispose()
-        // Clear window flags
-        ;(window as any).__pathTracerDemoRunning = false
-        delete (window as any).__pathTracerDemo
+        // Clear window flags only when this panel instance owns the lock
+        if ((window as any).__pathTracerDemoId === pathTracerIdRef.current) {
+          ;(window as any).__pathTracerDemoRunning = false
+          delete (window as any).__pathTracerDemo
+          delete (window as any).__pathTracerDemoId
+        }
         // Clear initialized viewer ref so we can reinitialize if needed
         initializedViewerRef.current = null
       }
@@ -670,6 +674,14 @@ export default function PathTracerDemoPanel({ viewer, onClose }: PathTracerDemoP
 
   const handleStart = useCallback(() => {
     if (isStopping) return
+    if (
+      (window as any).__pathTracerDemoRunning &&
+      (window as any).__pathTracerDemoId !== pathTracerIdRef.current
+    ) {
+      setError('Path tracer is already running (camera view export or another session).')
+      setStatus('Cannot start — another path tracer is active')
+      return
+    }
     // CRITICAL: Check if tracer is already running to prevent unnecessary state updates
     if (pathTracerRef.current?.isRunning()) {
       console.log('[PathTracerDemoPanel] Tracer already running, skipping start')
