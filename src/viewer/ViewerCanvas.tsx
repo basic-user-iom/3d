@@ -7443,7 +7443,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         const { elevation, azimuth } = timeOfDayToSkyAngles(timeOfDay, northOffset)
         const dynamicSky = new DynamicSky(scene, {
           timeOfDay: timeOfDay,
-          sunPosition: sunPosition,
+          sunPosition: sunDir.clone(),
           sunColor: new THREE.Color(0xffffff),
           turbidity: skyTurbidity || 10.0,
           atmosphereDensity: skyAtmosphereDensity || 0.5,
@@ -7482,8 +7482,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (viewerRef.current.sunMoonSystem) {
         viewerRef.current.sunMoonSystem.update({
           timeOfDay: timeOfDay,
-          sunPosition: sunPosition,
-          sunColor: new THREE.Color(0xffffff),
+          sunPosition: sunDir,
+          sunColor: new THREE.Color(sunColor),
           turbidity: 10,
           sunSize: sunSize,
           moonSize: moonSize,
@@ -7502,7 +7502,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         
         // CRITICAL: For standalone weather, use the same sunPosition as CSM and sun mesh
         // Only override if Streets GL is active (which has its own sun direction)
-        let finalSunPosition = sunPosition // Use same normalized direction as CSM and sun mesh
+        let finalSunPosition = sunDir.clone() // Clamped sky direction — matches CSM and sun light
         if (streetsGLIframeOverlay && directionalLights) {
           // Streets GL branch: sync with Streets GL sun direction
           const sunLight = Array.from(directionalLights.values()).find(
@@ -7578,7 +7578,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             light.target.updateMatrixWorld()
             // Keep light visible but disable shadows (CSM handles shadows)
             light.visible = true
-            light.intensity = 1.0
+            light.intensity = sunIntensity
+            light.color.set(sunColor)
             light.castShadow = false // CSM handles shadows
           }
         })
@@ -7617,7 +7618,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             light.target.position.set(0, 0, 0)
             light.target.updateMatrixWorld()
             light.visible = true
-            light.intensity = 1.0
+            light.intensity = sunIntensity
+            light.color.set(sunColor)
             light.castShadow = true
           }
         })
@@ -8714,20 +8716,23 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // This is a DUPLICATE of the check above - removed to prevent conflicts
     // The lighting effect's final check is the authoritative one
     
+  }, [rainIntensity, snowIntensity, fogDensity, windIntensity, rainParticleScale, rainParticleSpeed,
+rainCollisionEnabled, snowParticleScale, snowParticleSpeed, snowCollisionEnabled, waterEnabled, waterLevel,
+waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistortionScale, oceanSize, windGustsEnabled, hdrEnabled, weatherQuality])
+
+  // Destroy particle/water systems only on viewer unmount (not on every slider change)
+  useEffect(() => {
     return () => {
-      // Cleanup on unmount
       if (viewerRef.current?.particleSystems) {
-        viewerRef.current.particleSystems.forEach((system: any) => system.destroy())
+        viewerRef.current.particleSystems.forEach((system) => system.destroy())
+        viewerRef.current.particleSystems.length = 0
       }
       if (viewerRef.current?.waterSystem) {
         viewerRef.current.waterSystem.destroy()
+        viewerRef.current.waterSystem = undefined
       }
-      // Streets GL only - Three.js Sky removed
-      // Streets GL only - SunMoonSystem removed
     }
-  }, [rainIntensity, snowIntensity, fogDensity, windIntensity, rainParticleScale, rainParticleSpeed, 
-rainCollisionEnabled, snowParticleScale, snowParticleSpeed, snowCollisionEnabled, waterEnabled, waterLevel, 
-waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistortionScale, oceanSize, windGustsEnabled, hdrEnabled, weatherQuality])
+  }, [])
 
   // Keep rain/snow/fog visible above Streets GL iframe (iframe z-index 25, default canvas 20)
   useEffect(() => {
@@ -9034,9 +9039,10 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
       if (!viewerRef.current.dynamicSky) {
         console.log('[ViewerCanvas] Creating DynamicSky with atmospheric scattering')
         const { sunPosition, elevation, azimuth } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
+        const initSunDir = clampStandaloneSunSkyDirection(sunPosition)
         const dynamicSky = new DynamicSky(scene, {
           timeOfDay: store.timeOfDay,
-          sunPosition: sunPosition,
+          sunPosition: initSunDir.clone(),
           sunColor: new THREE.Color(0xffffff),
           turbidity: store.skyTurbidity || 10.0,
           atmosphereDensity: store.skyAtmosphereDensity || 0.5, // Required but deprecated
