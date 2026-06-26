@@ -39,7 +39,10 @@ import { shadowOpacityModifierRegistry } from './materials/ShadowOpacityModifier
 import {
   timeOfDayToSkyAngles,
   createLight,
-  computeLightDirection as computeLightDirectionUtil
+  computeLightDirection as computeLightDirectionUtil,
+  clampStandaloneSunSkyDirection,
+  sunSkyDirectionToLightPosition,
+  sunSkyDirectionToLightTravelDirection
 } from './utils/lightUtils'
 import { latLonToStreetsGL } from '../utils/mapCoordinates'
 import {
@@ -7251,8 +7254,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // Calculate sun position based on time of day with North offset
     // CRITICAL: sunPosition is already normalized from timeOfDayToSkyAngles
     const { sunPosition } = timeOfDayToSkyAngles(timeOfDay, northOffset)
-    // Ensure it's normalized (should already be, but normalize to be safe)
-    const sunDir = sunPosition.clone().normalize()
+    let sunDir = sunPosition.clone().normalize()
+    if (enableStandaloneWeather) {
+      sunDir = clampStandaloneSunSkyDirection(sunDir)
+    }
+    const sunLightTravelDir = sunSkyDirectionToLightTravelDirection(sunDir)
     
     // CRITICAL: All systems must use the exact same direction vector
     // - CSM shadows: use sunDir
@@ -7339,7 +7345,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cascades: 3,
           maxFar: 5000,
           shadowMapSize: 2048,
-          lightDirection: sunDir,
+          lightDirection: sunLightTravelDir,
           shadowBias: -0.0002,
           shadowNormalBias: 0.01
         })
@@ -7463,7 +7469,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       
       // Update CSM shadow system with sun direction
       if (viewerRef.current.csmShadowSystem) {
-        viewerRef.current.csmShadowSystem.setLightDirection(sunDir)
+        viewerRef.current.csmShadowSystem.setLightDirection(sunLightTravelDir)
       }
       
       // Update visible sun/moon mesh position based on time of day
@@ -7552,13 +7558,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       
       // Update Three.js sun light direction for consistency (but CSM provides shadows)
       // CRITICAL: Directional light direction = from light.position to light.target
-      // To match CSM direction (sunDir), light should be at -sunDir * distance, target at origin
-      // This makes light rays go in +sunDir direction (from sun toward scene)
+      // Place the light along sunDir (toward the sun in the sky) so rays travel downward
       if (directionalLights) {
         directionalLights.forEach((light) => {
           if (light.userData.isSun && light instanceof THREE.DirectionalLight) {
-            // Position light opposite to sun direction so rays travel in sun direction
-            const sunLightPosition = sunDir.clone().multiplyScalar(-1000)
+            const sunLightPosition = sunSkyDirectionToLightPosition(sunDir)
             light.position.copy(sunLightPosition)
             if (!light.target.parent) {
               scene.add(light.target)
@@ -7580,7 +7584,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
       // Update Three.js sun light normally
       // CRITICAL: Directional light direction = from light.position to light.target
-      // To match sun direction (sunDir), light should be at -sunDir * distance, target at origin
+      // Place the light along adjustedSunDir so rays travel toward the scene
       if (directionalLights) {
         directionalLights.forEach((light) => {
           if (light.userData.isSun && light instanceof THREE.DirectionalLight) {
@@ -7598,8 +7602,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               adjustedSunDir.normalize()
             }
             
-            // Position light opposite to sun direction so rays travel in sun direction
-            const sunLightPosition = adjustedSunDir.clone().multiplyScalar(-1000)
+            const sunLightPosition = sunSkyDirectionToLightPosition(adjustedSunDir)
             light.position.copy(sunLightPosition)
             if (!light.target.parent) {
               scene.add(light.target)
@@ -8896,9 +8899,10 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         
         // CRITICAL: Immediately update CSM with current sun direction (don't wait for time of day effect)
         const { sunPosition: currentSunPosition } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
-        const currentSunDir = currentSunPosition.clone().normalize()
-        csmShadowSystem.setLightDirection(currentSunDir)
-        console.log('[ViewerCanvas] CSM initialized and updated with current sun direction:', currentSunDir)
+        const currentSunSkyDir = clampStandaloneSunSkyDirection(currentSunPosition)
+        const currentSunLightTravelDir = sunSkyDirectionToLightTravelDirection(currentSunSkyDir)
+        csmShadowSystem.setLightDirection(currentSunLightTravelDir)
+        console.log('[ViewerCanvas] CSM initialized and updated with current sun direction:', currentSunLightTravelDir)
         
         // Store in viewer
         viewerRef.current.csmShadowSystem = csmShadowSystem
