@@ -7325,7 +7325,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cloudStorminess: currentStore.cloudStorminess || 0.0,
           cloudShadowStrength: currentStore.cloudShadowStrength || 0.0,
           cloudColor: new THREE.Color(currentStore.cloudColor || '#ffffff'),
-          windIntensity: currentStore.windIntensity || 0.0
+          windIntensity: currentStore.windIntensity || 0.0,
+          cloudRenderingMode: 'box'
         })
       }
     }
@@ -7457,7 +7458,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cloudShadowStrength: cloudShadowStrength || 0.0,
           cloudColor: new THREE.Color(cloudColor || '#ffffff'),
           windIntensity: windIntensity || 0.0,
-          quality: weatherQuality || 'high'
+          quality: weatherQuality || 'high',
+          cloudRenderingMode: 'iq'
         }, renderer) // Pass renderer for LUT system
         viewerRef.current.dynamicSky = dynamicSky
         scene.background = null
@@ -7531,7 +7533,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cloudStorminess: currentStore.cloudStorminess || 0.0,
           cloudShadowStrength: currentStore.cloudShadowStrength || 0.0,
           cloudColor: new THREE.Color(currentStore.cloudColor || '#ffffff'),
-          windIntensity: currentStore.windIntensity || 0.0
+          windIntensity: currentStore.windIntensity || 0.0,
+          cloudRenderingMode: 'iq'
         })
       }
 
@@ -9043,7 +9046,8 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           cloudShadowStrength: store.cloudShadowStrength || 0.0,
           cloudColor: new THREE.Color(store.cloudColor || '#ffffff'),
           windIntensity: store.windIntensity || 0.0,
-          quality: store.weatherQuality || 'high'
+          quality: store.weatherQuality || 'high',
+          cloudRenderingMode: 'iq'
         }, viewerRef.current.renderer) // Pass renderer for LUT system
         viewerRef.current.dynamicSky = dynamicSky
         

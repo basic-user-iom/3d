@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { AtmosphereLUTSystem } from './AtmosphereLUTSystem'
 import { getLUTBasedSkyFragmentShader } from './DynamicSkyLUTShader'
+import { getIqCloudSkyFragmentShader, IQ_CLOUD_SKY_VERTEX_SHADER } from './IqCloudSkyShader'
 import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
 
 /** Volumetric cloud layer height above ground (world units) */
@@ -29,6 +30,8 @@ export interface SkyConfig {
   cloudShadowStrength?: number // 0-1, self-shadow strength
   cloudColor?: THREE.Color
   quality?: 'low' | 'medium' | 'high' | 'ultra' // Performance quality preset
+  /** 'iq' = integrated iq XslGRr raymarch on sky dome (standalone weather); 'box' = Worley box clouds + LUT sky */
+  cloudRenderingMode?: 'iq' | 'box'
 }
 
 /**
@@ -54,22 +57,29 @@ export class DynamicSky {
   private frameCount = 0
   private lutSystem: AtmosphereLUTSystem | null = null
   private useLUTSystem: boolean = true // Enable LUT-based rendering
+  private cloudRenderingMode: 'iq' | 'box' = 'box'
   
   // Performance optimization: Cache expensive calculations
   // Removed legacy horizon color cache tied to timeOfDay (not used by shader)
 
   // Quality presets: [raymarchingSteps, noiseOctaves, shadowSamples]
   private readonly QUALITY_PRESETS = {
-    low: { steps: 32, octaves: 3, shadowSamples: 1, densityMultiplier: 0.8 },
-    medium: { steps: 48, octaves: 4, shadowSamples: 2, densityMultiplier: 0.9 },
-    high: { steps: 64, octaves: 5, shadowSamples: 3, densityMultiplier: 1.0 },
-    ultra: { steps: 96, octaves: 6, shadowSamples: 4, densityMultiplier: 1.1 }
+    low: { steps: 32, octaves: 3, shadowSamples: 1, densityMultiplier: 0.8, iqSteps: 36 },
+    medium: { steps: 48, octaves: 4, shadowSamples: 2, densityMultiplier: 0.9, iqSteps: 48 },
+    high: { steps: 64, octaves: 5, shadowSamples: 3, densityMultiplier: 1.0, iqSteps: 64 },
+    ultra: { steps: 96, octaves: 6, shadowSamples: 4, densityMultiplier: 1.1, iqSteps: 80 }
   }
 
   constructor(scene: THREE.Scene, config: SkyConfig, renderer?: THREE.WebGLRenderer) {
     this.scene = scene
     this.renderer = renderer || null
-    this.config = { quality: 'high', ...config }
+    this.config = { quality: 'high', cloudRenderingMode: 'box', ...config }
+    this.cloudRenderingMode = this.config.cloudRenderingMode ?? 'box'
+
+    // iq integrated sky skips LUT + separate cloud box (standalone weather)
+    if (this.cloudRenderingMode === 'iq') {
+      this.useLUTSystem = false
+    }
     
     // Initialize LUT system if renderer is available
     if (this.useLUTSystem && this.renderer) {
@@ -130,7 +140,10 @@ export class DynamicSky {
     const geometry = new THREE.SphereGeometry(40000, 32, 32) // 20x larger (was 2000)
 
     // Three.js Sky shader vertex (physically-based atmospheric scattering)
-    const vertexShader = `
+    const useIqShader = this.cloudRenderingMode === 'iq'
+    const vertexShader = useIqShader
+      ? IQ_CLOUD_SKY_VERTEX_SHADER
+      : `
       uniform vec3 sunPosition;
       varying vec3 vWorldPosition;
       
@@ -141,11 +154,11 @@ export class DynamicSky {
       }
     `
 
-    // Choose shader based on LUT system availability
-    // CRITICAL: Only use LUT shader if LUT system is ready, otherwise use direct calculation
-    // This ensures we always have a working shader even if LUTs aren't ready yet
-    const useLUTShader = this.useLUTSystem && this.lutSystem && this.lutSystem.areStaticLUTsReady
-    const fragmentShader = useLUTShader
+    // Choose shader based on rendering mode
+    const useLUTShader = !useIqShader && this.useLUTSystem && this.lutSystem && this.lutSystem.areStaticLUTsReady
+    const fragmentShader = useIqShader
+      ? getIqCloudSkyFragmentShader()
+      : useLUTShader
       ? getLUTBasedSkyFragmentShader() // LUT-based shader (Streets GL approach)
       : `
       #ifdef USE_FOG
@@ -422,8 +435,19 @@ export class DynamicSky {
       
       // Create uniforms based on shader type
       let uniforms: any
+      const qualitySettings = this.QUALITY_PRESETS[this.config.quality || 'high']
       
-      if (this.useLUTSystem && this.lutSystem) {
+      if (useIqShader) {
+        uniforms = {
+          sunPosition: { value: sunPos },
+          iTime: { value: 0 },
+          coverage: { value: this.config.cloudDensity ?? 0 },
+          storminess: { value: this.config.cloudStorminess ?? 0 },
+          windSpeed: { value: (this.config.windIntensity ?? 0) * 0.2 + 0.05 },
+          exposure: { value: this.config.exposure ?? 1.0 },
+          raymarchSteps: { value: qualitySettings.iqSteps }
+        }
+      } else if (this.useLUTSystem && this.lutSystem) {
         // Create a placeholder texture (1x1 white) to prevent shader errors
         // This will be replaced with the actual LUT texture in update()
         const placeholderTexture = new THREE.DataTexture(
@@ -469,7 +493,7 @@ export class DynamicSky {
         vertexShader,
         fragmentShader,
         side: THREE.BackSide, // Render inside of sphere (sky dome)
-        transparent: true, // Enable transparency for sun-only visibility
+        transparent: !useIqShader, // iq mode renders full opaque sky + clouds
         depthWrite: false,
         depthTest: true, // Respect shadow/ground plane depth so sky does not show below floor
         fog: false, // Sky doesn't use fog
@@ -521,11 +545,47 @@ export class DynamicSky {
       }
     }
 
-    // Setup volumetric clouds with quality-based optimization
-    this.setupVolumetricClouds()
+    // Setup volumetric clouds with quality-based optimization (box mode only)
+    if (this.cloudRenderingMode !== 'iq') {
+      this.setupVolumetricClouds()
+    }
+  }
+
+  private rebuildSkyForModeChange() {
+    if (this.skyMesh) {
+      this.scene.remove(this.skyMesh)
+      this.skyMesh.geometry.dispose()
+      this.skyMesh = null
+    }
+    if (this.skyMaterial) {
+      this.skyMaterial.dispose()
+      this.skyMaterial = null
+    }
+    if (this.volumetricCloudMesh) {
+      this.scene.remove(this.volumetricCloudMesh)
+      this.volumetricCloudMesh.geometry.dispose()
+      this.volumetricCloudMaterial?.dispose()
+      this.volumetricCloudMesh = null
+      this.volumetricCloudMaterial = null
+    }
+    if (this.lutSystem) {
+      this.lutSystem.dispose()
+      this.lutSystem = null
+    }
+    this.useLUTSystem = this.cloudRenderingMode !== 'iq'
+    if (this.useLUTSystem && this.renderer) {
+      try {
+        this.lutSystem = new AtmosphereLUTSystem(this.renderer, this.scene)
+        this.lutSystem.generateStaticLUTs()
+      } catch {
+        this.useLUTSystem = false
+      }
+    }
+    this.setupSky()
   }
 
   private setupVolumetricClouds() {
+    if (this.cloudRenderingMode === 'iq') return
     const cloudDensity = this.config.cloudDensity ?? 0.0
     if (cloudDensity <= 0) return
 
@@ -882,7 +942,10 @@ export class DynamicSky {
       this.cloudTime += dt
       this.frameCount++
       
-      // Update cloud time uniform (only every frame)
+      // Update cloud time uniform (iq sky + box clouds)
+      if (this.skyMaterial?.uniforms?.iTime) {
+        this.skyMaterial.uniforms.iTime.value = this.cloudTime
+      }
       if (this.volumetricCloudMaterial && this.volumetricCloudMaterial.uniforms) {
         this.volumetricCloudMaterial.uniforms.iTime.value = this.cloudTime
         this.volumetricCloudMaterial.uniforms.cameraDistance.value = this.cameraDistance
@@ -896,17 +959,28 @@ export class DynamicSky {
     // Otherwise update material uniforms
     const oldConfig = { ...this.config }
     this.config = { ...this.config, ...config }
+
+    if (config.cloudRenderingMode && config.cloudRenderingMode !== oldConfig.cloudRenderingMode) {
+      this.cloudRenderingMode = config.cloudRenderingMode
+      this.rebuildSkyForModeChange()
+      return
+    }
     
-    // Check if quality changed (requires shader recompilation)
+    // Check if quality changed (requires shader recompilation for box clouds; iq steps update on sky material)
     if (config.quality && config.quality !== oldConfig.quality) {
-      if (this.volumetricCloudMesh) {
+      if (this.cloudRenderingMode === 'iq' && this.skyMaterial?.uniforms?.raymarchSteps) {
+        const qualitySettings = this.QUALITY_PRESETS[config.quality]
+        this.skyMaterial.uniforms.raymarchSteps.value = qualitySettings.iqSteps
+      } else if (this.volumetricCloudMesh) {
         this.scene.remove(this.volumetricCloudMesh)
         this.volumetricCloudMesh.geometry.dispose()
         this.volumetricCloudMaterial?.dispose()
         this.volumetricCloudMesh = null
         this.volumetricCloudMaterial = null
       }
-      this.setupVolumetricClouds()
+      if (this.cloudRenderingMode !== 'iq') {
+        this.setupVolumetricClouds()
+      }
     }
     
     // Update sky dome uniforms (Three.js Sky shader)
@@ -941,8 +1015,16 @@ export class DynamicSky {
         }
       }
       
-      // Check if using LUT system
-      if (this.useLUTSystem && this.lutSystem && this.skyMaterial.uniforms.tSkyViewLUT) {
+      // iq integrated sky (XslGRr-style volumetric clouds + sun disk)
+      if (this.cloudRenderingMode === 'iq' && this.skyMaterial.uniforms.coverage) {
+        const qualitySettings = this.QUALITY_PRESETS[this.config.quality || 'high']
+        this.skyMaterial.uniforms.sunPosition.value = sunPos
+        this.skyMaterial.uniforms.coverage.value = this.config.cloudDensity ?? 0
+        this.skyMaterial.uniforms.storminess.value = this.config.cloudStorminess ?? 0
+        this.skyMaterial.uniforms.windSpeed.value = (this.config.windIntensity ?? 0) * 0.2 + 0.05
+        this.skyMaterial.uniforms.exposure.value = this.config.exposure ?? 1.0
+        this.skyMaterial.uniforms.raymarchSteps.value = qualitySettings.iqSteps
+      } else if (this.useLUTSystem && this.lutSystem && this.skyMaterial.uniforms.tSkyViewLUT) {
         // LUT-based: Update Sky View LUT and sample texture
         // FIX: Update every frame for smoother transitions (matches official Streets GL)
         // Official Streets GL updates Sky View LUT every frame (AtmosphereLUTPass.ts lines 99-108)
@@ -1008,7 +1090,18 @@ export class DynamicSky {
       }
     }
 
-    // Update volumetric clouds
+    // Update volumetric box clouds (not used in iq mode)
+    if (this.cloudRenderingMode === 'iq') {
+      if (this.volumetricCloudMesh) {
+        this.scene.remove(this.volumetricCloudMesh)
+        this.volumetricCloudMesh.geometry.dispose()
+        this.volumetricCloudMaterial?.dispose()
+        this.volumetricCloudMesh = null
+        this.volumetricCloudMaterial = null
+      }
+      return
+    }
+
     const cloudDensity = this.config.cloudDensity ?? 0.0
     const cloudVisible = cloudDensity > 0
     
