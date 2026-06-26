@@ -5,7 +5,6 @@ import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import {
   detectWeatherPreset,
-  WEATHER_PRESET_DEFINITIONS,
   type WeatherPresetId
 } from '../viewer/utils/weatherPresets'
 import * as THREE from 'three'
@@ -25,6 +24,7 @@ export default function WeatherPanel() {
     setEnableStandaloneWeather,
     weatherPreset,
     setWeatherPreset,
+    applyWeatherPreset,
     fogDensity,
     setFogDensity,
     fogColor,
@@ -121,20 +121,6 @@ export default function WeatherPanel() {
     if (detected !== weatherPreset) {
       setWeatherPreset(detected)
     }
-  }
-
-  const applyWeatherPreset = (id: Exclude<WeatherPresetId, 'custom'>) => {
-    const values = WEATHER_PRESET_DEFINITIONS[id]
-    applyingPresetRef.current = true
-    setWeatherPreset(id)
-    setFogDensity(values.fogDensity)
-    setFogColor(values.fogColor)
-    setRainIntensity(values.rainIntensity)
-    setSnowIntensity(values.snowIntensity)
-    setCloudDensity(values.cloudDensity)
-    setCloudStorminess(values.cloudStorminess)
-    setWindIntensity(values.windIntensity)
-    applyingPresetRef.current = false
   }
 
   const WEATHER_PRESETS: Array<{
@@ -240,7 +226,11 @@ export default function WeatherPanel() {
                   key={preset.id}
                   type="button"
                   className={`weather-preset-button ${weatherPreset === preset.id ? 'active' : ''}`}
-                  onClick={() => applyWeatherPreset(preset.id)}
+                  onClick={() => {
+                    applyingPresetRef.current = true
+                    applyWeatherPreset(preset.id)
+                    applyingPresetRef.current = false
+                  }}
                   title={preset.label}
                 >
                   <span className="weather-preset-icon">{preset.icon}</span>
