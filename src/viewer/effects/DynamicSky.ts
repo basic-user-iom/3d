@@ -6,6 +6,7 @@ import {
   IQ_CLOUD_SKY_VERTEX_SHADER,
   iqCloudBandY
 } from './IqCloudSkyShader'
+import { getAdaptiveIqRaymarchSteps } from '../utils/weatherGpuUtils'
 import { DYNAMIC_SKY_SPHERE_RADIUS } from '../utils/dynamicSkyCamera'
 import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
 
@@ -453,7 +454,12 @@ export class DynamicSky {
           cloudScale: { value: this.config.cloudScale ?? 1.0 },
           cloudBaseY: { value: cloudBand.base },
           cloudTopY: { value: cloudBand.top },
-          raymarchSteps: { value: qualitySettings.iqSteps }
+          raymarchSteps: {
+            value: getAdaptiveIqRaymarchSteps(
+              this.config.quality || 'high',
+              this.config.cloudDensity ?? 0
+            )
+          }
         }
       } else if (this.useLUTSystem && this.lutSystem) {
         // Create a placeholder texture (1x1 white) to prevent shader errors
@@ -982,8 +988,10 @@ export class DynamicSky {
     // Check if quality changed (requires shader recompilation for box clouds; iq steps update on sky material)
     if (config.quality && config.quality !== oldConfig.quality) {
       if (this.cloudRenderingMode === 'iq' && this.skyMaterial?.uniforms?.raymarchSteps) {
-        const qualitySettings = this.QUALITY_PRESETS[config.quality]
-        this.skyMaterial.uniforms.raymarchSteps.value = qualitySettings.iqSteps
+        this.skyMaterial.uniforms.raymarchSteps.value = getAdaptiveIqRaymarchSteps(
+          config.quality,
+          this.config.cloudDensity ?? 0
+        )
       } else if (this.volumetricCloudMesh) {
         this.scene.remove(this.volumetricCloudMesh)
         this.volumetricCloudMesh.geometry.dispose()
@@ -1030,7 +1038,6 @@ export class DynamicSky {
       
       // iq integrated sky (XslGRr-style volumetric clouds + sun disk)
       if (this.cloudRenderingMode === 'iq' && this.skyMaterial.uniforms.coverage) {
-        const qualitySettings = this.QUALITY_PRESETS[this.config.quality || 'high']
         const band = iqCloudBandY(this.skyMesh?.position.y ?? 0)
         this.skyMaterial.uniforms.sunPosition.value = sunPos
         this.skyMaterial.uniforms.coverage.value = this.config.cloudDensity ?? 0
@@ -1040,7 +1047,10 @@ export class DynamicSky {
         this.skyMaterial.uniforms.cloudScale.value = this.config.cloudScale ?? 1.0
         this.skyMaterial.uniforms.cloudBaseY.value = band.base
         this.skyMaterial.uniforms.cloudTopY.value = band.top
-        this.skyMaterial.uniforms.raymarchSteps.value = qualitySettings.iqSteps
+        this.skyMaterial.uniforms.raymarchSteps.value = getAdaptiveIqRaymarchSteps(
+          this.config.quality || 'high',
+          this.config.cloudDensity ?? 0
+        )
       } else if (this.useLUTSystem && this.lutSystem && this.skyMaterial.uniforms.tSkyViewLUT) {
         // LUT-based: Update Sky View LUT and sample texture
         // FIX: Update every frame for smoother transitions (matches official Streets GL)

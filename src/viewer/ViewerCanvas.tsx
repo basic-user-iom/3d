@@ -27,6 +27,7 @@ import {
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
+import { getCsmShadowMapSizeForQuality, getEffectivePixelRatio } from './utils/weatherGpuUtils'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
 import { ToneMappingType } from './postprocessing/ToneMappingShader'
@@ -512,8 +513,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // Manual override
       effectivePixelRatio = pixelRatio
     } else {
-      // Auto mode: use device pixel ratio, capped at maxPixelRatio
-      effectivePixelRatio = Math.min(window.devicePixelRatio, maxPixelRatio)
+      // Auto mode: cap device pixel ratio (including 4K fill-rate limit)
+      effectivePixelRatio = getEffectivePixelRatio(
+        window.devicePixelRatio,
+        maxPixelRatio,
+        containerRef.current.clientWidth
+      )
     }
     renderer.setPixelRatio(effectivePixelRatio)
     
@@ -5242,7 +5247,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     if (pixelRatio >= 0) {
       effectivePixelRatio = pixelRatio
     } else {
-      effectivePixelRatio = Math.min(window.devicePixelRatio, maxPixelRatio)
+      effectivePixelRatio = getEffectivePixelRatio(
+        window.devicePixelRatio,
+        maxPixelRatio,
+        containerRef.current?.clientWidth ?? window.innerWidth
+      )
     }
     
     // Apply upscaling by adjusting pixel ratio
@@ -5284,7 +5293,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (pixelRatio >= 0) {
         effectivePixelRatio = pixelRatio
       } else {
-        effectivePixelRatio = Math.min(window.devicePixelRatio, maxPixelRatio)
+        effectivePixelRatio = getEffectivePixelRatio(
+          window.devicePixelRatio,
+          maxPixelRatio,
+          width
+        )
       }
       renderer.setPixelRatio(effectivePixelRatio)
       
@@ -7346,7 +7359,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           lightColor: new THREE.Color(0xffffff),
           cascades: 3,
           maxFar: 5000,
-          shadowMapSize: 2048,
+          shadowMapSize: getCsmShadowMapSizeForQuality(weatherQuality || 'high'),
           lightDirection: sunLightTravelDir,
           shadowBias: -0.0002,
           shadowNormalBias: 0.01
@@ -8722,6 +8735,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
 rainCollisionEnabled, snowParticleScale, snowParticleSpeed, snowCollisionEnabled, waterEnabled, waterLevel,
 waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistortionScale, oceanSize, windGustsEnabled, hdrEnabled, weatherQuality])
 
+  // Scale CSM shadow map resolution when weather quality preset changes
+  useEffect(() => {
+    const csm = viewerRef.current?.csmShadowSystem
+    if (!csm?.isEnabled()) return
+    csm.setShadowMapSize(getCsmShadowMapSizeForQuality(weatherQuality))
+  }, [weatherQuality])
+
   // Destroy particle/water systems only on viewer unmount (not on every slider change)
   useEffect(() => {
     return () => {
@@ -8906,7 +8926,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           lightColor: new THREE.Color(0xffffff),
           cascades: 3, // 3 cascades for high quality (like Streets GL)
           maxFar: 5000,
-          shadowMapSize: 2048, // High resolution like Streets GL
+          shadowMapSize: getCsmShadowMapSizeForQuality(store.weatherQuality || 'high'), // Quality-scaled resolution
           lightDirection: new THREE.Vector3(-1, -1, -1), // Will be updated by time of day
           shadowBias: -0.0002,
           shadowNormalBias: 0.01

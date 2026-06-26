@@ -338,7 +338,10 @@ export class ParticleSystem {
   }
 
   update(deltaTime: number, cameraPosition?: THREE.Vector3) {
-    if (!this.particles || !this.geometry || !this.positions || !this.velocities || !this.config.enabled) {
+    if (!this.config.enabled || this.config.intensity <= 0) {
+      return
+    }
+    if (!this.particles || !this.geometry || !this.positions || !this.velocities) {
       return
     }
 
