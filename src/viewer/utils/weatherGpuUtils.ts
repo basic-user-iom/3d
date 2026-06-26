@@ -27,8 +27,8 @@ export function getAdaptiveIqRaymarchSteps(
   if (quality === 'high' || quality === 'ultra') {
     return base
   }
-  const densityScale = 0.55 + Math.min(1, cloudDensity) * 0.45
-  return Math.max(32, Math.round(base * densityScale))
+  const densityScale = 0.72 + Math.min(1, cloudDensity) * 0.28
+  return Math.max(40, Math.round(base * densityScale))
 }
 
 /** Cap effective pixel ratio on large displays to limit fill rate (e.g. 4K). */

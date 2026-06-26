@@ -13,9 +13,8 @@ describe('IqCloudSkyShader', () => {
   it('exports shader sources with iq raymarch primitives', () => {
     const fragment = getIqCloudSkyFragmentShader()
     expect(fragment).toContain('raymarchClouds')
-    expect(fragment).toContain('mapDensity')
-    expect(fragment).toContain('uniform float cloudBaseY')
-    expect(fragment).toContain('uniform float cloudTopY')
+    expect(fragment).toContain('mapDensityAtDepth')
+    expect(fragment).toContain('toIqSpaceFromRay')
     expect(fragment).toContain('uniform float cloudScale')
     expect(fragment).toContain('float d = 0.2 - p.y')
     expect(fragment).toContain('pow(sun, 8.0)')
@@ -24,12 +23,13 @@ describe('IqCloudSkyShader', () => {
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
 
-  it('uses Y-slab cloud intersection (not finite XZ AABB)', () => {
+  it('uses direction-space cloud sampling (not world-Y slab)', () => {
     const fragment = getIqCloudSkyFragmentShader()
-    expect(fragment).toContain('cloudBaseY - ro.y')
-    expect(fragment).toContain('cloudTopY - ro.y')
-    expect(fragment).not.toContain('bmin = vec3(-25000.0')
-    expect(fragment).toContain('local.xz -= cameraPosition.xz')
+    expect(fragment).toContain('toIqSpaceFromRay')
+    expect(fragment).toContain('rd.y * 0.38')
+    expect(fragment).not.toContain('cloudBaseY - ro.y')
+    expect(fragment).not.toContain('if (rd.y <= 0.0002)')
+    expect(fragment).toContain('cameraPosition.x * xzScale')
   })
 
   it('includes night sky features', () => {
