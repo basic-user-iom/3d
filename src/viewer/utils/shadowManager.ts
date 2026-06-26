@@ -117,7 +117,8 @@ export class ShadowManager {
   update(lightDirection?: THREE.Vector3, lightIntensity?: number, lightColor?: THREE.Color): void {
     if (this.currentSystem === 'csm' && this.csmSystem) {
       if (lightDirection) {
-        this.csmSystem.setLightDirection(lightDirection)
+        // lightDirection is toward the sun in the sky; CSM expects light travel direction
+        this.csmSystem.setLightDirection(lightDirection.clone().negate())
       }
       if (lightIntensity !== undefined) {
         this.csmSystem.setLightIntensity(lightIntensity)
@@ -129,8 +130,7 @@ export class ShadowManager {
       // Update standard lights
       this.standardLights.forEach(light => {
         if (lightDirection) {
-          const dir = lightDirection.clone().negate()
-          light.position.copy(dir.multiplyScalar(1000))
+          light.position.copy(lightDirection.clone().normalize().multiplyScalar(1000))
           light.target.position.set(0, 0, 0)
           light.target.updateMatrixWorld()
         }

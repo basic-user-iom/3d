@@ -41,6 +41,60 @@ export function timeOfDayToSkyAngles(
   return { elevation, azimuth, sunPosition }
 }
 
+/** Minimum sun elevation (Y) for standalone weather — keeps sun above horizon */
+export const STANDALONE_MIN_SUN_ELEVATION_Y = 0.05
+
+/**
+ * Normalized direction toward the sun in the sky (from scene origin).
+ */
+export function normalizeSunSkyDirection(sunSkyDirection: THREE.Vector3): THREE.Vector3 {
+  return sunSkyDirection.clone().normalize()
+}
+
+/**
+ * Direction sunlight travels through the scene (opposite of sky sun direction).
+ * Matches Three.js DirectionalLight: target - position when the light sits along sunSkyDirection.
+ */
+export function sunSkyDirectionToLightTravelDirection(sunSkyDirection: THREE.Vector3): THREE.Vector3 {
+  return normalizeSunSkyDirection(sunSkyDirection).negate()
+}
+
+/**
+ * Directional sun light position so rays travel from sky toward the scene.
+ */
+export function sunSkyDirectionToLightPosition(
+  sunSkyDirection: THREE.Vector3,
+  distance = 1000
+): THREE.Vector3 {
+  return normalizeSunSkyDirection(sunSkyDirection).multiplyScalar(distance)
+}
+
+/**
+ * Clamp standalone weather sun so it never drops below the horizon.
+ */
+export function clampStandaloneSunSkyDirection(
+  sunSkyDirection: THREE.Vector3,
+  minElevationY = STANDALONE_MIN_SUN_ELEVATION_Y
+): THREE.Vector3 {
+  const dir = normalizeSunSkyDirection(sunSkyDirection)
+  if (dir.y >= minElevationY) {
+    return dir
+  }
+
+  const horizontalLength = Math.sqrt(dir.x * dir.x + dir.z * dir.z)
+  if (horizontalLength < 0.001) {
+    return new THREE.Vector3(0, minElevationY, 1).normalize()
+  }
+
+  const horizontalScale = Math.sqrt(Math.max(0, 1 - minElevationY * minElevationY))
+  const azimuth = Math.atan2(dir.z, dir.x)
+  return new THREE.Vector3(
+    Math.cos(azimuth) * horizontalScale,
+    minElevationY,
+    Math.sin(azimuth) * horizontalScale
+  )
+}
+
 /**
  * Computes the direction vector of a light (for directional and spot lights)
  */
