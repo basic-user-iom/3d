@@ -26,6 +26,7 @@ import {
 } from './utils/renderLoopIdle'
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
+import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
 import { ToneMappingType } from './postprocessing/ToneMappingShader'
@@ -253,6 +254,7 @@ export interface ViewerInstance {
   standaloneWaterSystem?: import('./effects/StandaloneWaterSystem').StandaloneWaterSystem // Standalone water system
   atmosphericPerspective?: import('./effects/AtmosphericPerspective').AtmosphericPerspective // Atmospheric perspective (fog/haze)
   dynamicSky?: import('./effects/DynamicSky').DynamicSky // Dynamic sky with atmospheric scattering (for standalone weather)
+  dynamicSkySavedCameraFar?: number
   postProcessingSystem?: import('./postprocessing/PostProcessingSystem').PostProcessingSystem
   animationMixers?: THREE.AnimationMixer[]
   captureScreenshot?: () => string
@@ -4448,11 +4450,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             : new THREE.Vector3(0, 1, 0)
           viewerRef.current.standaloneWaterSystem.update(camera, sunDir)
         }
-        
-        // Update dynamic sky (for cloud animation and camera position)
-        if (viewerRef.current.dynamicSky) {
-          viewerRef.current.dynamicSky.update(camera) // DynamicSky.update accepts camera for position updates
-        }
+      }
+
+      // Dynamic sky: camera-centered dome + cloud animation (independent of CSM tick)
+      if (viewerRef.current?.dynamicSky) {
+        viewerRef.current.dynamicSky.update(camera)
       }
       
       // Update hotspot panels to always face camera (billboard effect)
@@ -7332,6 +7334,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
     // Option 2: Standalone weather system is active - use CSM + visible sun + local sun light
     else if (enableStandaloneWeather && viewerRef.current) {
+      activateDynamicSkyCamera(viewerRef.current)
       if (weatherMaterialChanged) {
         console.log('[ViewerCanvas] Taking standalone weather branch - initializing systems')
       }
@@ -7462,6 +7465,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cloudRenderingMode: 'iq'
         }, renderer) // Pass renderer for LUT system
         viewerRef.current.dynamicSky = dynamicSky
+        activateDynamicSkyCamera(viewerRef.current)
         scene.background = null
         if (viewerRef.current.hdrSystem) {
           viewerRef.current.hdrSystem.updateBackgroundVisibility(false)
@@ -8096,12 +8100,16 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
       
       // When Three.js Sky is disabled, HDR background should be handled by HDR effect
-      // Only set background here if HDR is NOT enabled
-      // CRITICAL: Do NOT modify scene.background when HDR is enabled - let HDR effect handle it
-      if (!hdrEnabled) {
+      // Only set background here if HDR is NOT enabled and DynamicSky is not rendering the sky
+      const standaloneSkyActive =
+        enableStandaloneWeather && !!viewerRef.current?.dynamicSky
+      if (!hdrEnabled && !standaloneSkyActive) {
         // No HDR - use sky color as background
         scene.background = new THREE.Color(skyColor)
         renderer.setClearColor(new THREE.Color(skyColor), 1)
+      } else if (standaloneSkyActive && !hdrEnabled) {
+        scene.background = null
+        renderer.setClearColor(new THREE.Color(0x000000), 0)
       } else {
         // HDR is enabled - DO NOT modify background here
         // The HDR effect and final check will handle it
@@ -9050,6 +9058,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           cloudRenderingMode: 'iq'
         }, viewerRef.current.renderer) // Pass renderer for LUT system
         viewerRef.current.dynamicSky = dynamicSky
+        activateDynamicSkyCamera(viewerRef.current)
         
         // Remove solid background color (sky will render instead)
         scene.background = null
@@ -9107,6 +9116,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
       // Destroy dynamic sky
       if (viewerRef.current.dynamicSky) {
         console.log('[ViewerCanvas] Destroying dynamic sky')
+        deactivateDynamicSkyCamera(viewerRef.current)
         viewerRef.current.dynamicSky.destroy()
         viewerRef.current.dynamicSky = undefined
       }

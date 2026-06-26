@@ -161,9 +161,9 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       vec3 col = iqSkyGradient(rd, sunDir);
       float sun = clamp(dot(sunDir, rd), 0.0, 1.0);
 
-      float sunDisk = smoothstep(0.9992, 0.99985, sun);
-      col += vec3(1.0, 0.85, 0.55) * sunDisk * 12.0;
-      col += 0.2 * vec3(1.0, 0.6, 0.1) * pow(sun, 8.0);
+      float sunDisk = smoothstep(0.9985, 0.99975, sun);
+      col += vec3(1.0, 0.85, 0.55) * sunDisk * 14.0;
+      col += 0.35 * vec3(1.0, 0.6, 0.1) * pow(sun, 6.0);
 
       if (coverage > 0.01) {
         vec4 clouds = raymarchClouds(ro, rd, sunDir, col);

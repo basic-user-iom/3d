@@ -11,7 +11,7 @@ describe('IqCloudSkyShader', () => {
     const fragment = getIqCloudSkyFragmentShader()
     expect(fragment).toContain('raymarchClouds')
     expect(fragment).toContain('mapDensity')
-    expect(fragment).toContain('pow(sun, 8.0)')
+    expect(fragment).toContain('pow(sun, 6.0)')
     expect(fragment).toContain('gl_FragColor = vec4(col, 1.0)')
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
