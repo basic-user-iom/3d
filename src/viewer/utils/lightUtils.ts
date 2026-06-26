@@ -12,24 +12,15 @@ export function timeOfDayToSkyAngles(
   timeOfDay: number,
   northOffset: number
 ): { elevation: number; azimuth: number; sunPosition: THREE.Vector3 } {
-  const hour = timeOfDay
-  let elevation = 0
+  const hour = ((timeOfDay % 24) + 24) % 24
 
-  // Calculate elevation: 0 (horizon) to PI/2 (zenith)
-  if (hour >= 6 && hour <= 18) {
-    // Daytime: sun arc from 6am to 6pm
-    const sunAngle = ((hour - 6) / 12) * Math.PI // 0 (sunrise) to PI (sunset)
-    elevation = Math.sin(sunAngle) * (Math.PI / 2) // Convert to radians: 0 to PI/2
-  } else {
-    // Night: sun below horizon (negative elevation)
-    elevation = -0.1
-  }
+  // Full 24h solar arc: sunrise/sunset at 6 & 18, zenith at noon, nadir at midnight
+  const dayPhase = ((hour - 6) / 12) * Math.PI
+  const elevation = Math.sin(dayPhase) * (Math.PI / 2)
 
-  // Calculate azimuth: 0 = north, PI/2 = east, PI = south, 3*PI/2 = west
-  // 6am = East (PI/2), 12pm = South (PI), 6pm = West (3*PI/2)
-  const baseAngle = ((hour - 6) / 12) * Math.PI
+  // Azimuth sweeps east → south → west → north over 24h (6am ≈ east)
   const offsetRad = THREE.MathUtils.degToRad(northOffset)
-  const azimuth = baseAngle + offsetRad
+  const azimuth = ((hour - 6) / 24) * Math.PI * 2 + offsetRad
 
   // Convert elevation/azimuth to sun position vector for Three.js Sky
   // Three.js Sky expects sunPosition as a normalized direction vector
@@ -67,6 +58,31 @@ export function sunSkyDirectionToLightPosition(
   distance = 1000
 ): THREE.Vector3 {
   return normalizeSunSkyDirection(sunSkyDirection).multiplyScalar(distance)
+}
+
+/** True when the sun is below the horizon for the given time of day. */
+export function isNightTimeOfDay(timeOfDay: number): boolean {
+  const hour = ((timeOfDay % 24) + 24) % 24
+  return hour < 6 || hour > 18
+}
+
+/**
+ * Direction for sky shader / moon — never clamped below the horizon.
+ */
+export function standaloneSkySunDirection(
+  sunSkyDirection: THREE.Vector3
+): THREE.Vector3 {
+  return normalizeSunSkyDirection(sunSkyDirection)
+}
+
+/**
+ * Direction for CSM and directional lights — clamped above the horizon so shadows stay stable.
+ */
+export function standaloneLightSunDirection(
+  sunSkyDirection: THREE.Vector3,
+  minElevationY = STANDALONE_MIN_SUN_ELEVATION_Y
+): THREE.Vector3 {
+  return clampStandaloneSunSkyDirection(sunSkyDirection, minElevationY)
 }
 
 /**

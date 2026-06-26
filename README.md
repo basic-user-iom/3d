@@ -44,6 +44,7 @@ Need the full setup guide (formats, decoders, troubleshooting)? See
   - [`docs/guides/streets-gl-integration.md`](docs/guides/streets-gl-integration.md) – dev-server workflow
   - [`docs/guides/path-tracer.md`](docs/guides/path-tracer.md) – GPU path tracer controls
   - [`docs/guides/lighting-hdr.md`](docs/guides/lighting-hdr.md) – lighting panel + HDR helpers + standalone weather
+  - [`docs/guides/weather-system.md`](docs/guides/weather-system.md) – standalone weather, clouds, day/night
   - [`docs/guides/shader-editor.md`](docs/guides/shader-editor.md) – GLSL demo panel
   - [`docs/guides/dev-workflow.md`](docs/guides/dev-workflow.md) – lint/test/docs checklist
   - [`docs/guides/desktop-windows.md`](docs/guides/desktop-windows.md) – Windows installer, signing, and updates

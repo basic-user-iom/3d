@@ -177,12 +177,15 @@ export class SunMoonSystem {
         this.moonMesh.material.opacity = 0
         this.moonMesh.material.transparent = true
       }
-      // Remove from scene if it's still there (extra safety)
+      // Remove from scene during daytime only — re-add at night
       if (this.moonMesh.parent) {
         this.moonMesh.parent.remove(this.moonMesh)
       }
     } else {
       // Nighttime: Show moon opposite to sun
+      if (!this.moonMesh.parent) {
+        this.scene.add(this.moonMesh)
+      }
       // CRITICAL: Restore material opacity before making visible
       if (this.moonMesh.material instanceof THREE.MeshBasicMaterial) {
         this.moonMesh.material.opacity = 0.7

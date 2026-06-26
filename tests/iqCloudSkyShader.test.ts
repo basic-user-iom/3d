@@ -24,6 +24,21 @@ describe('IqCloudSkyShader', () => {
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
 
+  it('uses Y-slab cloud intersection (not finite XZ AABB)', () => {
+    const fragment = getIqCloudSkyFragmentShader()
+    expect(fragment).toContain('cloudBaseY - ro.y')
+    expect(fragment).toContain('cloudTopY - ro.y')
+    expect(fragment).not.toContain('bmin = vec3(-25000.0')
+    expect(fragment).toContain('local.xz -= cameraPosition.xz')
+  })
+
+  it('includes night sky features', () => {
+    const fragment = getIqCloudSkyFragmentShader()
+    expect(fragment).toContain('starField')
+    expect(fragment).toContain('dayFactor')
+    expect(fragment).toContain('moonDir')
+  })
+
   it('uses iq XslGRr noise scale in generated shader', () => {
     const fragment = getIqCloudSkyFragmentShader()
     expect(fragment).toContain(IQ_CLOUD_NOISE_XZ_SCALE.toFixed(6))

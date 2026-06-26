@@ -19,6 +19,8 @@ inside `docs/archive/`.
 - [`guides/lighting-hdr.md`](guides/lighting-hdr.md) – manage directional
   lights, CSM shadows, HDR/ground projection, and **standalone weather** (offline
   sky, iq-style clouds, sun disk).
+- [`guides/weather-system.md`](guides/weather-system.md) – standalone weather
+  architecture, day/night, cloud presets, and iq reference comparison.
 - [`guides/dev-workflow.md`](guides/dev-workflow.md) – contributor checklist
   (docs, tests, manual sanity).
 - [`guides/desktop-windows.md`](guides/desktop-windows.md) – Windows desktop
