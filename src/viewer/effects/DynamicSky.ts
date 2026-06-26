@@ -618,11 +618,9 @@ export class DynamicSky {
 
     // Cloud layer sits above ground — bottom at WEATHER_GROUND_LEVEL, top at GROUND + HEIGHT
     const cloudBoxCenterY = WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2
-    const geo = new THREE.BoxGeometry(
-      CLOUD_BOX_HALF_WIDTH * 2,
-      CLOUD_LAYER_HEIGHT,
-      CLOUD_BOX_HALF_WIDTH * 2
-    )
+    // Camera-centered sphere proxy — one fragment per pixel with correct view rays.
+    // BoxGeometry BackSide from inside draws six overlapping face quads (dark shards).
+    const geo = new THREE.SphereGeometry(DYNAMIC_SKY_SPHERE_RADIUS, 32, 32)
     
     const uniforms = {
       iTime: { value: 0 },
@@ -644,9 +642,9 @@ export class DynamicSky {
       precision highp float;
       varying vec3 vWorldPos;
       void main(){
-        vec4 wp = modelMatrix * vec4(position,1.0);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
         vWorldPos = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `
 
@@ -912,15 +910,13 @@ export class DynamicSky {
         // Apply storminess to color (darker, more dramatic)
         color *= (1.0 - storminess * 0.3);
         
-        // Mix with background based on transmittance
-        vec3 finalColor = mix(color, vec3(0.0), 1.0 - transmittance);
-        
-        // Alpha based on accumulated density and coverage
+        // Alpha from Beer-Lambert transmittance; RGB is in-scattered light only
         float alpha = 1.0 - transmittance;
         alpha *= coverage * alphaScale;
         alpha = clamp(alpha, 0.0, 0.95);
         if (alpha < 0.004) discard;
         
+        vec3 finalColor = color / max(alpha, 0.004);
         gl_FragColor = vec4(finalColor, alpha);
       }
     `
@@ -932,7 +928,7 @@ export class DynamicSky {
         fragmentShader: fShader,
         transparent: true,
         depthWrite: false,
-        depthTest: false,
+        depthTest: true,
         side: THREE.BackSide
       })
       
@@ -950,8 +946,7 @@ export class DynamicSky {
     this.volumetricCloudMesh.visible = uiDensity > 0
     this.volumetricCloudMesh.userData.isDynamicSky = true
     this.volumetricCloudMesh.raycast = () => {}
-    // Anchor cloud box so its bottom face sits on the ground plane
-    this.volumetricCloudMesh.position.y = cloudBoxCenterY
+    // Position updated each frame from camera (see update(camera))
     
     this.scene.add(this.volumetricCloudMesh)
   }
@@ -964,7 +959,8 @@ export class DynamicSky {
       }
       if (this.volumetricCloudMesh) {
         const centerY = WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2
-        this.volumetricCloudMesh.position.set(config.position.x, centerY, config.position.z)
+        // Ray proxy sphere is camera-centered; cloud AABB stays at fixed altitude
+        this.volumetricCloudMesh.position.copy(config.position)
         if (this.volumetricCloudMaterial?.uniforms?.cloudBoxCenter) {
           this.volumetricCloudMaterial.uniforms.cloudBoxCenter.value.set(
             config.position.x,
