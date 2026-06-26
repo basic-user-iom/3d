@@ -34,6 +34,29 @@ This document summarizes the main GPU workloads in standalone weather mode and h
 
 Auto pixel ratio is capped by `maxPixelRatio` (default 2) and further limited on very wide canvases so effective render width does not exceed ~3840 px (4K fill-rate protection).
 
+## Cloud density slider (iq mode)
+
+The **Cloud Density** slider (0–100%) and weather presets share one mapping via `iqCloudCoverage.ts`. The value is passed as the `coverage` uniform to the iq XslGRr sky shader.
+
+| Slider | Preset reference | Visual intent | GPU behaviour |
+|--------|------------------|---------------|---------------|
+| **0%** | Clear | Blue sky, no volumetric clouds | Raymarch skipped (`coverage ≤ 0.004`) |
+| **25%** | — | Light scattered clouds | High density cutoff (~0.62), narrow feather, reduced opacity scale |
+| **75%** | Overcast | Grey overcast sky | Lower cutoff (~0.21), wider feather |
+| **100%** | Stormy (0.9) | Dense storm ceiling | Cutoff → 0, max feather, boosted opacity scale |
+
+### How coverage maps to density
+
+Three separate controls work together (Horizon-style terminology):
+
+1. **Coverage cutoff** — `smoothstep` threshold on the iq fBm field (`0.2 - p.y + 3×noise`). Lower cutoff = more sky area becomes cloud. Linear from 0.82 (clear) to 0.0 (storm).
+2. **Feather width** — soft edge of each cloud puff. Grows from 0.07 at 25% to 0.16 at 100% so overcast reads solid, not billowy patches.
+3. **Opacity scale** — extra raymarch alpha multiplier (`0.6 + 0.52 × coverage²`) so 100% feels like a storm ceiling, not just more puffs.
+
+Density function shape follows iq Shadertoy XslGRr: four octaves of 3D value noise, height gradient on normalized cloud-band Y, world-space slab raymarch with path-length steps (full layer traversal even at horizon).
+
+Presets use the same `cloudDensity` field: Clear 0, Foggy 0.35, Overcast 0.75, Stormy 0.9.
+
 ## Recommendations
 
 1. Use **Low** weather quality on integrated GPUs or when Streets GL + weather run together.

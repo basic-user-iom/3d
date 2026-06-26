@@ -5,6 +5,7 @@ import {
   IQ_TEST_DIRECTIONS,
   mapIqCloudDensity
 } from '../src/viewer/utils/iqCloudDensity'
+import { iqCoverageAlphaScale } from '../src/viewer/utils/iqCloudCoverage'
 
 describe('iqCloudDensity', () => {
   const overcast = { coverage: 0.75, cloudScale: 1, time: 12.5, windSpeed: 0.1 }
@@ -54,6 +55,37 @@ describe('iqCloudDensity', () => {
       expect(horizonAlpha).toBeGreaterThan(0.12)
     })
 
+    it('maps slider tiers with perceptual progression', () => {
+      const clear = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
+        coverage: 0,
+        steps: 64,
+        dayFactor: 1
+      })
+      const scattered = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
+        coverage: 0.25,
+        cloudScale: 1,
+        steps: 64,
+        dayFactor: 1
+      })
+      const overcastAlpha = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
+        ...overcast,
+        steps: 64,
+        dayFactor: 1
+      })
+      const storm = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
+        coverage: 1,
+        cloudScale: 1,
+        steps: 64,
+        dayFactor: 1
+      })
+
+      expect(clear).toBe(0)
+      expect(scattered).toBeGreaterThan(0.04)
+      expect(scattered).toBeLessThan(overcastAlpha)
+      expect(overcastAlpha).toBeLessThan(storm)
+      expect(storm).toBeGreaterThan(0.35)
+    })
+
     it('dims clouds at night but keeps some visibility when coverage is high', () => {
       const day = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.midSky, {
         ...overcast,
@@ -73,6 +105,10 @@ describe('iqCloudDensity', () => {
       expect(
         estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, { coverage: 0, steps: 64 })
       ).toBe(0)
+    })
+
+    it('uses higher opacity scale at storm coverage', () => {
+      expect(iqCoverageAlphaScale(1)).toBeGreaterThan(iqCoverageAlphaScale(0.25))
     })
   })
 })
