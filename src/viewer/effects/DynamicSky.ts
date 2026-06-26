@@ -69,10 +69,10 @@ export class DynamicSky {
 
   // Quality presets: [raymarchingSteps, noiseOctaves, shadowSamples]
   private readonly QUALITY_PRESETS = {
-    low: { steps: 32, octaves: 3, shadowSamples: 1, densityMultiplier: 0.8, iqSteps: 36 },
-    medium: { steps: 48, octaves: 4, shadowSamples: 2, densityMultiplier: 0.9, iqSteps: 48 },
-    high: { steps: 64, octaves: 5, shadowSamples: 3, densityMultiplier: 1.0, iqSteps: 64 },
-    ultra: { steps: 96, octaves: 6, shadowSamples: 4, densityMultiplier: 1.1, iqSteps: 80 }
+    low: { steps: 32, octaves: 3, shadowSamples: 1, densityMultiplier: 0.8, iqSteps: 48 },
+    medium: { steps: 48, octaves: 4, shadowSamples: 2, densityMultiplier: 0.9, iqSteps: 56 },
+    high: { steps: 64, octaves: 5, shadowSamples: 3, densityMultiplier: 1.0, iqSteps: 72 },
+    ultra: { steps: 96, octaves: 6, shadowSamples: 4, densityMultiplier: 1.1, iqSteps: 88 }
   }
 
   constructor(scene: THREE.Scene, config: SkyConfig, renderer?: THREE.WebGLRenderer) {
@@ -449,7 +449,7 @@ export class DynamicSky {
           coverage: { value: this.config.cloudDensity ?? 0 },
           storminess: { value: this.config.cloudStorminess ?? 0 },
           windSpeed: { value: (this.config.windIntensity ?? 0) * 0.2 + 0.05 },
-          exposure: { value: Math.max(this.config.exposure ?? 1.0, 0.85) },
+          exposure: { value: this.config.exposure ?? 1.0 },
           cloudScale: { value: this.config.cloudScale ?? 1.0 },
           cloudBaseY: { value: cloudBand.base },
           cloudTopY: { value: cloudBand.top },
@@ -1036,7 +1036,7 @@ export class DynamicSky {
         this.skyMaterial.uniforms.coverage.value = this.config.cloudDensity ?? 0
         this.skyMaterial.uniforms.storminess.value = this.config.cloudStorminess ?? 0
         this.skyMaterial.uniforms.windSpeed.value = (this.config.windIntensity ?? 0) * 0.2 + 0.05
-        this.skyMaterial.uniforms.exposure.value = Math.max(this.config.exposure ?? 1.0, 0.85)
+        this.skyMaterial.uniforms.exposure.value = this.config.exposure ?? 1.0
         this.skyMaterial.uniforms.cloudScale.value = this.config.cloudScale ?? 1.0
         this.skyMaterial.uniforms.cloudBaseY.value = band.base
         this.skyMaterial.uniforms.cloudTopY.value = band.top
