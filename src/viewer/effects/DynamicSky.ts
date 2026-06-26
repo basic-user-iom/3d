@@ -1,7 +1,11 @@
 import * as THREE from 'three'
 import { AtmosphereLUTSystem } from './AtmosphereLUTSystem'
 import { getLUTBasedSkyFragmentShader } from './DynamicSkyLUTShader'
-import { getIqCloudSkyFragmentShader, IQ_CLOUD_SKY_VERTEX_SHADER } from './IqCloudSkyShader'
+import {
+  getIqCloudSkyFragmentShader,
+  IQ_CLOUD_SKY_VERTEX_SHADER,
+  iqCloudBandY
+} from './IqCloudSkyShader'
 import { DYNAMIC_SKY_SPHERE_RADIUS } from '../utils/dynamicSkyCamera'
 import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
 
@@ -438,13 +442,17 @@ export class DynamicSky {
       const qualitySettings = this.QUALITY_PRESETS[this.config.quality || 'high']
       
       if (useIqShader) {
+        const cloudBand = iqCloudBandY(0)
         uniforms = {
           sunPosition: { value: sunPos },
           iTime: { value: 0 },
           coverage: { value: this.config.cloudDensity ?? 0 },
           storminess: { value: this.config.cloudStorminess ?? 0 },
           windSpeed: { value: (this.config.windIntensity ?? 0) * 0.2 + 0.05 },
-          exposure: { value: this.config.exposure ?? 1.0 },
+          exposure: { value: Math.max(this.config.exposure ?? 1.0, 0.85) },
+          cloudScale: { value: this.config.cloudScale ?? 1.0 },
+          cloudBaseY: { value: cloudBand.base },
+          cloudTopY: { value: cloudBand.top },
           raymarchSteps: { value: qualitySettings.iqSteps }
         }
       } else if (this.useLUTSystem && this.lutSystem) {
@@ -946,6 +954,11 @@ export class DynamicSky {
       if (this.skyMaterial?.uniforms?.iTime) {
         this.skyMaterial.uniforms.iTime.value = this.cloudTime
       }
+      if (this.cloudRenderingMode === 'iq' && this.skyMaterial?.uniforms?.cloudBaseY) {
+        const band = iqCloudBandY(config.position.y)
+        this.skyMaterial.uniforms.cloudBaseY.value = band.base
+        this.skyMaterial.uniforms.cloudTopY.value = band.top
+      }
       if (this.volumetricCloudMaterial && this.volumetricCloudMaterial.uniforms) {
         this.volumetricCloudMaterial.uniforms.iTime.value = this.cloudTime
         this.volumetricCloudMaterial.uniforms.cameraDistance.value = this.cameraDistance
@@ -1018,11 +1031,15 @@ export class DynamicSky {
       // iq integrated sky (XslGRr-style volumetric clouds + sun disk)
       if (this.cloudRenderingMode === 'iq' && this.skyMaterial.uniforms.coverage) {
         const qualitySettings = this.QUALITY_PRESETS[this.config.quality || 'high']
+        const band = iqCloudBandY(this.skyMesh?.position.y ?? 0)
         this.skyMaterial.uniforms.sunPosition.value = sunPos
         this.skyMaterial.uniforms.coverage.value = this.config.cloudDensity ?? 0
         this.skyMaterial.uniforms.storminess.value = this.config.cloudStorminess ?? 0
         this.skyMaterial.uniforms.windSpeed.value = (this.config.windIntensity ?? 0) * 0.2 + 0.05
-        this.skyMaterial.uniforms.exposure.value = this.config.exposure ?? 1.0
+        this.skyMaterial.uniforms.exposure.value = Math.max(this.config.exposure ?? 1.0, 0.85)
+        this.skyMaterial.uniforms.cloudScale.value = this.config.cloudScale ?? 1.0
+        this.skyMaterial.uniforms.cloudBaseY.value = band.base
+        this.skyMaterial.uniforms.cloudTopY.value = band.top
         this.skyMaterial.uniforms.raymarchSteps.value = qualitySettings.iqSteps
       } else if (this.useLUTSystem && this.lutSystem && this.skyMaterial.uniforms.tSkyViewLUT) {
         // LUT-based: Update Sky View LUT and sample texture

@@ -7319,8 +7319,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           rayleigh: currentStore.skyRayleigh || 2.0,
           mieCoefficient: currentStore.skyMieCoefficient || 0.005,
           mieDirectionalG: currentStore.skyMieDirectionalG || 0.8,
-          exposure: currentStore.skyExposure || 0.68,
-          cloudDensity: currentStore.cloudDensity || 0.0,
+          exposure: Math.max(currentStore.skyExposure ?? 1.0, 0.85),
+          cloudDensity: currentStore.cloudDensity ?? 0,
           cloudThickness: currentStore.cloudThickness || 0.5,
           cloudDetail: currentStore.cloudDetail || 0.5,
           cloudScale: currentStore.cloudScale || 1.0,
@@ -7450,10 +7450,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           rayleigh: skyRayleigh || 2.0,
           mieCoefficient: skyMieCoefficient || 0.005,
           mieDirectionalG: skyMieDirectionalG || 0.8,
-          exposure: skyExposure || 1.0,
+          exposure: Math.max(skyExposure ?? 1.0, 0.85),
           elevation: elevation,
           azimuth: azimuth,
-          cloudDensity: cloudDensity || 0.0,
+          cloudDensity: cloudDensity ?? 0,
           cloudThickness: cloudThickness || 0.5,
           cloudDetail: cloudDetail || 0.5,
           cloudScale: cloudScale || 1.0,
@@ -7529,8 +7529,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           rayleigh: currentStore.skyRayleigh || 2.0,
           mieCoefficient: currentStore.skyMieCoefficient || 0.005,
           mieDirectionalG: currentStore.skyMieDirectionalG || 0.8,
-          exposure: currentStore.skyExposure || 0.68,
-          cloudDensity: currentStore.cloudDensity || 0.0,
+          exposure: Math.max(currentStore.skyExposure ?? 1.0, 0.85),
+          cloudDensity: currentStore.cloudDensity ?? 0,
           cloudThickness: currentStore.cloudThickness || 0.5,
           cloudDetail: currentStore.cloudDetail || 0.5,
           cloudScale: currentStore.cloudScale || 1.0,
@@ -9049,10 +9049,10 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           rayleigh: store.skyRayleigh || 2.0,
           mieCoefficient: store.skyMieCoefficient || 0.005,
           mieDirectionalG: store.skyMieDirectionalG || 0.8,
-          exposure: store.skyExposure || 1.0, // Increased default exposure for brighter sky
+          exposure: Math.max(store.skyExposure ?? 1.0, 0.85),
           elevation: elevation,
           azimuth: azimuth,
-          cloudDensity: store.cloudDensity || 0.0,
+          cloudDensity: store.cloudDensity ?? 0,
           cloudThickness: store.cloudThickness || 0.5,
           cloudDetail: store.cloudDetail || 0.5,
           cloudScale: store.cloudScale || 1.0,
@@ -9076,6 +9076,34 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         }
         
         console.log('[ViewerCanvas] ✅ DynamicSky initialized - sky dome should be visible')
+      }
+
+      if (viewerRef.current.dynamicSky) {
+        const { sunPosition, elevation, azimuth } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
+        const sunDir = clampStandaloneSunSkyDirection(sunPosition)
+        viewerRef.current.dynamicSky.update({
+          timeOfDay: store.timeOfDay,
+          sunPosition: sunDir.clone(),
+          elevation,
+          azimuth,
+          turbidity: store.skyTurbidity ?? 10.0,
+          atmosphereDensity: store.skyAtmosphereDensity ?? 0.5,
+          rayleigh: store.skyRayleigh ?? 2.0,
+          mieCoefficient: store.skyMieCoefficient ?? 0.005,
+          mieDirectionalG: store.skyMieDirectionalG ?? 0.8,
+          exposure: Math.max(store.skyExposure ?? 1.0, 0.85),
+          cloudDensity: store.cloudDensity ?? 0,
+          cloudThickness: store.cloudThickness ?? 0.5,
+          cloudDetail: store.cloudDetail ?? 0.5,
+          cloudScale: store.cloudScale ?? 1.0,
+          cloudStorminess: store.cloudStorminess ?? 0.0,
+          cloudShadowStrength: store.cloudShadowStrength ?? 0.0,
+          cloudColor: new THREE.Color(store.cloudColor || '#ffffff'),
+          windIntensity: store.windIntensity ?? 0.0,
+          quality: store.weatherQuality || 'high',
+          cloudRenderingMode: 'iq'
+        })
+        viewerRef.current.dynamicSky.update(camera)
       }
       
       // Disable standard Three.js sun light shadows (CSM handles shadows)
