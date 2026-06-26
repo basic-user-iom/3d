@@ -165,7 +165,7 @@ export class StandaloneWaterSystem {
       vertexShader,
       fragmentShader,
       transparent: opacity < 1.0,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
       depthWrite: opacity > 0.99,
       depthTest: true,
       fog: false, // Water doesn't use fog (atmospheric perspective is handled separately)
