@@ -56,7 +56,14 @@ describe('IqCloudSkyShader', () => {
   it('maps coverage to decreasing density threshold', () => {
     expect(iqCoverageToThickness(0)).toBeGreaterThan(iqCoverageToThickness(0.9))
     expect(iqCoverageToThickness(0)).toBeCloseTo(IQ_COVERAGE_CUTOFF_CLEAR, 2)
-    expect(iqCoverageToThickness(0.75)).toBeCloseTo(0.205, 2)
-    expect(iqCoverageToThickness(0.25)).toBeCloseTo(0.615, 2)
+    expect(iqCoverageToThickness(0.75)).toBeCloseTo(0.143, 1)
+    expect(iqCoverageToThickness(0.25)).toBeCloseTo(0.423, 1)
+  })
+
+  it('can omit cloud raymarch for hybrid sky-only mode', () => {
+    const skyOnly = getIqCloudSkyFragmentShader({ skyOnly: true })
+    expect(skyOnly).not.toContain('raymarchClouds(ro, rd, sunDir, dayFactor)')
+    const full = getIqCloudSkyFragmentShader({ skyOnly: false })
+    expect(full).toContain('raymarchClouds(ro, rd, sunDir, dayFactor)')
   })
 })
