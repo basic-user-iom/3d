@@ -14,6 +14,9 @@ import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
 /** Volumetric cloud layer height above ground (world units) */
 const CLOUD_LAYER_HEIGHT = 12000
 
+/** Horizontal half-extent — must fit inside DYNAMIC_SKY_SPHERE_RADIUS for stable clipping */
+const CLOUD_BOX_HALF_WIDTH = 8000
+
 export interface SkyConfig {
   timeOfDay: number // 0-24 hours (deprecated, use elevation/azimuth instead)
   turbidity: number // 2-20, atmospheric clarity (lower = clearer)
@@ -538,9 +541,6 @@ export class DynamicSky {
     this.skyMesh = new THREE.Mesh(geometry, this.skyMaterial)
     this.skyMesh.name = 'Dynamic Sky'
     this.skyMesh.userData.isDynamicSky = true
-    // Make it selectable like other models
-    this.skyMesh.userData.isModel = true
-    this.skyMesh.userData.isImportedModel = true
     // CRITICAL: Lock the sky dome by default to prevent accidental movement
     // Users can unlock it in the Objects Panel if needed
     this.skyMesh.userData.isLocked = true
@@ -617,7 +617,12 @@ export class DynamicSky {
     const qualitySettings = this.QUALITY_PRESETS[quality]
 
     // Cloud layer sits above ground — bottom at WEATHER_GROUND_LEVEL, top at GROUND + HEIGHT
-    const geo = new THREE.BoxGeometry(40000, CLOUD_LAYER_HEIGHT, 40000)
+    const cloudBoxCenterY = WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2
+    const geo = new THREE.BoxGeometry(
+      CLOUD_BOX_HALF_WIDTH * 2,
+      CLOUD_LAYER_HEIGHT,
+      CLOUD_BOX_HALF_WIDTH * 2
+    )
     
     const uniforms = {
       iTime: { value: 0 },
@@ -631,7 +636,8 @@ export class DynamicSky {
       windSpeed: { value: (this.config.windIntensity ?? 0.0) * 0.2 + 0.02 },
       raymarchSteps: { value: qualitySettings.steps },
       noiseOctaves: { value: qualitySettings.octaves },
-      cameraDistance: { value: 0.0 }
+      cameraDistance: { value: 0.0 },
+      cloudBoxCenter: { value: new THREE.Vector3(0, cloudBoxCenterY, 0) }
     }
     
     const vShader = `
@@ -660,8 +666,11 @@ export class DynamicSky {
       uniform int raymarchSteps;
       uniform int noiseOctaves;
       uniform float cameraDistance;
+      uniform vec3 cloudBoxCenter;
       
       const float PI = 3.14159265359;
+      const float CLOUD_HALF_W = ${CLOUD_BOX_HALF_WIDTH.toFixed(1)};
+      const float CLOUD_HALF_H = ${(CLOUD_LAYER_HEIGHT / 2).toFixed(1)};
       
       // Improved hash function for better noise quality
       float hash(vec3 p) {
@@ -822,9 +831,9 @@ export class DynamicSky {
         vec3 ro = cameraPosition;
         vec3 rd = normalize(vWorldPos - cameraPosition);
         
-        // Cloud domain box — anchored above ground (y >= 0)
-        vec3 bmin = vec3(-20000.0, ${WEATHER_GROUND_LEVEL.toFixed(1)}, -20000.0);
-        vec3 bmax = vec3( 20000.0, ${(WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT).toFixed(1)},  20000.0);
+        // Cloud domain follows the camera-centered box mesh (cloudBoxCenter uniform)
+        vec3 bmin = cloudBoxCenter - vec3(CLOUD_HALF_W, CLOUD_HALF_H, CLOUD_HALF_W);
+        vec3 bmax = cloudBoxCenter + vec3(CLOUD_HALF_W, CLOUD_HALF_H, CLOUD_HALF_W);
         
         // Calculate ray-box intersection inline (GLSL ES 2.0 doesn't support 'out' parameters)
         vec3 inv = 1.0 / max(abs(rd), vec3(0.0001));
@@ -910,6 +919,7 @@ export class DynamicSky {
         float alpha = 1.0 - transmittance;
         alpha *= coverage * alphaScale;
         alpha = clamp(alpha, 0.0, 0.95);
+        if (alpha < 0.004) discard;
         
         gl_FragColor = vec4(finalColor, alpha);
       }
@@ -922,7 +932,7 @@ export class DynamicSky {
         fragmentShader: fShader,
         transparent: true,
         depthWrite: false,
-        depthTest: true,
+        depthTest: false,
         side: THREE.BackSide
       })
       
@@ -938,8 +948,10 @@ export class DynamicSky {
     this.volumetricCloudMesh.renderOrder = -998
     this.volumetricCloudMesh.name = 'Volumetric Clouds (Optimized)'
     this.volumetricCloudMesh.visible = uiDensity > 0
+    this.volumetricCloudMesh.userData.isDynamicSky = true
+    this.volumetricCloudMesh.raycast = () => {}
     // Anchor cloud box so its bottom face sits on the ground plane
-    this.volumetricCloudMesh.position.y = WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2
+    this.volumetricCloudMesh.position.y = cloudBoxCenterY
     
     this.scene.add(this.volumetricCloudMesh)
   }
@@ -951,11 +963,15 @@ export class DynamicSky {
         this.skyMesh.position.copy(config.position)
       }
       if (this.volumetricCloudMesh) {
-        this.volumetricCloudMesh.position.set(
-          config.position.x,
-          WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2,
-          config.position.z
-        )
+        const centerY = WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2
+        this.volumetricCloudMesh.position.set(config.position.x, centerY, config.position.z)
+        if (this.volumetricCloudMaterial?.uniforms?.cloudBoxCenter) {
+          this.volumetricCloudMaterial.uniforms.cloudBoxCenter.value.set(
+            config.position.x,
+            centerY,
+            config.position.z
+          )
+        }
         
         // Calculate camera distance for adaptive quality
         this.cameraDistance = config.position.length()
@@ -1182,6 +1198,14 @@ export class DynamicSky {
     
     if (this.volumetricCloudMesh) {
       this.volumetricCloudMesh.visible = cloudVisible
+      const centerY = WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2
+      if (this.volumetricCloudMaterial?.uniforms?.cloudBoxCenter) {
+        this.volumetricCloudMaterial.uniforms.cloudBoxCenter.value.set(
+          this.volumetricCloudMesh.position.x,
+          centerY,
+          this.volumetricCloudMesh.position.z
+        )
+      }
     }
   }
 
