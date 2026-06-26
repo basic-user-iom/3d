@@ -319,7 +319,6 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const splatDebugLoggedOnceRef = useRef<boolean>(false)
   const splatRenderLoggedOnceRef = useRef<boolean>(false)
   const lastWeatherMaterialKeyRef = useRef<string | null>(null)
-  const lastMaterialAnalysisKeyRef = useRef<string | null>(null)
   const DEBUG_LOG_THROTTLE_MS = 1000 // 1 second
   const throttledDebugLog = useRef({
     log: (...args: any[]) => {
@@ -4439,8 +4438,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // Update CSM (recalculates cascades based on camera position)
         viewerRef.current.csmShadowSystem.update()
         
-        // Update water system
-        if (viewerRef.current.standaloneWaterSystem) {
+        // Update water system (only when enabled)
+        if (viewerRef.current.standaloneWaterSystem?.getConfig().enabled) {
           const sunDir = viewerRef.current.sunMoonSystem 
             ? viewerRef.current.sunMoonSystem.getSunDirection() 
             : new THREE.Vector3(0, 1, 0)
@@ -6983,6 +6982,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const skyAzimuth = useAppStore((state) => state.skyAzimuth)
 
   const northOffset = useAppStore((state) => state.northOffset)
+  const waterEnabled = useAppStore((state) => state.waterEnabled)
+  const waterLevel = useAppStore((state) => state.waterLevel)
+  const waterColor = useAppStore((state) => state.waterColor)
+  const waterOpacity = useAppStore((state) => state.waterOpacity)
+  const waveSpeed = useAppStore((state) => state.waveSpeed)
+  const waveHeight = useAppStore((state) => state.waveHeight)
+  const waterReflectivity = useAppStore((state) => state.waterReflectivity)
   const sunSize = useAppStore((state) => state.sunSize)
   const moonSize = useAppStore((state) => state.moonSize)
   const weatherQuality = useAppStore((state) => state.weatherQuality)
@@ -7355,20 +7361,48 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         viewerRef.current.sunMoonSystem = sunMoonSystem
       }
       
-      if (!viewerRef.current.standaloneWaterSystem) {
+      if (!viewerRef.current.standaloneWaterSystem && waterEnabled) {
         console.log('[ViewerCanvas] Creating standalone water system')
         const standaloneWaterSystem = new StandaloneWaterSystem(scene, {
           enabled: true,
-          level: 0,
-          color: '#1a4d7a',
-          opacity: 0.8,
-          waveSpeed: 0.5,
-          waveHeight: 0.5,
-          reflectivity: 0.6,
+          level: waterLevel,
+          color: waterColor,
+          opacity: waterOpacity,
+          waveSpeed: waveSpeed,
+          waveHeight: waveHeight,
+          reflectivity: waterReflectivity,
           sunDirection: sunPosition
         })
         viewerRef.current.standaloneWaterSystem = standaloneWaterSystem
+      } else if (viewerRef.current.standaloneWaterSystem) {
+        if (waterEnabled) {
+          viewerRef.current.standaloneWaterSystem.updateConfig({
+            enabled: true,
+            level: waterLevel,
+            color: waterColor,
+            opacity: waterOpacity,
+            waveSpeed,
+            waveHeight,
+            reflectivity: waterReflectivity
+          })
+          viewerRef.current.standaloneWaterSystem.setSunDirection(sunDir)
+        } else {
+          viewerRef.current.standaloneWaterSystem.setEnabled(false)
+        }
       }
+      
+      // Shadow plane: FrontSide during standalone weather so sky/cloud light does not bleed through underside
+      scene.traverse((obj) => {
+        if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
+          const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
+          for (const mat of materials) {
+            if (mat && 'side' in mat) {
+              ;(mat as THREE.Material).side = THREE.FrontSide
+              mat.needsUpdate = true
+            }
+          }
+        }
+      })
       
       if (!viewerRef.current.atmosphericPerspective) {
         console.log('[ViewerCanvas] Creating atmospheric perspective (fog/haze)')
@@ -7445,8 +7479,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         })
       }
       
-      // Update water system with sun direction
-      if (viewerRef.current.standaloneWaterSystem) {
+      // Update water system with sun direction (only when water is enabled)
+      if (viewerRef.current.standaloneWaterSystem && waterEnabled) {
         viewerRef.current.standaloneWaterSystem.setSunDirection(sunDir)
       }
       
@@ -8294,7 +8328,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // No warning needed as this is normal behavior during loading
       }
     }
-  }, [weatherPreset, cloudDensity, cloudThickness, cloudDetail, cloudScale, cloudStorminess, cloudShadowStrength, cloudColor, fogDensity, fogHeight, fogColor, rainIntensity, snowIntensity, windIntensity, timeOfDay, skyTurbidity, skyAtmosphereDensity, skyRayleigh, skyMieCoefficient, skyMieDirectionalG, skyExposure, skyElevation, skyAzimuth, hdrEnabled, hdrIntensity, sunSize, moonSize, northOffset, postProcessingEnabled, toneMappingType, enableStandaloneWeather, streetsGLIframeOverlay, streetsGLBridge])
+  }, [weatherPreset, cloudDensity, cloudThickness, cloudDetail, cloudScale, cloudStorminess, cloudShadowStrength, cloudColor, fogDensity, fogHeight, fogColor, rainIntensity, snowIntensity, windIntensity, timeOfDay, skyTurbidity, skyAtmosphereDensity, skyRayleigh, skyMieCoefficient, skyMieDirectionalG, skyExposure, skyElevation, skyAzimuth, hdrEnabled, hdrIntensity, sunSize, moonSize, northOffset, postProcessingEnabled, toneMappingType, enableStandaloneWeather, streetsGLIframeOverlay, streetsGLBridge, waterEnabled, waterLevel, waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity])
 
   // Effect to update ambient light intensity from store (user slider)
   // This MUST run AFTER weather system to ensure user's slider value takes precedence
@@ -8335,13 +8369,6 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   }, [ambientIntensity])
 
   // Effect to manage particle systems and water
-  const waterEnabled = useAppStore((state) => state.waterEnabled)
-  const waterLevel = useAppStore((state) => state.waterLevel)
-  const waterColor = useAppStore((state) => state.waterColor)
-  const waterOpacity = useAppStore((state) => state.waterOpacity)
-  const waveSpeed = useAppStore((state) => state.waveSpeed)
-  const waveHeight = useAppStore((state) => state.waveHeight)
-  const waterReflectivity = useAppStore((state) => state.waterReflectivity)
   const rainParticleScale = useAppStore((state) => state.rainParticleScale)
   const rainParticleSpeed = useAppStore((state) => state.rainParticleSpeed)
   const rainCollisionEnabled = useAppStore((state) => state.rainCollisionEnabled)
@@ -8941,18 +8968,18 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         viewerRef.current.sunMoonSystem = sunMoonSystem
       }
       
-      // 3. Create water system (can be extended for OSM-based water in the future) (if not already exists)
-      if (!viewerRef.current.standaloneWaterSystem) {
+      // 3. Create water system only when water panel is enabled (if not already exists)
+      if (!viewerRef.current.standaloneWaterSystem && store.waterEnabled) {
         console.log('[ViewerCanvas] Creating standalone water system')
         const { sunPosition } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
         const standaloneWaterSystem = new StandaloneWaterSystem(scene, {
           enabled: true,
-          level: 0, // Water level (Y position)
-          color: '#1a4d7a', // Deep blue water color
-          opacity: 0.8,
-          waveSpeed: 0.5,
-          waveHeight: 0.5,
-          reflectivity: 0.6,
+          level: store.waterLevel,
+          color: store.waterColor,
+          opacity: store.waterOpacity,
+          waveSpeed: store.waveSpeed,
+          waveHeight: store.waveHeight,
+          reflectivity: store.waterReflectivity,
           sunDirection: sunPosition
         })
         viewerRef.current.standaloneWaterSystem = standaloneWaterSystem
@@ -9102,6 +9129,19 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           scene.background = new THREE.Color(0x87ceeb) // Sky blue default
         }
       }
+      
+      // Restore shadow plane DoubleSide when leaving standalone weather (HDR ground projection needs it)
+      scene.traverse((obj) => {
+        if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
+          const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
+          for (const mat of materials) {
+            if (mat && 'side' in mat) {
+              ;(mat as THREE.Material).side = THREE.DoubleSide
+              mat.needsUpdate = true
+            }
+          }
+        }
+      })
       
       // Re-enable standard Three.js sun light shadows
       if (viewerRef.current.directionalLights) {

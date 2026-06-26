@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
 
 export interface ParticleSystemConfig {
   type: 'rain' | 'snow' | 'fog'
@@ -10,6 +11,8 @@ export interface ParticleSystemConfig {
   particleSpeed?: number // Speed multiplier
   windGusts?: boolean // Enable random wind gusts
   quality?: 'low' | 'medium' | 'high' | 'ultra' // Performance quality preset
+  /** World Y of ground plane — particles stay above this level */
+  groundLevel?: number
 }
 
 /**
@@ -49,7 +52,7 @@ export class ParticleSystem {
 
   constructor(scene: THREE.Scene, config: ParticleSystemConfig) {
     this.scene = scene
-    this.config = { quality: 'high', ...config }
+    this.config = { quality: 'high', groundLevel: WEATHER_GROUND_LEVEL, ...config }
     const qualitySettings = this.QUALITY_PRESETS[this.config.quality || 'high']
     this.particleCount = Math.floor(config.intensity * qualitySettings.maxParticles)
     this.setupParticles()
@@ -212,6 +215,9 @@ export class ParticleSystem {
 
     const particleScale = this.config.particleScale || 1.0
     const particleSpeed = this.config.particleSpeed || 1.0
+    const groundLevel = this.config.groundLevel ?? WEATHER_GROUND_LEVEL
+    const spawnMinY = groundLevel + 50
+    const spawnMaxY = groundLevel + 200
 
     // Initialize particles
     for (let i = 0; i < count; i++) {
@@ -219,7 +225,7 @@ export class ParticleSystem {
       
       if (this.config.type === 'rain' || this.config.type === 'snow') {
         positions[i3] = (Math.random() - 0.5) * 300
-        positions[i3 + 1] = Math.random() * 150 + 50
+        positions[i3 + 1] = Math.random() * (spawnMaxY - spawnMinY) + spawnMinY
         positions[i3 + 2] = (Math.random() - 0.5) * 300
         
         if (this.config.type === 'rain') {
@@ -260,7 +266,7 @@ export class ParticleSystem {
         }
       } else if (this.config.type === 'fog') {
         positions[i3] = (Math.random() - 0.5) * 600
-        positions[i3 + 1] = Math.random() * 80 + 10
+        positions[i3 + 1] = Math.random() * 80 + groundLevel + 10
         positions[i3 + 2] = (Math.random() - 0.5) * 600
         
         velocities[i3] = (Math.random() - 0.5) * 0.2 * particleSpeed
@@ -350,6 +356,7 @@ export class ParticleSystem {
     const positions = this.geometry.attributes.position.array as Float32Array
     const rotations = this.geometry.attributes.rotation?.array as Float32Array
     const count = this.particleCount
+    const groundLevel = this.config.groundLevel ?? WEATHER_GROUND_LEVEL
 
     // Update shader time uniform
     if (this.material && 'uniforms' in this.material && this.material.uniforms?.time) {
@@ -383,16 +390,16 @@ export class ParticleSystem {
         this.velocities[i3 + 2] += Math.cos(gustDirection) * gustStrength * dt
       }
 
-      // Collision handling
-      if (this.config.collisionEnabled && positions[i3 + 1] < 0) {
+      // Collision handling — never settle below ground plane
+      if (this.config.collisionEnabled && positions[i3 + 1] < groundLevel) {
         if (this.config.type === 'rain') {
-          positions[i3 + 1] = 150 + Math.random() * 50
+          positions[i3 + 1] = groundLevel + 150 + Math.random() * 50
           positions[i3] = (Math.random() - 0.5) * 300
           positions[i3 + 2] = (Math.random() - 0.5) * 300
           this.velocities[i3 + 1] = (-8 - Math.random() * 7) * (this.config.particleSpeed || 1.0)
         } else {
           // Snow collision
-          positions[i3 + 1] = 0
+          positions[i3 + 1] = groundLevel
           this.velocities[i3 + 1] *= -0.1
           this.velocities[i3] *= 0.7
           this.velocities[i3 + 2] *= 0.7
@@ -402,11 +409,11 @@ export class ParticleSystem {
         }
       }
 
-      // Reset particles that fall below
+      // Reset particles that fall below ground
       if (this.config.type === 'rain' || this.config.type === 'snow') {
-        if (positions[i3 + 1] < -10) {
+        if (positions[i3 + 1] < groundLevel - 1) {
           positions[i3] = (Math.random() - 0.5) * 300
-          positions[i3 + 1] = 150 + Math.random() * 50
+          positions[i3 + 1] = groundLevel + 150 + Math.random() * 50
           positions[i3 + 2] = (Math.random() - 0.5) * 300
         }
       }

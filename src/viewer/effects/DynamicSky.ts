@@ -1,6 +1,10 @@
 import * as THREE from 'three'
 import { AtmosphereLUTSystem } from './AtmosphereLUTSystem'
 import { getLUTBasedSkyFragmentShader } from './DynamicSkyLUTShader'
+import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
+
+/** Volumetric cloud layer height above ground (world units) */
+const CLOUD_LAYER_HEIGHT = 12000
 
 export interface SkyConfig {
   timeOfDay: number // 0-24 hours (deprecated, use elevation/azimuth instead)
@@ -467,7 +471,7 @@ export class DynamicSky {
         side: THREE.BackSide, // Render inside of sphere (sky dome)
         transparent: true, // Enable transparency for sun-only visibility
         depthWrite: false,
-        depthTest: false,
+        depthTest: true, // Respect shadow/ground plane depth so sky does not show below floor
         fog: false, // Sky doesn't use fog
         // Ensure shader compiles correctly - explicitly disable fog uniforms
         defines: {
@@ -528,10 +532,8 @@ export class DynamicSky {
     const quality = this.config.quality || 'high'
     const qualitySettings = this.QUALITY_PRESETS[quality]
 
-    // Create box geometry for volumetric cloud raymarching
-    // IMPROVED: Much larger cloud box (20x larger) to match larger sky sphere
-    // Clouds should cover the same relative area as before but at larger scale
-    const geo = new THREE.BoxGeometry(40000, 12000, 40000) // 20x larger (was 2000, 600, 2000)
+    // Cloud layer sits above ground — bottom at WEATHER_GROUND_LEVEL, top at GROUND + HEIGHT
+    const geo = new THREE.BoxGeometry(40000, CLOUD_LAYER_HEIGHT, 40000)
     
     const uniforms = {
       iTime: { value: 0 },
@@ -665,8 +667,9 @@ export class DynamicSky {
         return bottom * top;
       }
       
-      // Sample cloud density at a point
+      // Sample cloud density at a point (no density below ground plane)
       float sampleCloudDensity(vec3 pos, vec3 windDir, float time, vec3 bmin, vec3 bmax) {
+        if (pos.y < ${WEATHER_GROUND_LEVEL.toFixed(1)}) return 0.0;
         // Animated sampling position
         vec3 samplePos = pos * 0.003 + windDir * time + vec3(0.0, time * 0.01, 0.0);
         
@@ -733,10 +736,9 @@ export class DynamicSky {
         vec3 ro = cameraPosition;
         vec3 rd = normalize(vWorldPos - cameraPosition);
         
-        // Cloud domain box
-        // IMPROVED: Much larger cloud domain (20x larger) to match larger sky sphere
-        vec3 bmin = vec3(-20000.0, -6000.0, -20000.0); // 20x larger (was -1000, -300, -1000)
-        vec3 bmax = vec3( 20000.0,  6000.0,  20000.0); // 20x larger (was 1000, 300, 1000)
+        // Cloud domain box — anchored above ground (y >= 0)
+        vec3 bmin = vec3(-20000.0, ${WEATHER_GROUND_LEVEL.toFixed(1)}, -20000.0);
+        vec3 bmax = vec3( 20000.0, ${(WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT).toFixed(1)},  20000.0);
         
         // Calculate ray-box intersection inline (GLSL ES 2.0 doesn't support 'out' parameters)
         vec3 inv = 1.0 / max(abs(rd), vec3(0.0001));
@@ -834,6 +836,7 @@ export class DynamicSky {
         fragmentShader: fShader,
         transparent: true,
         depthWrite: false,
+        depthTest: true,
         side: THREE.BackSide
       })
       
@@ -849,6 +852,8 @@ export class DynamicSky {
     this.volumetricCloudMesh.renderOrder = -998
     this.volumetricCloudMesh.name = 'Volumetric Clouds (Optimized)'
     this.volumetricCloudMesh.visible = cloudDensity > 0
+    // Anchor cloud box so its bottom face sits on the ground plane
+    this.volumetricCloudMesh.position.y = WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2
     
     this.scene.add(this.volumetricCloudMesh)
   }
@@ -860,7 +865,11 @@ export class DynamicSky {
         this.skyMesh.position.copy(config.position)
       }
       if (this.volumetricCloudMesh) {
-        this.volumetricCloudMesh.position.set(config.position.x, 0, config.position.z)
+        this.volumetricCloudMesh.position.set(
+          config.position.x,
+          WEATHER_GROUND_LEVEL + CLOUD_LAYER_HEIGHT / 2,
+          config.position.z
+        )
         
         // Calculate camera distance for adaptive quality
         this.cameraDistance = config.position.length()
