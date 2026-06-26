@@ -91,6 +91,14 @@ export class AtmosphericPerspective {
    */
   public setDensity(density: number): void {
     this.config.density = Math.max(0, Math.min(1, density))
+    if (this.config.density <= 0) {
+      this.destroy()
+      return
+    }
+    if (!this.fog) {
+      this.setup()
+      return
+    }
     if (this.fog instanceof THREE.FogExp2) {
       this.fog.density = fogDensityToSceneValue(this.config.density)
     }
