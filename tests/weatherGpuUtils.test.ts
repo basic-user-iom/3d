@@ -25,7 +25,7 @@ describe('weatherGpuUtils', () => {
       const sparse = getAdaptiveIqRaymarchSteps('low', 0.2)
       const dense = getAdaptiveIqRaymarchSteps('low', 0.9)
       expect(sparse).toBeLessThan(dense)
-      expect(sparse).toBeGreaterThanOrEqual(32)
+      expect(sparse).toBeGreaterThanOrEqual(40)
     })
 
     it('uses minimal steps when coverage is near zero', () => {
