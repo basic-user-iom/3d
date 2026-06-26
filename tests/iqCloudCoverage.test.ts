@@ -22,7 +22,7 @@ describe('iqCloudCoverage', () => {
   })
 
   it('provides measurable alpha scale at 1% for wisps', () => {
-    expect(iqCoverageAlphaScale(0.01)).toBeGreaterThan(0.4)
+    expect(iqCoverageAlphaScale(0.01)).toBeGreaterThan(0.15)
     expect(iqCoverageAlphaScale(0.01)).toBeLessThan(iqCoverageAlphaScale(1))
   })
 

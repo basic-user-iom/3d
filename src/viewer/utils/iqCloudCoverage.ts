@@ -36,8 +36,8 @@ export function iqCoverageFeather(coverage: number): number {
 export function iqCoverageAlphaScale(coverage: number): number {
   const c = clamp01(coverage)
   if (c <= 0.004) return 0
-  // Floor keeps 1% wisps visible; quadratic tail for storm ceiling
-  return 0.42 + 0.7 * Math.pow(c, 0.75)
+  // Low coverage stays wispy; high coverage builds to overcast/storm
+  return 0.15 + 0.97 * Math.pow(c, 0.82)
 }
 
 /** @deprecated Use iqCoverageCutoff — kept for shader export tests */
@@ -70,7 +70,7 @@ export function getIqCoverageGlsl(): string {
 
     float iqCoverageAlphaScale(float cov) {
       if (cov <= 0.004) return 0.0;
-      return 0.42 + 0.7 * pow(cov, 0.75);
+      return 0.15 + 0.97 * pow(cov, 0.82);
     }
   `
 }
