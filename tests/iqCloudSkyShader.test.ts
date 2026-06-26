@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   getIqCloudSkyFragmentShader,
   IQ_CLOUD_SKY_VERTEX_SHADER,
-  IQ_CLOUD_BASE,
-  IQ_CLOUD_LAYER_HEIGHT
+  IQ_CLOUD_BASE_OFFSET,
+  IQ_CLOUD_LAYER_THICKNESS,
+  IQ_CLOUD_NOISE_XZ_SCALE,
+  iqCloudBandY,
+  iqCoverageToThickness
 } from '../src/viewer/effects/IqCloudSkyShader'
 
 describe('IqCloudSkyShader', () => {
@@ -11,17 +14,29 @@ describe('IqCloudSkyShader', () => {
     const fragment = getIqCloudSkyFragmentShader()
     expect(fragment).toContain('raymarchClouds')
     expect(fragment).toContain('mapDensity')
-    expect(fragment).toContain('pow(sun, 6.0)')
+    expect(fragment).toContain('uniform float cloudBaseY')
+    expect(fragment).toContain('uniform float cloudTopY')
+    expect(fragment).toContain('uniform float cloudScale')
+    expect(fragment).toContain('float d = 0.2 - p.y')
+    expect(fragment).toContain('pow(sun, 5.0)')
     expect(fragment).toContain('gl_FragColor = vec4(col, 1.0)')
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
 
-  it('embeds cloud layer bounds in generated shader', () => {
-    const fragment = getIqCloudSkyFragmentShader({
-      cloudBase: IQ_CLOUD_BASE,
-      cloudLayerHeight: IQ_CLOUD_LAYER_HEIGHT
-    })
-    expect(fragment).toContain(`CLOUD_BASE = ${IQ_CLOUD_BASE.toFixed(1)}`)
-    expect(fragment).toContain(`CLOUD_TOP = ${(IQ_CLOUD_BASE + IQ_CLOUD_LAYER_HEIGHT).toFixed(1)}`)
+  it('uses iq XslGRr noise scale in generated shader', () => {
+    const fragment = getIqCloudSkyFragmentShader()
+    expect(fragment).toContain(IQ_CLOUD_NOISE_XZ_SCALE.toFixed(6))
+  })
+
+  it('computes camera-relative cloud band inside sky dome', () => {
+    const band = iqCloudBandY(10)
+    expect(band.base).toBe(10 + IQ_CLOUD_BASE_OFFSET)
+    expect(band.top - band.base).toBe(IQ_CLOUD_LAYER_THICKNESS)
+    expect(band.top).toBeLessThan(10 + 9000)
+  })
+
+  it('maps coverage to decreasing density threshold', () => {
+    expect(iqCoverageToThickness(0)).toBeGreaterThan(iqCoverageToThickness(0.9))
+    expect(iqCoverageToThickness(0.75)).toBeCloseTo(0.215, 2)
   })
 })
