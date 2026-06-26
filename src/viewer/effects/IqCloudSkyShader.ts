@@ -1,4 +1,7 @@
 import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
+import { getIqCoverageGlsl } from '../utils/iqCloudCoverage'
+
+export { iqCoverageCutoff, iqCoverageToThickness } from '../utils/iqCloudCoverage'
 
 /** Cloud band bottom offset above the camera (world units) — fits inside 9k sky dome */
 export const IQ_CLOUD_BASE_OFFSET = 350
@@ -30,18 +33,13 @@ export function iqCloudBandY(cameraY: number): IqCloudBand {
   return { base, top: base + IQ_CLOUD_LAYER_THICKNESS }
 }
 
-/** Maps UI coverage (0–1) to iq density cutoff — lower coverage = higher cutoff */
-export function iqCoverageToThickness(coverage: number): number {
-  const c = Math.max(0, Math.min(1, coverage))
-  return 0.78 - c * 0.76
-}
-
 /**
  * iq / Inigo Quilez "Clouds" (Shadertoy XslGRr) sky + volumetric raymarch,
- * adapted for Three.js sky dome using direction-space density (works at horizon + zenith).
+ * adapted for Three.js sky dome (camera-centered sphere, camera-relative cloud band).
  */
 export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}): string {
   const groundLevel = options.groundLevel ?? WEATHER_GROUND_LEVEL
+  const coverageGlsl = getIqCoverageGlsl()
 
   return `
     #ifdef USE_FOG
@@ -63,6 +61,8 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     varying vec3 vWorldPosition;
 
     const float GROUND_LEVEL = ${groundLevel.toFixed(1)};
+
+    ${coverageGlsl}
 
     float hash(float n) {
       return fract(sin(n) * 43758.5453);
@@ -86,23 +86,30 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
         f.z);
     }
 
-    // Direction-space iq coords — clouds across full sky dome (horizon + zenith)
-    vec3 toIqSpaceFromRay(vec3 rd, float depth) {
-      float xzScale = ${IQ_CLOUD_NOISE_XZ_SCALE.toFixed(6)} / max(0.35, cloudScale);
-      float spread = 1.85 + depth * 0.55;
+    vec3 toIqSpace(vec3 worldPos) {
+      vec3 local = worldPos;
+      local.xz -= cameraPosition.xz;
+
+      float layerH = max(1.0, cloudTopY - cloudBaseY);
+      float yNorm = (worldPos.y - cloudBaseY) / layerH;
       vec3 p;
-      p.y = rd.y * 0.38 - 0.06 + depth * 0.045;
-      p.x = rd.x * spread + cameraPosition.x * xzScale;
-      p.z = rd.z * spread + cameraPosition.z * xzScale;
+      p.y = yNorm * 0.38 - 0.06;
+      float xzScale = ${IQ_CLOUD_NOISE_XZ_SCALE.toFixed(6)} / max(0.35, cloudScale);
+      p.x = local.x * xzScale;
+      p.z = local.z * xzScale;
       return p;
     }
 
-    float mapDensityAtDepth(vec3 rd, float depth) {
+    float mapDensity(vec3 worldPos) {
       if (coverage <= 0.004) {
         return 0.0;
       }
 
-      vec3 p = toIqSpaceFromRay(rd, depth);
+      if (worldPos.y < max(GROUND_LEVEL, cloudBaseY - 40.0) || worldPos.y > cloudTopY + 250.0) {
+        return 0.0;
+      }
+
+      vec3 p = toIqSpace(worldPos);
       float d = 0.2 - p.y;
 
       vec3 q = p - vec3(1.0, 0.1, 0.0) * (iTime * windSpeed);
@@ -115,42 +122,65 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       d += 3.0 * f;
       d = clamp(d, 0.0, 1.0);
 
-      float cutoff = mix(0.78, 0.02, coverage);
-      d = smoothstep(cutoff, cutoff + 0.12, d);
+      float cutoff = iqCoverageCutoff(coverage);
+      float feather = iqCoverageFeather(coverage);
+      d = smoothstep(cutoff, cutoff + feather, d);
       return d;
     }
 
-    vec4 mapColorDensityAtDepth(vec3 rd, float depth) {
-      float den = mapDensityAtDepth(rd, depth);
+    vec4 mapColorDensity(vec3 worldPos) {
+      float den = mapDensity(worldPos);
       vec3 albedo = mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), den);
       albedo = mix(albedo, albedo * vec3(0.55, 0.58, 0.62), storminess * 0.4);
       return vec4(albedo, den);
     }
 
-    // Direction-space raymarch (Shadertoy-style) — not world-Y slab
-    vec4 raymarchClouds(vec3 rd, vec3 sunDir, float dayFactor) {
+    // Y-slab raymarch — path-length steps so horizon rays sample the full cloud layer
+    vec4 raymarchClouds(vec3 ro, vec3 rd, vec3 sunDir, float dayFactor) {
+      if (rd.y <= 0.0) {
+        return vec4(0.0);
+      }
+
+      float tEnter = (cloudBaseY - ro.y) / rd.y;
+      float tExit = (cloudTopY - ro.y) / rd.y;
+      if (tEnter > tExit) {
+        float swapT = tEnter;
+        tEnter = tExit;
+        tExit = swapT;
+      }
+
+      float tNear = max(tEnter, 0.0);
+      float tFar = tExit;
+      if (tFar <= tNear) {
+        return vec4(0.0);
+      }
+
       vec4 sum = vec4(0.0);
-      float t = 0.0;
+      float t = tNear;
       int steps = raymarchSteps;
+      float pathLen = tFar - tNear;
+      float dt = pathLen / max(1.0, float(steps));
+      float alphaScale = iqCoverageAlphaScale(coverage);
 
       for (int i = 0; i < 96; i++) {
         if (i >= steps) break;
         if (sum.a > 0.99) break;
+        if (t > tFar) break;
 
-        vec4 col = mapColorDensityAtDepth(rd, t);
-        float denAhead = mapDensityAtDepth(normalize(rd + 0.08 * sunDir), t + 0.15);
+        vec3 pos = ro + t * rd;
+        vec4 col = mapColorDensity(pos);
 
-        float dif = clamp((col.w - denAhead) / 0.6, 0.0, 1.0);
+        float dif = clamp((col.w - mapDensity(pos + 0.3 * sunDir)) / 0.6, 0.0, 1.0);
         vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
         lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
-        lin *= mix(0.28, 1.0, dayFactor);
+        lin *= mix(0.22, 1.0, dayFactor);
 
         col.xyz *= lin;
-        col.a *= 0.42 * mix(0.6, 1.0, dayFactor);
+        col.a *= 0.35 * alphaScale * mix(0.55, 1.0, dayFactor);
         col.rgb *= col.a;
         sum = sum + col * (1.0 - sum.a);
 
-        t += max(0.08, 0.025 * t);
+        t += dt;
       }
 
       sum.xyz /= (0.001 + sum.w);
@@ -182,6 +212,7 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     }
 
     void main() {
+      vec3 ro = cameraPosition;
       vec3 rd = normalize(vWorldPosition - cameraPosition);
       vec3 sunDir = normalize(sunPosition);
       float sunElev = sunDir.y;
@@ -193,7 +224,7 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       col += 0.2 * vec3(1.0, 0.6, 0.1) * pow(sun, 8.0) * dayFactor;
 
       if (coverage > 0.004) {
-        vec4 clouds = raymarchClouds(rd, sunDir, dayFactor);
+        vec4 clouds = raymarchClouds(ro, rd, sunDir, dayFactor);
         col = mix(col, clouds.xyz, clouds.w);
       }
 
