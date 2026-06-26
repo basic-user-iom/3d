@@ -7475,7 +7475,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cloudColor: new THREE.Color(cloudColor || '#ffffff'),
           windIntensity: windIntensity || 0.0,
           quality: weatherQuality || 'high',
-          cloudRenderingMode: 'iq'
+          cloudRenderingMode: 'hybrid'
         }, renderer) // Pass renderer for LUT system
         viewerRef.current.dynamicSky = dynamicSky
         activateDynamicSkyCamera(viewerRef.current)
@@ -7551,7 +7551,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           cloudShadowStrength: currentStore.cloudShadowStrength || 0.0,
           cloudColor: new THREE.Color(currentStore.cloudColor || '#ffffff'),
           windIntensity: currentStore.windIntensity || 0.0,
-          cloudRenderingMode: 'iq'
+          cloudRenderingMode: 'hybrid'
         })
       }
 
@@ -9086,7 +9086,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           cloudColor: new THREE.Color(store.cloudColor || '#ffffff'),
           windIntensity: store.windIntensity || 0.0,
           quality: store.weatherQuality || 'high',
-          cloudRenderingMode: 'iq'
+          cloudRenderingMode: 'hybrid'
         }, viewerRef.current.renderer) // Pass renderer for LUT system
         viewerRef.current.dynamicSky = dynamicSky
         activateDynamicSkyCamera(viewerRef.current)
@@ -9126,7 +9126,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           cloudColor: new THREE.Color(store.cloudColor || '#ffffff'),
           windIntensity: store.windIntensity ?? 0.0,
           quality: store.weatherQuality || 'high',
-          cloudRenderingMode: 'iq'
+          cloudRenderingMode: 'hybrid'
         })
         viewerRef.current.dynamicSky.update(camera)
       }

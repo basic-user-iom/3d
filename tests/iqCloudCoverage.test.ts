@@ -7,9 +7,9 @@ import {
 
 describe('iqCloudCoverage', () => {
   it('maps slider tiers to expected density cutoffs', () => {
-    expect(iqCoverageCutoff(0)).toBeCloseTo(0.82, 2)
-    expect(iqCoverageCutoff(0.25)).toBeCloseTo(0.615, 2)
-    expect(iqCoverageCutoff(0.75)).toBeCloseTo(0.205, 2)
+    expect(iqCoverageCutoff(0)).toBeCloseTo(0.76, 2)
+    expect(iqCoverageCutoff(0.25)).toBeCloseTo(0.423, 1)
+    expect(iqCoverageCutoff(0.75)).toBeCloseTo(0.143, 1)
     expect(iqCoverageCutoff(1)).toBe(0)
   })
 
@@ -19,6 +19,11 @@ describe('iqCloudCoverage', () => {
 
   it('returns zero opacity scale when coverage is disabled', () => {
     expect(iqCoverageAlphaScale(0)).toBe(0)
+  })
+
+  it('provides measurable alpha scale at 1% for wisps', () => {
+    expect(iqCoverageAlphaScale(0.01)).toBeGreaterThan(0.4)
+    expect(iqCoverageAlphaScale(0.01)).toBeLessThan(iqCoverageAlphaScale(1))
   })
 
   it('ramps opacity for storm ceiling at 100%', () => {

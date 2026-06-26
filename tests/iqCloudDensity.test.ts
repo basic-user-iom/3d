@@ -55,6 +55,24 @@ describe('iqCloudDensity', () => {
       expect(horizonAlpha).toBeGreaterThan(0.12)
     })
 
+    it('produces measurable raymarch alpha at 1% coverage (zenith wisps)', () => {
+      const wisps = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
+        coverage: 0.01,
+        cloudScale: 1,
+        steps: 64,
+        dayFactor: 1
+      })
+      expect(wisps).toBeGreaterThan(0.02)
+      expect(wisps).toBeLessThan(
+        estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
+          coverage: 0.25,
+          cloudScale: 1,
+          steps: 64,
+          dayFactor: 1
+        })
+      )
+    })
+
     it('maps slider tiers with perceptual progression', () => {
       const clear = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
         coverage: 0,
@@ -87,13 +105,14 @@ describe('iqCloudDensity', () => {
     })
 
     it('dims clouds at night but keeps some visibility when coverage is high', () => {
+      const moderate = { coverage: 0.5, cloudScale: 1, time: 12.5, windSpeed: 0.1 }
       const day = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.midSky, {
-        ...overcast,
+        ...moderate,
         steps: 48,
         dayFactor: 1
       })
       const night = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.midSky, {
-        ...overcast,
+        ...moderate,
         steps: 48,
         dayFactor: 0.25
       })

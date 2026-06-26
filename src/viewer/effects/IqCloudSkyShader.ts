@@ -20,6 +20,8 @@ export const IQ_CLOUD_NOISE_XZ_SCALE = 0.00025
 
 export interface IqCloudShaderOptions {
   groundLevel?: number
+  /** When true, sky gradient + sun only — box Worley layer handles clouds (hybrid mode) */
+  skyOnly?: boolean
 }
 
 export interface IqCloudBand {
@@ -39,6 +41,7 @@ export function iqCloudBandY(cameraY: number): IqCloudBand {
  */
 export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}): string {
   const groundLevel = options.groundLevel ?? WEATHER_GROUND_LEVEL
+  const skyOnly = options.skyOnly ?? false
   const coverageGlsl = getIqCoverageGlsl()
 
   return `
@@ -223,10 +226,12 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
 
       col += 0.2 * vec3(1.0, 0.6, 0.1) * pow(sun, 8.0) * dayFactor;
 
+${skyOnly ? '' : `
       if (coverage > 0.004) {
         vec4 clouds = raymarchClouds(ro, rd, sunDir, dayFactor);
         col = mix(col, clouds.xyz, clouds.w);
       }
+`}
 
       col += 0.1 * vec3(1.0, 0.4, 0.2) * pow(sun, 3.0) * dayFactor;
       col *= 0.95;
