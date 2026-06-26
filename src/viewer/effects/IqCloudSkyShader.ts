@@ -68,6 +68,10 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       return fract(sin(n) * 43758.5453);
     }
 
+    float hash3(vec3 p) {
+      return fract(sin(dot(floor(p), vec3(1.0, 57.0, 113.0))) * 43758.5453);
+    }
+
     // iq 3D value noise
     float noise(in vec3 x) {
       vec3 p = floor(x);
@@ -83,13 +87,16 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     }
 
     vec3 toIqSpace(vec3 worldPos) {
+      vec3 local = worldPos;
+      local.xz -= cameraPosition.xz;
+
       float layerH = max(1.0, cloudTopY - cloudBaseY);
       float yNorm = (worldPos.y - cloudBaseY) / layerH;
       vec3 p;
       p.y = yNorm * 0.38 - 0.06;
       float xzScale = ${IQ_CLOUD_NOISE_XZ_SCALE.toFixed(6)} / max(0.35, cloudScale);
-      p.x = worldPos.x * xzScale;
-      p.z = worldPos.z * xzScale;
+      p.x = local.x * xzScale;
+      p.z = local.z * xzScale;
       return p;
     }
 
@@ -123,44 +130,51 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       return vec4(albedo, den);
     }
 
-    vec4 raymarchClouds(vec3 ro, vec3 rd, vec3 sunDir) {
-      vec3 inv = 1.0 / max(abs(rd), vec3(0.0001));
-      vec3 bmin = vec3(-25000.0, cloudBaseY, -25000.0);
-      vec3 bmax = vec3( 25000.0, cloudTopY,  25000.0);
-      vec3 tmin = (bmin - ro) * inv;
-      vec3 tmax = (bmax - ro) * inv;
-      vec3 t1v = min(tmin, tmax);
-      vec3 t2v = max(tmin, tmax);
-      float tNear = max(max(t1v.x, t1v.y), t1v.z);
-      float tFar = min(min(t2v.x, t2v.y), t2v.z);
+    // Y-slab intersection only — infinite XZ (finite AABB breaks horizon rays)
+    vec4 raymarchClouds(vec3 ro, vec3 rd, vec3 sunDir, float dayFactor) {
+      if (rd.y <= 0.0002) {
+        return vec4(0.0);
+      }
+
+      float tEnter = (cloudBaseY - ro.y) / rd.y;
+      float tExit = (cloudTopY - ro.y) / rd.y;
+      if (tEnter > tExit) {
+        float swapT = tEnter;
+        tEnter = tExit;
+        tExit = swapT;
+      }
+
+      float tNear = max(tEnter, 0.0);
+      float tFar = tExit;
       if (tFar <= tNear) {
         return vec4(0.0);
       }
-      tNear = max(tNear, 0.0);
 
       vec4 sum = vec4(0.0);
       float t = tNear;
       int steps = raymarchSteps;
       float layerSpan = max(1.0, cloudTopY - cloudBaseY);
-      float minStep = layerSpan / (float(steps) * 1.35);
+      float minStep = layerSpan / (float(steps) * 1.2);
 
       for (int i = 0; i < 96; i++) {
         if (i >= steps) break;
         if (sum.a > 0.99) break;
+        if (t > tFar) break;
 
         vec3 pos = ro + t * rd;
         vec4 col = mapColorDensity(pos);
-        if (col.w > 0.008) {
-          float dif = clamp((col.w - mapDensity(pos + 0.3 * sunDir)) / 0.6, 0.0, 1.0);
-          vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
-          lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
-          col.xyz *= lin;
-          col.a *= 0.35;
-          col.rgb *= col.a;
-          sum = sum + col * (1.0 - sum.a);
-        }
 
-        t += max(minStep, minStep * 0.35 + 0.006 * t);
+        float dif = clamp((col.w - mapDensity(pos + 0.3 * sunDir)) / 0.6, 0.0, 1.0);
+        vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
+        lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
+        lin *= mix(0.22, 1.0, dayFactor);
+
+        col.xyz *= lin;
+        col.a *= 0.35 * mix(0.55, 1.0, dayFactor);
+        col.rgb *= col.a;
+        sum = sum + col * (1.0 - sum.a);
+
+        t += max(minStep, minStep * 0.25 + 0.004 * t);
       }
 
       sum.xyz /= (0.001 + sum.w);
@@ -168,38 +182,59 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     }
 
     vec3 iqSkyGradient(vec3 rd, vec3 sunDir) {
+      float sunElev = sunDir.y;
       vec3 col = vec3(0.6, 0.71, 0.75) - rd.y * 0.2 * vec3(1.0, 0.5, 1.0) + 0.075;
 
-      float sunElev = sunDir.y;
       float twilight = smoothstep(0.2, -0.08, sunElev);
       col = mix(col, col * vec3(1.12, 0.74, 0.48), twilight * 0.45);
 
       float night = smoothstep(0.02, -0.25, sunElev);
-      col = mix(col, col * vec3(0.12, 0.16, 0.28), night * 0.75);
+      vec3 nightCol = vec3(0.02, 0.03, 0.07) + rd.y * vec3(0.01, 0.015, 0.04);
+      col = mix(col, nightCol, night * 0.92);
 
       return col;
+    }
+
+    float starField(vec3 rd, float sunElev) {
+      if (sunElev > -0.04) return 0.0;
+      vec3 p = rd * 95.0;
+      vec3 id = floor(p);
+      float h = hash3(id);
+      float twinkle = 0.75 + 0.25 * sin(iTime * 1.7 + h * 40.0);
+      float star = step(0.992, h) * twinkle;
+      return star * smoothstep(0.0, -0.2, sunElev);
     }
 
     void main() {
       vec3 ro = cameraPosition;
       vec3 rd = normalize(vWorldPosition - cameraPosition);
       vec3 sunDir = normalize(sunPosition);
+      float sunElev = sunDir.y;
+      float dayFactor = smoothstep(-0.12, 0.08, sunElev);
 
       vec3 col = iqSkyGradient(rd, sunDir);
       float sun = clamp(dot(sunDir, rd), 0.0, 1.0);
 
-      col += 0.2 * vec3(1.0, 0.6, 0.1) * pow(sun, 8.0);
+      col += 0.2 * vec3(1.0, 0.6, 0.1) * pow(sun, 8.0) * dayFactor;
 
       if (coverage > 0.004) {
-        vec4 clouds = raymarchClouds(ro, rd, sunDir);
+        vec4 clouds = raymarchClouds(ro, rd, sunDir, dayFactor);
         col = mix(col, clouds.xyz, clouds.w);
       }
 
-      col += 0.1 * vec3(1.0, 0.4, 0.2) * pow(sun, 3.0);
+      col += 0.1 * vec3(1.0, 0.4, 0.2) * pow(sun, 3.0) * dayFactor;
       col *= 0.95;
 
-      float sunDisk = smoothstep(0.9993, 0.99985, sun);
+      float sunDisk = smoothstep(0.9993, 0.99985, sun) * dayFactor;
       col += vec3(1.0, 0.9, 0.62) * sunDisk * 5.0;
+
+      vec3 moonDir = normalize(vec3(-sunDir.x, max(sunDir.y, 0.05), -sunDir.z));
+      float moon = clamp(dot(moonDir, rd), 0.0, 1.0);
+      float moonDisk = smoothstep(0.9994, 0.99982, moon) * (1.0 - dayFactor);
+      col += vec3(0.75, 0.8, 0.95) * moonDisk * 2.5;
+      col += vec3(0.35, 0.4, 0.55) * pow(moon, 6.0) * (1.0 - dayFactor) * 0.35;
+
+      col += vec3(0.85, 0.9, 1.0) * starField(rd, sunElev);
 
       float expBoost = max(exposure - 1.0, 0.0);
       if (expBoost > 0.001) {

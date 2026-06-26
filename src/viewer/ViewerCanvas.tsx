@@ -41,7 +41,9 @@ import {
   timeOfDayToSkyAngles,
   createLight,
   computeLightDirection as computeLightDirectionUtil,
-  clampStandaloneSunSkyDirection,
+  isNightTimeOfDay,
+  standaloneSkySunDirection,
+  standaloneLightSunDirection,
   sunSkyDirectionToLightPosition,
   sunSkyDirectionToLightTravelDirection
 } from './utils/lightUtils'
@@ -7254,19 +7256,15 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
 
     // Calculate sun position based on time of day with North offset
-    // CRITICAL: sunPosition is already normalized from timeOfDayToSkyAngles
     const { sunPosition } = timeOfDayToSkyAngles(timeOfDay, northOffset)
-    let sunDir = sunPosition.clone().normalize()
-    if (enableStandaloneWeather) {
-      sunDir = clampStandaloneSunSkyDirection(sunDir)
-    }
-    const sunLightTravelDir = sunSkyDirectionToLightTravelDirection(sunDir)
-    
-    // CRITICAL: All systems must use the exact same direction vector
-    // - CSM shadows: use sunDir
-    // - Sun mesh: use sunPosition (already normalized, same as sunDir)
-    // - Dynamic sky: use sunPosition (already normalized, same as sunDir)
-    // - Three.js sun light: use sunPosition for position (direction is position to target)
+    const skySunDir = standaloneSkySunDirection(sunPosition)
+    const lightSunDir = enableStandaloneWeather
+      ? standaloneLightSunDirection(skySunDir)
+      : skySunDir.clone()
+    const sunLightTravelDir = sunSkyDirectionToLightTravelDirection(lightSunDir)
+
+    // Sky shader / moon use skySunDir (true elevation, including night below horizon).
+    // CSM, directional lights, and water use lightSunDir (clamped above horizon).
     
     // DEBUG: Log the state values to understand which branch executes (preset changes only)
     if (weatherMaterialChanged) {
@@ -7285,9 +7283,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
       // Sync timeOfDay to Streets GL sun direction
       streetsGLBridge.setSunDirection({
-        x: sunDir.x,
-        y: sunDir.y,
-        z: sunDir.z
+        x: lightSunDir.x,
+        y: lightSunDir.y,
+        z: lightSunDir.z
       })
       
       // Disable Three.js sun light when Streets GL is active
@@ -7305,7 +7303,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (viewerRef.current.dynamicSky) {
         // Use the sunDir that was calculated from timeOfDay (same as what was sent to Streets GL)
         // Convert direction to position for Three.js Sky
-        const finalSunPosition = sunDir.clone().multiplyScalar(1000) // Scale to sky sphere radius
+        const finalSunPosition = skySunDir.clone().multiplyScalar(1000) // Scale to sky sphere radius
         
         const currentStore = useAppStore.getState()
         const { elevation, azimuth } = timeOfDayToSkyAngles(timeOfDay, currentStore.northOffset)
@@ -7361,7 +7359,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         console.log('[ViewerCanvas] Creating Sun/Moon system')
         const sunMoonSystem = new SunMoonSystem(scene, {
           timeOfDay: timeOfDay,
-          sunPosition: sunPosition,
+          sunPosition: skySunDir,
           sunColor: new THREE.Color(0xffffff),
           turbidity: 10,
           sunSize: sunSize,
@@ -7381,7 +7379,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           waveSpeed: waveSpeed,
           waveHeight: waveHeight,
           reflectivity: waterReflectivity,
-          sunDirection: sunPosition
+          sunDirection: lightSunDir
         })
         viewerRef.current.standaloneWaterSystem = standaloneWaterSystem
       } else if (viewerRef.current.standaloneWaterSystem) {
@@ -7395,7 +7393,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             waveHeight,
             reflectivity: waterReflectivity
           })
-          viewerRef.current.standaloneWaterSystem.setSunDirection(sunDir)
+          viewerRef.current.standaloneWaterSystem.setSunDirection(lightSunDir)
         } else {
           viewerRef.current.standaloneWaterSystem.setEnabled(false)
         }
@@ -7418,7 +7416,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         console.log('[ViewerCanvas] Creating atmospheric perspective (fog/haze)')
         const { elevation } = timeOfDayToSkyAngles(timeOfDay, northOffset)
         let initialFogColor = '#87ceeb'
-        if (elevation < 0.1) {
+        if (elevation < 0) {
+          initialFogColor = '#0a1020'
+        } else if (elevation < 0.1) {
           initialFogColor = '#ff8c42'
         } else if (elevation < 0.3) {
           initialFogColor = '#ffb347'
@@ -7443,7 +7443,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         const { elevation, azimuth } = timeOfDayToSkyAngles(timeOfDay, northOffset)
         const dynamicSky = new DynamicSky(scene, {
           timeOfDay: timeOfDay,
-          sunPosition: sunDir.clone(),
+          sunPosition: skySunDir.clone(),
           sunColor: new THREE.Color(0xffffff),
           turbidity: skyTurbidity || 10.0,
           atmosphereDensity: skyAtmosphereDensity || 0.5,
@@ -7482,7 +7482,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (viewerRef.current.sunMoonSystem) {
         viewerRef.current.sunMoonSystem.update({
           timeOfDay: timeOfDay,
-          sunPosition: sunDir,
+          sunPosition: skySunDir,
           sunColor: new THREE.Color(sunColor),
           turbidity: 10,
           sunSize: sunSize,
@@ -7493,7 +7493,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       
       // Update water system with sun direction (only when water is enabled)
       if (viewerRef.current.standaloneWaterSystem && waterEnabled) {
-        viewerRef.current.standaloneWaterSystem.setSunDirection(sunDir)
+        viewerRef.current.standaloneWaterSystem.setSunDirection(lightSunDir)
       }
       
       // Update dynamic sky with new sun position and time of day
@@ -7502,7 +7502,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         
         // CRITICAL: For standalone weather, use the same sunPosition as CSM and sun mesh
         // Only override if Streets GL is active (which has its own sun direction)
-        let finalSunPosition = sunDir.clone() // Clamped sky direction — matches CSM and sun light
+        let finalSunPosition = skySunDir.clone() // True sky direction (unclamped — night below horizon)
         if (streetsGLIframeOverlay && directionalLights) {
           // Streets GL branch: sync with Streets GL sun direction
           const sunLight = Array.from(directionalLights.values()).find(
@@ -7547,7 +7547,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         const currentStore = useAppStore.getState()
         const { elevation } = timeOfDayToSkyAngles(timeOfDay, currentStore.northOffset)
         let aerialFogColor = '#87ceeb'
-        if (elevation < 0.1) {
+        if (elevation < 0) {
+          aerialFogColor = '#0a1020'
+        } else if (elevation < 0.1) {
           aerialFogColor = '#ff8c42'
         } else if (elevation < 0.3) {
           aerialFogColor = '#ffb347'
@@ -7569,7 +7571,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (directionalLights) {
         directionalLights.forEach((light) => {
           if (light.userData.isSun && light instanceof THREE.DirectionalLight) {
-            const sunLightPosition = sunSkyDirectionToLightPosition(sunDir)
+            const sunLightPosition = sunSkyDirectionToLightPosition(lightSunDir)
             light.position.copy(sunLightPosition)
             if (!light.target.parent) {
               scene.add(light.target)
@@ -7598,7 +7600,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           if (light.userData.isSun && light instanceof THREE.DirectionalLight) {
             // CRITICAL: When HDR is enabled, adjust sun direction to match HDR rotation
             // HDR has been rotated 180° (both X and Y) to fix orientation, so sun light should match
-            let adjustedSunDir = sunDir.clone()
+            let adjustedSunDir = skySunDir.clone()
             const hdrEnabled = useAppStore.getState().hdrEnabled
             if (hdrEnabled) {
               // Apply 180° rotation to match HDR's rotated environment
@@ -8915,7 +8917,9 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         
         // CRITICAL: Immediately update CSM with current sun direction (don't wait for time of day effect)
         const { sunPosition: currentSunPosition } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
-        const currentSunSkyDir = clampStandaloneSunSkyDirection(currentSunPosition)
+        const currentSunSkyDir = standaloneLightSunDirection(
+          standaloneSkySunDirection(currentSunPosition)
+        )
         const currentSunLightTravelDir = sunSkyDirectionToLightTravelDirection(currentSunSkyDir)
         csmShadowSystem.setLightDirection(currentSunLightTravelDir)
         console.log('[ViewerCanvas] CSM initialized and updated with current sun direction:', currentSunLightTravelDir)
@@ -8992,6 +8996,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
       if (!viewerRef.current.standaloneWaterSystem && store.waterEnabled) {
         console.log('[ViewerCanvas] Creating standalone water system')
         const { sunPosition } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
+        const initLightSunDir = standaloneLightSunDirection(standaloneSkySunDirection(sunPosition))
         const standaloneWaterSystem = new StandaloneWaterSystem(scene, {
           enabled: true,
           level: store.waterLevel,
@@ -9000,7 +9005,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           waveSpeed: store.waveSpeed,
           waveHeight: store.waveHeight,
           reflectivity: store.waterReflectivity,
-          sunDirection: sunPosition
+          sunDirection: initLightSunDir
         })
         viewerRef.current.standaloneWaterSystem = standaloneWaterSystem
       }
@@ -9039,10 +9044,10 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
       if (!viewerRef.current.dynamicSky) {
         console.log('[ViewerCanvas] Creating DynamicSky with atmospheric scattering')
         const { sunPosition, elevation, azimuth } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
-        const initSunDir = clampStandaloneSunSkyDirection(sunPosition)
+        const initSkySunDir = standaloneSkySunDirection(sunPosition)
         const dynamicSky = new DynamicSky(scene, {
           timeOfDay: store.timeOfDay,
-          sunPosition: initSunDir.clone(),
+          sunPosition: initSkySunDir.clone(),
           sunColor: new THREE.Color(0xffffff),
           turbidity: store.skyTurbidity || 10.0,
           atmosphereDensity: store.skyAtmosphereDensity || 0.5, // Required but deprecated
@@ -9080,10 +9085,10 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
 
       if (viewerRef.current.dynamicSky) {
         const { sunPosition, elevation, azimuth } = timeOfDayToSkyAngles(store.timeOfDay, store.northOffset)
-        const sunDir = clampStandaloneSunSkyDirection(sunPosition)
+        const skyDir = standaloneSkySunDirection(sunPosition)
         viewerRef.current.dynamicSky.update({
           timeOfDay: store.timeOfDay,
-          sunPosition: sunDir.clone(),
+          sunPosition: skyDir.clone(),
           elevation,
           azimuth,
           turbidity: store.skyTurbidity ?? 10.0,

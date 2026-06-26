@@ -55,20 +55,24 @@ The HDR panel lives on the right sidebar:
 
 Enable **Standalone Weather** in the Weather panel (`WeatherPanel.tsx`) when you
 want CSM shadows, a dynamic sky dome, and volumetric clouds **without** the
-Streets GL iframe overlay:
+Streets GL iframe overlay. See [`docs/guides/weather-system.md`](weather-system.md)
+for architecture, day/night behavior, presets, and reference comparison.
 
 - **Sun** – rendered in the iq-style sky shader (Inigo Quilez XslGRr raymarch);
   there is no separate sun mesh (avoids dark-orb artifacts).
 - **Clouds** – integrated into the same sky shader when **Cloud density** &gt; 0.
   Enabling standalone weather sets a modest default density (~0.45) if clouds
   were off; use weather presets (Clear / Overcast / Foggy / Stormy) to tune.
+- **Night** – sky uses true below-horizon sun direction for dark sky, stars, and
+  moon; scene lights use a clamped sun direction so CSM shadows stay stable.
 - **Streets GL mode** – keeps LUT atmosphere + Worley box clouds (`cloudRenderingMode: box`).
 - **Conflicts** – disable HDR ground projection while standalone weather is on;
   the store auto-disables it. HDR background textures can still provide
   reflections if HDR is enabled.
 
 The sky dome follows the camera and requires an extended camera far plane
-(`dynamicSkyCamera.ts`); sphere radius is ~9k world units.
+(`dynamicSkyCamera.ts`); sphere radius is ~9k world units. Clouds use a
+camera-relative Y slab with horizon-safe raymarching (see weather-system guide).
 
 ## Path Tracer Considerations
 
