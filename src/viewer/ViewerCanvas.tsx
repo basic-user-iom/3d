@@ -2862,6 +2862,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           
           // For sub-object selection mode, include ALL meshes (to select parts like car doors, primitives, etc.)
           if (subObjectSelectionMode && obj instanceof THREE.Mesh) {
+            if (obj.userData.isDynamicSky) return
             // Include any mesh for sub-object selection (parts of models, primitives, etc.)
             selectableObjects.push(obj)
             return
@@ -2869,11 +2870,17 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           
           // For color picker mode, include ALL meshes (to pick colors from any object)
           if (colorPickerMode && obj instanceof THREE.Mesh) {
+            if (obj.userData.isDynamicSky) return
             // Include any mesh for color picking
             selectableObjects.push(obj)
             return
           }
           
+          // Sky / weather volumes surround the camera — never selectable (blocks orbit navigation)
+          if (obj.userData.isDynamicSky) {
+            return
+          }
+
           // Include models and lights (directional, ambient, etc.)
           // CRITICAL: Also include light helpers so they can be selected and dragged
           if (
@@ -3370,6 +3377,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       const attachedObject = (transformControls as any).object as THREE.Object3D | undefined
       scene.traverse((obj) => {
         if (obj instanceof THREE.Object3D && obj !== attachedObject) {
+          if (obj.userData.isDynamicSky) {
+            return
+          }
           // Include models and lights (directional, ambient, etc.)
           // CRITICAL: Also include light helpers so they can be selected and dragged
           if (
