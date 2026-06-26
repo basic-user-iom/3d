@@ -3,9 +3,6 @@ import { useAppStore } from '../store/useAppStore'
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
-import {
-  WEATHER_PRESET_DEFINITIONS
-} from '../viewer/utils/weatherPresets'
 
 type EffectType = 'fog' | 'fire' | 'particles' | 'atmospheric' | 'lensFlare' | 'bloom' | 'motionBlur'
 
@@ -66,7 +63,7 @@ export default function RenderingEffectsPanel() {
     snowIntensity,
     setSnowIntensity,
     weatherPreset,
-    setWeatherPreset,
+    applyWeatherPreset,
     bloomEnabled,
     setBloomEnabled,
     bloomStrength,
@@ -136,15 +133,9 @@ export default function RenderingEffectsPanel() {
         break
       case 'atmospheric':
         if (currentlyActive) {
-          setWeatherPreset('clear')
-          setFogDensity(0)
+          applyWeatherPreset('clear')
         } else {
-          const foggy = WEATHER_PRESET_DEFINITIONS.foggy
-          setWeatherPreset('foggy')
-          setFogDensity(foggy.fogDensity)
-          setFogColor(foggy.fogColor)
-          setCloudDensity(foggy.cloudDensity)
-          setWindIntensity(foggy.windIntensity)
+          applyWeatherPreset('foggy')
         }
         break
       case 'particles':

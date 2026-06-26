@@ -25,7 +25,7 @@ import {
   restartAnimationLoopIfIdle
 } from './utils/renderLoopIdle'
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
-import { applySceneFog, enableFogOnSceneMeshes, isWeatherVisualActive } from './utils/sceneFog'
+import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
 import { ToneMappingType } from './postprocessing/ToneMappingShader'
@@ -318,6 +318,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const splatDebugFrameRef = useRef<number>(0)
   const splatDebugLoggedOnceRef = useRef<boolean>(false)
   const splatRenderLoggedOnceRef = useRef<boolean>(false)
+  const lastWeatherMaterialKeyRef = useRef<string | null>(null)
+  const lastMaterialAnalysisKeyRef = useRef<string | null>(null)
   const DEBUG_LOG_THROTTLE_MS = 1000 // 1 second
   const throttledDebugLog = useRef({
     log: (...args: any[]) => {
@@ -7008,9 +7010,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         applySceneFog(scene, fogDensity, fogColor)
       } else {
         scene.fog = null
+        invalidateFogMeshesReady(scene)
       }
     } else if (fogDensity <= 0) {
       scene.fog = null
+      invalidateFogMeshesReady(scene)
     } else {
       // AtmosphericPerspective owns scene.fog — still enable fog on imported model materials
       enableFogOnSceneMeshes(scene)
@@ -7071,6 +7075,19 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     let weatherDimming = 1.0
     let toneMappingExposure = 1.0 // Default exposure
     const isDarkWeather = weatherPreset === 'overcast' || weatherPreset === 'foggy' || weatherPreset === 'stormy'
+    const weatherMaterialKey = [
+      weatherPreset,
+      fogDensity.toFixed(3),
+      fogColor,
+      hdrEnabled,
+      enableStandaloneWeather,
+      isDarkWeather,
+      hdrIntensity.toFixed(2)
+    ].join('|')
+    const weatherMaterialChanged = lastWeatherMaterialKeyRef.current !== weatherMaterialKey
+    if (weatherMaterialChanged) {
+      lastWeatherMaterialKeyRef.current = weatherMaterialKey
+    }
     
     if (weatherPreset === 'overcast') {
       // Overcast: significantly reduce sun intensity (dense cloud cover blocks most sunlight)
@@ -7237,17 +7254,21 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // - Dynamic sky: use sunPosition (already normalized, same as sunDir)
     // - Three.js sun light: use sunPosition for position (direction is position to target)
     
-    // DEBUG: Log the state values to understand which branch executes
-    console.log('[ViewerCanvas] Weather useEffect - State check:', {
-      streetsGLIframeOverlay,
-      streetsGLBridge: !!streetsGLBridge,
-      enableStandaloneWeather,
-      viewerRefCurrent: !!viewerRef.current
-    })
+    // DEBUG: Log the state values to understand which branch executes (preset changes only)
+    if (weatherMaterialChanged) {
+      console.log('[ViewerCanvas] Weather useEffect - State check:', {
+        streetsGLIframeOverlay,
+        streetsGLBridge: !!streetsGLBridge,
+        enableStandaloneWeather,
+        viewerRefCurrent: !!viewerRef.current
+      })
+    }
     
     // Option 1: Streets GL overlay is active - sync to Streets GL
     if (streetsGLIframeOverlay && streetsGLBridge) {
-      console.log('[ViewerCanvas] Taking Streets GL branch')
+      if (weatherMaterialChanged) {
+        console.log('[ViewerCanvas] Taking Streets GL branch')
+      }
       // Sync timeOfDay to Streets GL sun direction
       streetsGLBridge.setSunDirection({
         x: sunDir.x,
@@ -7298,7 +7319,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
     // Option 2: Standalone weather system is active - use CSM + visible sun + local sun light
     else if (enableStandaloneWeather && viewerRef.current) {
-      console.log('[ViewerCanvas] Taking standalone weather branch - initializing systems')
+      if (weatherMaterialChanged) {
+        console.log('[ViewerCanvas] Taking standalone weather branch - initializing systems')
+      }
       // Initialize standalone weather systems if they don't exist
       if (!viewerRef.current.csmShadowSystem) {
         console.log('[ViewerCanvas] Creating CSM shadow system')
@@ -7518,7 +7541,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
     // Option 3: Neither Streets GL nor standalone weather - use standard Three.js sun
     else {
-      console.log('[ViewerCanvas] Taking standard Three.js sun branch - no standalone weather initialization')
+      if (weatherMaterialChanged) {
+        console.log('[ViewerCanvas] Taking standard Three.js sun branch - no standalone weather initialization')
+      }
       // Update Three.js sun light normally
       // CRITICAL: Directional light direction = from light.position to light.target
       // To match sun direction (sunDir), light should be at -sunDir * distance, target at origin
@@ -7796,215 +7821,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
       // Streets GL only - Three.js Sky removed, no fallback needed
       
-      // Apply environment map to all PBR materials for reflections
-      // Boost envMapIntensity for metallic materials in dark weather conditions
-      // Industry-standard: Use exclusion layers to prevent sky/environmental effects from modifying imported models
-      // Note: isDarkWeather is already declared earlier in this useEffect (line 6595)
-      const metallicBoost = isDarkWeather ? 1.5 : 1.0 // Boost reflections for metallic materials in dark weather
-      
-      // Industry-standard exclusion check: Check if object should be excluded from sky/weather modifications
-      // This follows the pattern used in Unreal Engine, Twinmotion, and other professional engines
-      const shouldExcludeFromModifications = (obj: THREE.Object3D): boolean => {
-        // Check explicit exclusion flags (industry-standard approach)
-        if (obj.userData.excludeFromSkyModifications === true) return true
-        // Streets GL only - Dynamic Sky removed
-        if (false && obj.userData.excludeFromWeatherModifications === true) return true
-        
-        // Check if object is part of an imported model (legacy check for backward compatibility)
-        if (obj.userData.isModel || obj.userData.isImportedModel) return true
-        
-        // Recursive check: if any parent has exclusion flags, exclude this object
-        let parent = obj.parent
-        while (parent !== null) {
-          if (parent.userData.excludeFromSkyModifications === true) return true
-          // Streets GL only - Dynamic Sky removed
-          if (false && parent!.userData.excludeFromWeatherModifications === true) return true
-          if (parent.userData.isModel || parent.userData.isImportedModel) return true
-          const nextParent = parent.parent
-          if (nextParent === null) break
-          parent = nextParent
-        }
-        
-        return false
-      }
-      
-      if (scene.environment) {
-        try {
-          let appliedCount = 0
-          let boostedCount = 0
-          scene.traverse((object) => {
-            // Industry-standard: Skip objects marked for exclusion from sky/weather modifications
-            if (shouldExcludeFromModifications(object)) {
-              return
-            }
-            
-            if (object instanceof THREE.Mesh && object.material) {
-              const materials = Array.isArray(object.material) ? object.material : [object.material]
-              materials.forEach((mat: THREE.Material) => {
-                if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial) {
-                  const needsUpdate = !mat.envMap || mat.envMap !== scene.environment
-                  if (needsUpdate) {
-                    mat.envMap = scene.environment
-                    mat.needsUpdate = true
-                    appliedCount++
-                  }
-                  
-                  // Boost envMapIntensity for metallic materials in dark weather conditions
-                  // Note: HDR system already boosts metallic materials by 1.5x, so we need to check if HDR is enabled
-                  // If HDR is enabled and already boosted, we don't double-boost in weather system
-                  // Store original envMapIntensity if not already stored
-                  if (!(mat as any).__originalEnvMapIntensity) {
-                    (mat as any).__originalEnvMapIntensity = mat.envMapIntensity || 1.0
-                  }
-                  
-                  const originalIntensity = (mat as any).__originalEnvMapIntensity || 1.0
-                  
-                  if (isDarkWeather && mat.metalness !== undefined && mat.metalness > 0.3) {
-                    // Check if HDR is already boosting this material
-                    // HDR sets envMapIntensity to hdrIntensity * 1.5 for metallic materials
-                    // If HDR is enabled, use current intensity as base, otherwise use original
-                    const baseIntensity = hdrEnabled ? (mat.envMapIntensity || originalIntensity) : originalIntensity
-                    // Only apply weather boost if not already boosted by HDR
-                    const boostedIntensity = hdrEnabled ? baseIntensity : (baseIntensity * metallicBoost)
-                    if (mat.envMapIntensity !== boostedIntensity) {
-                      mat.envMapIntensity = boostedIntensity
-                      mat.needsUpdate = true
-                      boostedCount++
-                    }
-                  } else if (!isDarkWeather) {
-                    // Reset to original intensity when not in dark weather
-                    // But if HDR is enabled, it will set its own intensity in the HDR effect
-                    if (!hdrEnabled && mat.envMapIntensity !== originalIntensity) {
-                      mat.envMapIntensity = originalIntensity
-                      mat.needsUpdate = true
-                    }
-                  }
-                  
-                  // Darken material colors for dark weather presets to reduce white appearance
-                  // Skip when standalone weather is active — lighting presets already dim the scene
-                  if (mat.color && !enableStandaloneWeather) {
-                    // Always store original color if not already stored (before any modifications)
-                    if (!(mat as any).__originalColor) {
-                      (mat as any).__originalColor = mat.color.clone()
-                    }
-                    
-                    if (isDarkWeather) {
-                      // First restore original color, then apply new darkening (prevents cumulative darkening)
-                      const originalColor = (mat as any).__originalColor
-                      const colorDarkening = weatherPreset === 'stormy' ? 0.6 : (weatherPreset === 'overcast' ? 0.7 : 0.75)
-                      mat.color.setRGB(
-                        originalColor.r * colorDarkening,
-                        originalColor.g * colorDarkening,
-                        originalColor.b * colorDarkening
-                      )
-                      mat.needsUpdate = true
-                    } else {
-                      // Restore original color when not in dark weather
-                      if ((mat as any).__originalColor) {
-                        mat.color.copy((mat as any).__originalColor)
-                        mat.needsUpdate = true
-                      }
-                    }
-                  }
-                } else if (mat instanceof THREE.MeshPhongMaterial) {
-                  if (!mat.envMap || mat.envMap !== scene.environment) {
-                    mat.envMap = scene.environment
-                    mat.reflectivity = mat.reflectivity || 0.5
-                    mat.needsUpdate = true
-                    appliedCount++
-                  }
-                  
-                  // Darken Phong material colors for dark weather presets
-                  if (mat.color) {
-                    // Always store original color if not already stored (before any modifications)
-                    if (!(mat as any).__originalColor) {
-                      (mat as any).__originalColor = mat.color.clone()
-                    }
-                    
-                    if (isDarkWeather) {
-                      // First restore original color, then apply new darkening (prevents cumulative darkening)
-                      const originalColor = (mat as any).__originalColor
-                      const colorDarkening = weatherPreset === 'stormy' ? 0.6 : (weatherPreset === 'overcast' ? 0.7 : 0.75)
-                      mat.color.setRGB(
-                        originalColor.r * colorDarkening,
-                        originalColor.g * colorDarkening,
-                        originalColor.b * colorDarkening
-                      )
-                      mat.needsUpdate = true
-                    } else {
-                      // Restore original color when not in dark weather
-                      if ((mat as any).__originalColor) {
-                        mat.color.copy((mat as any).__originalColor)
-                        mat.needsUpdate = true
-                      }
-                    }
-                  }
-                }
-              })
-            }
-          })
-          if (appliedCount > 0 || boostedCount > 0) {
-            try {
-              if (appliedCount > 0) {
-                console.log(`[MaterialDebug] Applied envMap to ${appliedCount} materials for reflections`)
-              }
-              if (boostedCount > 0) {
-                console.log(`[MaterialDebug] Boosted envMapIntensity for ${boostedCount} metallic materials (${weatherPreset} weather)`)
-              }
-            } catch {}
-          }
-        } catch (error) {
-          try {
-            console.warn('[MaterialDebug] Error applying envMap to materials:', error)
-          } catch {}
-        }
-      }
-    // Streets GL only - Three.js Sky removed
-    // Ensure a fallback environment for reflections when HDR is disabled
-    if (!hdrEnabled && !scene.environment) {
-        try {
-          // Use centralized EnvironmentManager to prevent duplicate creation
-          const envManager = EnvironmentManager.getInstance()
-          envManager.initialize(renderer)
-          if (!viewerRef.current.defaultEnvTexture) {
-            viewerRef.current.defaultEnvTexture = envManager.getDefaultEnvironment()
-          }
-          const defaultEnv = viewerRef.current?.defaultEnvTexture
-          if (defaultEnv) {
-            scene.environment = defaultEnv
-            
-            // CRITICAL: Apply fallback envMap to ALL materials immediately when fallback is set
-            let appliedCount = 0
-            scene.traverse((object) => {
-              if (object instanceof THREE.Mesh) {
-                const material = object.material
-                if (Array.isArray(material)) {
-                  material.forEach((mat: THREE.Material) => {
-                    if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial) {
-                      if (!mat.envMap || mat.envMap !== defaultEnv) {
-                        mat.envMap = defaultEnv
-                        mat.needsUpdate = true
-                        appliedCount++
-                      }
-                    }
-                  })
-                } else if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
-                  if (!material.envMap || material.envMap !== defaultEnv) {
-                    material.envMap = defaultEnv
-                    material.needsUpdate = true
-                    appliedCount++
-                  }
-                }
-              }
-            })
-            
-            try {
-              console.log(`[WeatherDebug] Applied fallback RoomEnvironment to ${appliedCount} materials (HDR disabled)`)
-            } catch {}
-          }
-        } catch {}
-      }
-      
+      if (weatherMaterialChanged) {
+      const metallicBoost = isDarkWeather ? 1.5 : 1.0
       // Apply environment map to all PBR materials for reflections
       // Boost envMapIntensity for metallic materials in dark weather conditions
       // Note: metallicBoost is already declared earlier in this useEffect (line 7012)
@@ -8235,6 +8053,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           console.warn(`[TextureDebug] ⚠️ ${weatherPreset} preset active but no environment map available - metallic materials may not reflect properly`)
         } catch {}
       }
+      }
       
       // When Three.js Sky is disabled, HDR background should be handled by HDR effect
       // Only set background here if HDR is NOT enabled
@@ -8256,6 +8075,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // The separate effect for ambient light syncs from store to light
     
     // ===== MATERIAL ANALYSIS & CONFLICT DETECTION =====
+    if (weatherMaterialChanged) {
     const materialAnalysis = {
       totalMeshes: 0,
       materialsByType: {} as Record<string, number>,
@@ -8430,6 +8250,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
       throttledDebugLog.log('[LightingSummary] Complete state (copy this if reporting issues):', JSON.stringify(summary, null, 2))
     } catch {}
+    }
     
     // CRITICAL FINAL CHECK: Ensure HDR background is ALWAYS set if HDR is enabled
     // This runs AFTER all lighting/weather logic to override any background changes

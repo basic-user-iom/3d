@@ -17,6 +17,10 @@ import {
 import type { StreetsGLBridge } from '../utils/streetsGLBridge'
 import { getSharedViewer } from '../viewer/useViewer'
 import { smoothEdges } from '../utils/edgeSmoothing'
+import {
+  weatherPresetStorePatch,
+  type WeatherPresetId
+} from '../viewer/utils/weatherPresets'
 
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
@@ -810,6 +814,7 @@ export interface AppState {
   
   // Weather actions
   setWeatherPreset: (preset: string) => void
+  applyWeatherPreset: (preset: Exclude<WeatherPresetId, 'custom'>) => void
   setCloudDensity: (density: number) => void
   setCloudThickness: (t: number) => void
   setCloudDetail: (d: number) => void
@@ -2352,6 +2357,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     
     // Weather actions
   setWeatherPreset: (preset) => set({ weatherPreset: preset }),
+  applyWeatherPreset: (preset) => {
+    const patch = weatherPresetStorePatch(preset)
+    set({
+      weatherPreset: patch.weatherPreset,
+      fogDensity: Math.max(0, Math.min(1, patch.fogDensity)),
+      fogColor: patch.fogColor,
+      rainIntensity: Math.max(0, Math.min(1, patch.rainIntensity)),
+      snowIntensity: Math.max(0, Math.min(1, patch.snowIntensity)),
+      cloudDensity: Math.max(0, Math.min(1, patch.cloudDensity)),
+      cloudStorminess: Math.max(0, Math.min(1, patch.cloudStorminess)),
+      windIntensity: Math.max(0, Math.min(1, patch.windIntensity))
+    })
+  },
   setCloudDensity: (density) => set({ cloudDensity: Math.max(0, Math.min(1, density)) }),
   setCloudThickness: (t) => set({ cloudThickness: Math.max(0, Math.min(1, t)) }),
   setCloudDetail: (d) => set({ cloudDetail: Math.max(0, Math.min(1, d)) }),

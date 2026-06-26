@@ -90,3 +90,11 @@ export function detectWeatherPreset(state: Partial<WeatherPresetValues>): Weathe
   }
   return 'custom'
 }
+
+/** Single store patch for batched preset application (avoids cascading re-renders) */
+export function weatherPresetStorePatch(id: Exclude<WeatherPresetId, 'custom'>) {
+  return {
+    weatherPreset: id,
+    ...WEATHER_PRESET_DEFINITIONS[id]
+  }
+}

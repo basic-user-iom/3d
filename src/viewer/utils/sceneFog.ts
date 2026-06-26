@@ -16,8 +16,18 @@ export function shouldSkipFogForObject(object: THREE.Object3D): boolean {
   return false
 }
 
+const fogMeshesReadyScenes = new WeakSet<THREE.Scene>()
+
+export function invalidateFogMeshesReady(scene: THREE.Scene): void {
+  fogMeshesReadyScenes.delete(scene)
+}
+
 /** Enable scene.fog on meshes — includes imported models (loaders set fog=false by default) */
-export function enableFogOnSceneMeshes(scene: THREE.Scene): number {
+export function enableFogOnSceneMeshes(scene: THREE.Scene, force = false): number {
+  if (!force && fogMeshesReadyScenes.has(scene)) {
+    return 0
+  }
+
   let count = 0
   scene.traverse((object) => {
     if (!(object instanceof THREE.Mesh) || !object.material) return
@@ -32,16 +42,21 @@ export function enableFogOnSceneMeshes(scene: THREE.Scene): number {
       }
     }
   })
+
+  if (count > 0 || force) {
+    fogMeshesReadyScenes.add(scene)
+  }
   return count
 }
 
 export function applySceneFog(scene: THREE.Scene, density: number, color: string): void {
   if (density <= 0) {
     scene.fog = null
+    invalidateFogMeshesReady(scene)
     return
   }
   scene.fog = new THREE.FogExp2(new THREE.Color(color), fogDensityToSceneValue(density))
-  enableFogOnSceneMeshes(scene)
+  enableFogOnSceneMeshes(scene, true)
 }
 
 export function isWeatherVisualActive(state: {

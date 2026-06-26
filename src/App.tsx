@@ -236,6 +236,20 @@ function App() {
     setHdrIntensity
   } = useAppStore()
 
+  // Pin ViewerCanvas once weather effects need it — prevents full remount/freeze in city mode
+  const weatherNeedsViewer =
+    enableStandaloneWeather ||
+    cloudDensity > 0 ||
+    fogDensity > 0 ||
+    rainIntensity > 0 ||
+    snowIntensity > 0
+  const viewerCanvasPinnedRef = useRef(false)
+  if (weatherNeedsViewer) {
+    viewerCanvasPinnedRef.current = true
+  }
+  const showViewerCanvas =
+    renderMode !== 'city' || weatherNeedsViewer || viewerCanvasPinnedRef.current
+
   // Keyboard navigation hook
   useKeyboardNavigation({
     viewer,
@@ -557,12 +571,7 @@ function App() {
             showWeatherPanel ? 'with-weather-panel' : ''
           }`}>
             {/* Three.js Viewer - hidden in city mode, visible in product/hybrid */}
-            {(renderMode !== 'city' ||
-              enableStandaloneWeather ||
-              cloudDensity > 0 ||
-              fogDensity > 0 ||
-              rainIntensity > 0 ||
-              snowIntensity > 0) && (
+            {showViewerCanvas && (
               <ViewerCanvas key="viewer-canvas-stable" onViewerReady={handleViewerReady} />
             )}
             {/* Streets GL iframe overlay - the actual Streets GL renderer */}
