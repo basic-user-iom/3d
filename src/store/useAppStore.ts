@@ -2397,10 +2397,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       console.warn(
         '[Weather] Disabling HDR ground projection — conflicts with standalone weather and can darken materials.'
       )
-      set({ enableStandaloneWeather: enabled, hdrGroundProjectionEnabled: false })
+      set({
+        enableStandaloneWeather: enabled,
+        hdrGroundProjectionEnabled: false,
+        ...(enabled && state.cloudDensity === 0 ? { cloudDensity: 0.45 } : {})
+      })
       return
     }
-    set({ enableStandaloneWeather: enabled })
+    set({
+      enableStandaloneWeather: enabled,
+      ...(enabled && state.cloudDensity === 0 ? { cloudDensity: 0.45 } : {})
+    })
   },
   setSunSize: (size) => set({ sunSize: Math.max(0.1, Math.min(5.0, size)) }),
   setMoonSize: (size) => set({ moonSize: Math.max(0.1, Math.min(5.0, size)) }),

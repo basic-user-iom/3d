@@ -17,7 +17,8 @@ inside `docs/archive/`.
 - [`guides/shader-editor.md`](guides/shader-editor.md) – tweak the GLSL demo
   shader and learn how the floating panel works.
 - [`guides/lighting-hdr.md`](guides/lighting-hdr.md) – manage directional
-  lights, CSM shadows, and HDR/ground projection.
+  lights, CSM shadows, HDR/ground projection, and **standalone weather** (offline
+  sky, iq-style clouds, sun disk).
 - [`guides/dev-workflow.md`](guides/dev-workflow.md) – contributor checklist
   (docs, tests, manual sanity).
 - [`guides/desktop-windows.md`](guides/desktop-windows.md) – Windows desktop

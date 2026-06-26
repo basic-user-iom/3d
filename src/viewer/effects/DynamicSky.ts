@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { AtmosphereLUTSystem } from './AtmosphereLUTSystem'
 import { getLUTBasedSkyFragmentShader } from './DynamicSkyLUTShader'
 import { getIqCloudSkyFragmentShader, IQ_CLOUD_SKY_VERTEX_SHADER } from './IqCloudSkyShader'
+import { DYNAMIC_SKY_SPHERE_RADIUS } from '../utils/dynamicSkyCamera'
 import { WEATHER_GROUND_LEVEL } from '../utils/sceneFog'
 
 /** Volumetric cloud layer height above ground (world units) */
@@ -133,11 +134,10 @@ export class DynamicSky {
 
   private setupSky() {
     // Create optimized sphere geometry (fewer segments for better performance)
-    // IMPROVED: Much larger sky sphere (20x larger) for realistic appearance
-    // Real sky is effectively infinite, but for 3D scenes we use a large sphere
-    // At 40,000 units radius, the sky sphere is 20x larger than before (was 2000)
-    // This matches the sun distance of 50,000 units for proper scale
-    const geometry = new THREE.SphereGeometry(40000, 32, 32) // 20x larger (was 2000)
+    // Sky dome radius must fit inside the camera far plane (default far ≈ 10k).
+    // iq mode uses a camera-centered dome; box/LUT mode uses the same radius for consistency.
+    const skyRadius = DYNAMIC_SKY_SPHERE_RADIUS
+    const geometry = new THREE.SphereGeometry(skyRadius, 32, 32)
 
     // Three.js Sky shader vertex (physically-based atmospheric scattering)
     const useIqShader = this.cloudRenderingMode === 'iq'
@@ -430,7 +430,7 @@ export class DynamicSky {
           Math.cos(azimuth) * Math.cos(elevation),
           Math.sin(elevation),
           Math.sin(azimuth) * Math.cos(elevation)
-        ).multiplyScalar(50000) // IMPROVED: Scale to much larger sky sphere radius (50x further, was 1000)
+        ).multiplyScalar(DYNAMIC_SKY_SPHERE_RADIUS)
       }
       
       // Create uniforms based on shader type
@@ -1001,17 +1001,17 @@ export class DynamicSky {
         // IMPROVED: Scale sun position to much further distance for realistic appearance
         // Real sun is ~149.6 million km away, but for 3D scenes we use scaled distance
         // Use 50,000 units distance (50x further than before) to match larger sun size
-        sunPos.normalize().multiplyScalar(50000) // Much further away (was 1000) - 50x further
+        sunPos.normalize().multiplyScalar(DYNAMIC_SKY_SPHERE_RADIUS)
       } else {
         // Use provided sunPosition directly - ensure it's normalized then scaled
         // sunPosition from timeOfDayToSkyAngles is already normalized, so just scale it
         // IMPROVED: Scale to much further distance for realistic appearance
         if (sunPos.length() < 1000) {
           // If it's a normalized direction vector, scale it to far distance
-          sunPos.normalize().multiplyScalar(50000) // Much further away (was 1000) - 50x further
+          sunPos.normalize().multiplyScalar(DYNAMIC_SKY_SPHERE_RADIUS)
         } else {
           // Already scaled, but ensure it's at the correct far distance
-          sunPos.normalize().multiplyScalar(50000) // Much further away (was 1000) - 50x further
+          sunPos.normalize().multiplyScalar(DYNAMIC_SKY_SPHERE_RADIUS)
         }
       }
       

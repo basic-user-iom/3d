@@ -43,7 +43,7 @@ Need the full setup guide (formats, decoders, troubleshooting)? See
   - [`docs/guides/selection-and-gizmo.md`](docs/guides/selection-and-gizmo.md) – marquee, pivot, gizmo
   - [`docs/guides/streets-gl-integration.md`](docs/guides/streets-gl-integration.md) – dev-server workflow
   - [`docs/guides/path-tracer.md`](docs/guides/path-tracer.md) – GPU path tracer controls
-  - [`docs/guides/lighting-hdr.md`](docs/guides/lighting-hdr.md) – lighting panel + HDR helpers
+  - [`docs/guides/lighting-hdr.md`](docs/guides/lighting-hdr.md) – lighting panel + HDR helpers + standalone weather
   - [`docs/guides/shader-editor.md`](docs/guides/shader-editor.md) – GLSL demo panel
   - [`docs/guides/dev-workflow.md`](docs/guides/dev-workflow.md) – lint/test/docs checklist
   - [`docs/guides/desktop-windows.md`](docs/guides/desktop-windows.md) – Windows installer, signing, and updates
