@@ -18,7 +18,8 @@ describe('IqCloudSkyShader', () => {
     expect(fragment).toContain('uniform float cloudTopY')
     expect(fragment).toContain('uniform float cloudScale')
     expect(fragment).toContain('float d = 0.2 - p.y')
-    expect(fragment).toContain('pow(sun, 5.0)')
+    expect(fragment).toContain('pow(sun, 8.0)')
+    expect(fragment).toContain('mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), den)')
     expect(fragment).toContain('gl_FragColor = vec4(col, 1.0)')
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
@@ -37,6 +38,6 @@ describe('IqCloudSkyShader', () => {
 
   it('maps coverage to decreasing density threshold', () => {
     expect(iqCoverageToThickness(0)).toBeGreaterThan(iqCoverageToThickness(0.9))
-    expect(iqCoverageToThickness(0.75)).toBeCloseTo(0.215, 2)
+    expect(iqCoverageToThickness(0.75)).toBeCloseTo(0.21, 2)
   })
 })

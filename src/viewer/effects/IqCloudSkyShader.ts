@@ -30,10 +30,10 @@ export function iqCloudBandY(cameraY: number): IqCloudBand {
   return { base, top: base + IQ_CLOUD_LAYER_THICKNESS }
 }
 
-/** Maps UI coverage (0–1) to iq density threshold — lower coverage = higher threshold */
+/** Maps UI coverage (0–1) to iq density cutoff — lower coverage = higher cutoff */
 export function iqCoverageToThickness(coverage: number): number {
   const c = Math.max(0, Math.min(1, coverage))
-  return 0.62 - c * 0.54
+  return 0.78 - c * 0.76
 }
 
 /**
@@ -101,7 +101,7 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       vec3 p = toIqSpace(worldPos);
       float d = 0.2 - p.y;
 
-      vec3 q = p - vec3(1.0, 0.1, 0.3) * (iTime * windSpeed);
+      vec3 q = p - vec3(1.0, 0.1, 0.0) * (iTime * windSpeed);
       float f = 0.0;
       f += 0.5000 * noise(q); q *= 2.02;
       f += 0.2500 * noise(q); q *= 2.03;
@@ -109,18 +109,17 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       f += 0.0625 * noise(q);
 
       d += 3.0 * f;
-
-      float thickness = mix(0.62, 0.08, coverage);
-      d = (d - thickness) / max(0.12, 1.0 - thickness);
       d = clamp(d, 0.0, 1.0);
-      d *= smoothstep(0.0, 0.06, coverage);
-      return d;
+
+      float cutoff = mix(0.78, 0.02, coverage);
+      d = smoothstep(cutoff, cutoff + 0.12, d);
+      return d * step(0.004, coverage);
     }
 
     vec4 mapColorDensity(vec3 worldPos) {
       float den = mapDensity(worldPos);
-      vec3 albedo = mix(vec3(1.0, 0.95, 0.82), vec3(0.22, 0.28, 0.34), den);
-      albedo = mix(albedo, albedo * vec3(0.55, 0.58, 0.62), storminess * 0.65);
+      vec3 albedo = mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), den);
+      albedo = mix(albedo, albedo * vec3(0.55, 0.58, 0.62), storminess * 0.4);
       return vec4(albedo, den);
     }
 
@@ -142,7 +141,8 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       vec4 sum = vec4(0.0);
       float t = tNear;
       int steps = raymarchSteps;
-      float dt = (tFar - tNear) / float(steps);
+      float layerSpan = max(1.0, cloudTopY - cloudBaseY);
+      float minStep = layerSpan / (float(steps) * 1.35);
 
       for (int i = 0; i < 96; i++) {
         if (i >= steps) break;
@@ -152,15 +152,15 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
         vec4 col = mapColorDensity(pos);
         if (col.w > 0.008) {
           float dif = clamp((col.w - mapDensity(pos + 0.3 * sunDir)) / 0.6, 0.0, 1.0);
-          vec3 ambient = mix(vec3(0.65, 0.68, 0.7), vec3(0.38, 0.4, 0.44), storminess);
-          vec3 lin = ambient * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
+          vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
+          lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
           col.xyz *= lin;
-          col.a *= 0.42;
+          col.a *= 0.35;
           col.rgb *= col.a;
           sum = sum + col * (1.0 - sum.a);
         }
 
-        t += max(dt, 8.0 + 0.015 * t);
+        t += max(minStep, minStep * 0.35 + 0.006 * t);
       }
 
       sum.xyz /= (0.001 + sum.w);
@@ -168,14 +168,14 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     }
 
     vec3 iqSkyGradient(vec3 rd, vec3 sunDir) {
-      float sunElev = sunDir.y;
       vec3 col = vec3(0.6, 0.71, 0.75) - rd.y * 0.2 * vec3(1.0, 0.5, 1.0) + 0.075;
 
+      float sunElev = sunDir.y;
       float twilight = smoothstep(0.2, -0.08, sunElev);
-      col = mix(col, col * vec3(1.15, 0.72, 0.45), twilight * 0.55);
+      col = mix(col, col * vec3(1.12, 0.74, 0.48), twilight * 0.45);
 
       float night = smoothstep(0.02, -0.25, sunElev);
-      col = mix(col, col * vec3(0.12, 0.16, 0.28), night * 0.85);
+      col = mix(col, col * vec3(0.12, 0.16, 0.28), night * 0.75);
 
       return col;
     }
@@ -188,18 +188,23 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       vec3 col = iqSkyGradient(rd, sunDir);
       float sun = clamp(dot(sunDir, rd), 0.0, 1.0);
 
-      float sunDisk = smoothstep(0.9980, 0.99965, sun);
-      col += vec3(1.0, 0.9, 0.6) * sunDisk * 18.0;
-      col += 0.45 * vec3(1.0, 0.55, 0.1) * pow(sun, 5.0);
+      col += 0.2 * vec3(1.0, 0.6, 0.1) * pow(sun, 8.0);
 
-      if (coverage > 0.005) {
+      if (coverage > 0.004) {
         vec4 clouds = raymarchClouds(ro, rd, sunDir);
         col = mix(col, clouds.xyz, clouds.w);
       }
 
-      col += 0.22 * vec3(1.0, 0.4, 0.2) * pow(sun, 3.0);
+      col += 0.1 * vec3(1.0, 0.4, 0.2) * pow(sun, 3.0);
       col *= 0.95;
-      col = vec3(1.0) - exp(-col * max(exposure, 0.65));
+
+      float sunDisk = smoothstep(0.9993, 0.99985, sun);
+      col += vec3(1.0, 0.9, 0.62) * sunDisk * 5.0;
+
+      float expBoost = max(exposure - 1.0, 0.0);
+      if (expBoost > 0.001) {
+        col = vec3(1.0) - exp(-col * (1.0 + expBoost * 0.35));
+      }
 
       gl_FragColor = vec4(col, 1.0);
     }
