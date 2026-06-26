@@ -66,13 +66,14 @@ for architecture, day/night behavior, presets, and reference comparison.
 - **Night** – sky uses true below-horizon sun direction for dark sky, stars, and
   moon; scene lights use a clamped sun direction so CSM shadows stay stable.
 - **Streets GL mode** – keeps LUT atmosphere + Worley box clouds (`cloudRenderingMode: box`).
+- **Standalone mode** – iq direction-space raymarch on the sky dome (`cloudRenderingMode: iq`).
 - **Conflicts** – disable HDR ground projection while standalone weather is on;
   the store auto-disables it. HDR background textures can still provide
   reflections if HDR is enabled.
 
 The sky dome follows the camera and requires an extended camera far plane
 (`dynamicSkyCamera.ts`); sphere radius is ~9k world units. Clouds use a
-camera-relative Y slab with horizon-safe raymarching (see weather-system guide).
+camera-relative direction-space raymarching (see weather-system guide).
 
 ## Path Tracer Considerations
 

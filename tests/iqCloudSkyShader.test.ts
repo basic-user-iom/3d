@@ -14,8 +14,8 @@ describe('IqCloudSkyShader', () => {
   it('exports shader sources with iq raymarch primitives', () => {
     const fragment = getIqCloudSkyFragmentShader()
     expect(fragment).toContain('raymarchClouds')
-    expect(fragment).toContain('mapDensity')
-    expect(fragment).toContain('toIqSpace')
+    expect(fragment).toContain('mapDensityAtDepth')
+    expect(fragment).toContain('toIqSpaceFromRay')
     expect(fragment).toContain('uniform float cloudScale')
     expect(fragment).toContain('float d = 0.2 - p.y')
     expect(fragment).toContain('pow(sun, 8.0)')
@@ -24,14 +24,14 @@ describe('IqCloudSkyShader', () => {
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
 
-  it('uses world-space Y-slab raymarch with path-length steps', () => {
+  it('uses direction-space raymarch (not world-Y slab)', () => {
     const fragment = getIqCloudSkyFragmentShader()
-    expect(fragment).toContain('toIqSpace')
-    expect(fragment).toContain('cloudBaseY - ro.y')
-    expect(fragment).toContain('pathLen / max(1.0, float(steps))')
+    expect(fragment).toContain('toIqSpaceFromRay')
     expect(fragment).toContain('iqCoverageCutoff')
     expect(fragment).toContain('iqCoverageAlphaScale')
-    expect(fragment).not.toContain('toIqSpaceFromRay')
+    expect(fragment).not.toContain('cloudBaseY - ro.y')
+    expect(fragment).not.toContain('pathLen / max(1.0, float(steps))')
+    expect(fragment).not.toContain('toIqSpace(')
   })
 
   it('includes night sky features', () => {
@@ -62,8 +62,8 @@ describe('IqCloudSkyShader', () => {
 
   it('can omit cloud raymarch for hybrid sky-only mode', () => {
     const skyOnly = getIqCloudSkyFragmentShader({ skyOnly: true })
-    expect(skyOnly).not.toContain('raymarchClouds(ro, rd, sunDir, dayFactor)')
+    expect(skyOnly).not.toContain('raymarchClouds(rd, sunDir, dayFactor)')
     const full = getIqCloudSkyFragmentShader({ skyOnly: false })
-    expect(full).toContain('raymarchClouds(ro, rd, sunDir, dayFactor)')
+    expect(full).toContain('raymarchClouds(rd, sunDir, dayFactor)')
   })
 })

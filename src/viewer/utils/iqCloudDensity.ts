@@ -1,4 +1,4 @@
-import { IQ_CLOUD_NOISE_XZ_SCALE, iqCloudBandY } from '../effects/IqCloudSkyShader'
+import { IQ_CLOUD_NOISE_XZ_SCALE } from '../effects/IqCloudSkyShader'
 import {
   iqCoverageAlphaScale,
   iqCoverageCutoff,
@@ -18,8 +18,7 @@ export interface IqCloudDensityOptions {
   cloudScale?: number
   time?: number
   windSpeed?: number
-  cameraPos?: Vec3
-  cloudBand?: { base: number; top: number }
+  cameraXz?: { x: number; z: number }
 }
 
 function hash(n: number): number {
@@ -65,26 +64,26 @@ export function iqNoise(x: Vec3): number {
   )
 }
 
-/** World-space iq coordinates — matches GPU toIqSpace */
-export function toIqSpaceFromWorld(
-  worldPos: Vec3,
-  cameraPos: Vec3,
-  cloudBand: { base: number; top: number },
+/** Direction-space iq coordinates — clouds visible at all sky elevations including horizon */
+export function toIqSpaceFromRay(
+  rd: Vec3,
+  depth: number,
+  cameraXz: { x: number; z: number },
   cloudScale: number
 ): Vec3 {
-  const layerH = Math.max(1, cloudBand.top - cloudBand.base)
-  const yNorm = (worldPos.y - cloudBand.base) / layerH
   const xzScale = IQ_CLOUD_NOISE_XZ_SCALE / Math.max(0.35, cloudScale)
+  const spread = 1.85 + depth * 0.55
   return {
-    y: yNorm * 0.38 - 0.06,
-    x: (worldPos.x - cameraPos.x) * xzScale,
-    z: (worldPos.z - cameraPos.z) * xzScale
+    y: rd.y * 0.38 - 0.06 + depth * 0.045,
+    x: rd.x * spread + cameraXz.x * xzScale,
+    z: rd.z * spread + cameraXz.z * xzScale
   }
 }
 
-/** Sample fluffy cloud density at a world position (matches GPU mapDensity) */
-export function mapIqCloudDensityAtWorld(
-  worldPos: Vec3,
+/** Sample fluffy cloud density for a view direction at pseudo-depth (0 = near, higher = deeper) */
+export function mapIqCloudDensity(
+  rd: Vec3,
+  depth: number,
   options: IqCloudDensityOptions = {}
 ): number {
   const coverage = options.coverage ?? 0
@@ -93,14 +92,9 @@ export function mapIqCloudDensityAtWorld(
   const cloudScale = options.cloudScale ?? 1
   const time = options.time ?? 0
   const windSpeed = options.windSpeed ?? 0.1
-  const cameraPos = options.cameraPos ?? { x: 0, y: 0, z: 0 }
-  const cloudBand = options.cloudBand ?? iqCloudBandY(cameraPos.y)
+  const cameraXz = options.cameraXz ?? { x: 0, z: 0 }
 
-  if (worldPos.y < Math.max(cloudBand.base - 40, 0) || worldPos.y > cloudBand.top + 250) {
-    return 0
-  }
-
-  const p = toIqSpaceFromWorld(worldPos, cameraPos, cloudBand, cloudScale)
+  const p = toIqSpaceFromRay(rd, depth, cameraXz, cloudScale)
   let d = 0.2 - p.y
 
   let q = {
@@ -125,48 +119,6 @@ export function mapIqCloudDensityAtWorld(
   return smoothstep(cutoff, cutoff + feather, d)
 }
 
-/** Ray-slab intersection for upward-looking rays (matches GPU raymarchClouds) */
-export function iqCloudSlabRange(
-  ro: Vec3,
-  rd: Vec3,
-  cloudBand: { base: number; top: number }
-): { tNear: number; tFar: number } | null {
-  if (rd.y <= 0) return null
-
-  let tEnter = (cloudBand.base - ro.y) / rd.y
-  let tExit = (cloudBand.top - ro.y) / rd.y
-  if (tEnter > tExit) {
-    const swap = tEnter
-    tEnter = tExit
-    tExit = swap
-  }
-
-  const tNear = Math.max(tEnter, 0)
-  const tFar = tExit
-  if (tFar <= tNear) return null
-  return { tNear, tFar }
-}
-
-/** Sample density along a view direction at normalized depth within the cloud slab (0 = entry, 1 = exit) */
-export function mapIqCloudDensity(
-  rd: Vec3,
-  slabT: number,
-  options: IqCloudDensityOptions = {}
-): number {
-  const cameraPos = options.cameraPos ?? { x: 0, y: 0, z: 0 }
-  const cloudBand = options.cloudBand ?? iqCloudBandY(cameraPos.y)
-  const range = iqCloudSlabRange(cameraPos, rd, cloudBand)
-  if (!range) return 0
-
-  const t = range.tNear + slabT * (range.tFar - range.tNear)
-  const worldPos = {
-    x: cameraPos.x + t * rd.x,
-    y: cameraPos.y + t * rd.y,
-    z: cameraPos.z + t * rd.z
-  }
-  return mapIqCloudDensityAtWorld(worldPos, options)
-}
-
 /** Estimate accumulated raymarch alpha for a view direction (matches shader front-to-back blend) */
 export function estimateIqRaymarchAlpha(
   rd: Vec3,
@@ -175,34 +127,20 @@ export function estimateIqRaymarchAlpha(
   const coverage = options.coverage ?? 0
   if (coverage <= 0.004) return 0
 
-  const cameraPos = options.cameraPos ?? { x: 0, y: 0, z: 0 }
-  const cloudBand = options.cloudBand ?? iqCloudBandY(cameraPos.y)
-  const range = iqCloudSlabRange(cameraPos, rd, cloudBand)
-  if (!range) return 0
-
   const steps = options.steps ?? 64
   const dayFactor = options.dayFactor ?? 1
   const alphaScale = iqCoverageAlphaScale(coverage)
-  const pathLen = range.tFar - range.tNear
-  const dt = pathLen / Math.max(1, steps)
-
   let sumA = 0
-  let t = range.tNear
+  let t = 0
 
   for (let i = 0; i < steps; i++) {
-    if (sumA > 0.99 || t > range.tFar) break
-
-    const worldPos = {
-      x: cameraPos.x + t * rd.x,
-      y: cameraPos.y + t * rd.y,
-      z: cameraPos.z + t * rd.z
-    }
-    const den = mapIqCloudDensityAtWorld(worldPos, options)
+    if (sumA > 0.99) break
+    const den = mapIqCloudDensity(rd, t, options)
     if (den > 0.01) {
-      const a = den * 0.35 * alphaScale * mix(0.55, 1, dayFactor)
+      const a = den * 0.42 * alphaScale * mix(0.6, 1, dayFactor)
       sumA += a * (1 - sumA)
     }
-    t += dt
+    t += Math.max(0.08, 0.025 * t)
   }
 
   return Math.max(0, Math.min(1, sumA))
