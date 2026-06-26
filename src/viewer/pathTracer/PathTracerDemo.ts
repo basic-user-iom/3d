@@ -3467,6 +3467,8 @@ export class PathTracerDemo {
     // This ensures a clean path-traced render without visual clutter
     this.hideAllHelpersAndGizmos()
     
+    this.ensureRenderLoop()
+    
     // NOTE: The following code is now handled by hideAllHelpersAndGizmos() method above
     // Keeping this comment for reference, but the actual hiding is done in the method
     /*
@@ -3773,14 +3775,14 @@ export class PathTracerDemo {
     
     console.log(`[PathTracerDemo] 🔒 Hid ${hiddenCount} helper(s) and gizmo(s) during path tracing`)
     */
-    
+  }
+
+  /** Resume the render loop after pause without full start() re-init. */
+  private ensureRenderLoop(): void {
+    if (!this._isRunning || this.rafHandle !== null) return
+
     const loop = () => {
       if (!this._isRunning) {
-        console.log('[PathTracerDemo] ⚠️ Render loop stopped - _isRunning is false', {
-          sampleCount: this.getSampleCount(),
-          pausedAtMax: this.pausedAtMax,
-          maxSamplesReached: this.maxSamplesReached
-        })
         this.rafHandle = null
         return
       }
@@ -3788,13 +3790,14 @@ export class PathTracerDemo {
         this.renderFrame()
       } catch (error) {
         console.error('[PathTracerDemo] ❌ Render loop error:', error)
-        // Don't stop on error - let it continue trying
-        // Only stop if it's a critical error
         if (error instanceof Error && error.message.includes('WebGL context lost')) {
-          console.error('[PathTracerDemo] ❌ WebGL context lost - stopping path tracer')
           this.stop(true)
           return
         }
+      }
+      if (this.params.pause || this.pausedAtMax || this.maxSamplesReached) {
+        this.rafHandle = null
+        return
       }
       this.rafHandle = requestAnimationFrame(loop)
     }
@@ -5250,6 +5253,10 @@ export class PathTracerDemo {
       console.log('[PathTracerDemo] Resuming from pause at max - clearing pause-at-max flags')
       this.pausedAtMax = false
       this.maxSamplesReached = false
+    }
+
+    if (!paused && this._isRunning) {
+      this.ensureRenderLoop()
     }
   }
 
