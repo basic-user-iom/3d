@@ -21,7 +21,8 @@ describe('IqCloudSkyShader', () => {
     expect(fragment).toContain('pow(sun, 8.0)')
     expect(fragment).toContain('mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), den)')
     expect(fragment).toContain('col.a *= 0.35')
-    expect(fragment).toContain('gl_FragColor = vec4(col, 1.0)')
+    expect(fragment).toContain('col * (1.0 - clouds.w) + clouds.xyz')
+    expect(fragment).not.toContain('sum.xyz /= (0.001 + sum.w)')
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
 
@@ -32,7 +33,8 @@ describe('IqCloudSkyShader', () => {
     expect(fragment).toContain('pos + 0.3 * sunDir')
     expect(fragment).not.toContain('toIqSpaceFromRay')
     expect(fragment).not.toContain('cloudBaseY - ro.y')
-    expect(fragment).not.toContain('iqCoverageAlphaScale')
+    expect(fragment).toContain('wispBlend')
+    expect(fragment).toContain('gl_FragColor = vec4(col, 1.0)')
   })
 
   it('includes night sky features', () => {

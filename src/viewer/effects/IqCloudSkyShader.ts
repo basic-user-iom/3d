@@ -120,7 +120,10 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
 
       float cutoff = iqCoverageCutoff(coverage);
       float feather = iqCoverageFeather(coverage);
-      return smoothstep(cutoff, cutoff + feather, d);
+      // Linear remap above cutoff preserves iq's natural wispy edge falloff (no narrow smoothstep rim)
+      float den = clamp((d - cutoff) / max(0.06, 1.0 - cutoff), 0.0, 1.0);
+      // Wide soft knee at the coverage gate only — avoids a visible density band at cloud boundaries
+      return smoothstep(0.0, feather, den);
     }
 
     vec4 mapColorDensity(vec3 p) {
@@ -145,6 +148,9 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
 
         float shadowDen = mapDensity(pos + 0.3 * sunDir);
         float dif = clamp((col.w - shadowDen) / 0.6, 0.0, 1.0);
+        // Wisps self-shadow less — shadow sample ahead is denser than thin edge shells
+        float wispBlend = smoothstep(0.0, 0.2, col.w);
+        dif = mix(max(dif, 0.42), dif, wispBlend);
         vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
         lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
         lin *= mix(0.28, 1.0, dayFactor);
@@ -157,7 +163,7 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
         t += max(0.1, 0.025 * t);
       }
 
-      sum.xyz /= (0.001 + sum.w);
+      // Return premultiplied rgb+a — composite with over operator in main()
       return clamp(sum, 0.0, 1.0);
     }
 
@@ -195,16 +201,16 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       float sun = clamp(dot(sunDir, rd), 0.0, 1.0);
 
       col += 0.2 * vec3(1.0, 0.6, 0.1) * pow(sun, 8.0) * dayFactor;
+      col *= 0.95;
 
 ${skyOnly ? '' : `
       if (coverage > 0.004) {
         vec4 clouds = raymarchClouds(rd, sunDir, dayFactor);
-        col = mix(col, clouds.xyz, clouds.w);
+        col = col * (1.0 - clouds.w) + clouds.xyz;
       }
 `}
 
       col += 0.1 * vec3(1.0, 0.4, 0.2) * pow(sun, 3.0) * dayFactor;
-      col *= 0.95;
 
       float sunDisk = smoothstep(0.9993, 0.99985, sun) * dayFactor;
       col += vec3(1.0, 0.9, 0.62) * sunDisk * 5.0;

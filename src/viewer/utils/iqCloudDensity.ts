@@ -110,7 +110,8 @@ export function mapIqCloudDensityAtPos(
 
   const cutoff = iqCoverageCutoff(coverage)
   const feather = iqCoverageFeather(coverage)
-  return smoothstep(cutoff, cutoff + feather, d)
+  const den = Math.max(0, Math.min(1, (d - cutoff) / Math.max(0.06, 1 - cutoff)))
+  return smoothstep(0.0, feather, den)
 }
 
 /** Sample density along a view ray at march distance t */
