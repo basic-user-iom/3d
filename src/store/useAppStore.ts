@@ -2373,7 +2373,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCloudDensity: (density) => set({ cloudDensity: Math.max(0, Math.min(1, density)) }),
   setCloudThickness: (t) => set({ cloudThickness: Math.max(0, Math.min(1, t)) }),
   setCloudDetail: (d) => set({ cloudDetail: Math.max(0, Math.min(1, d)) }),
-  setCloudScale: (s) => set({ cloudScale: Math.max(0.5, Math.min(2, s)) }),
+  setCloudScale: (s) => set({ cloudScale: Math.max(0.25, Math.min(2, s)) }),
   setCloudStorminess: (v) => set({ cloudStorminess: Math.max(0, Math.min(1, v)) }),
   setCloudShadowStrength: (v) => set({ cloudShadowStrength: Math.max(0, Math.min(1, v)) }),
   setCloudColor: (c) => set({ cloudColor: c }),

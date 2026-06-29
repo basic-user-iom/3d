@@ -3,7 +3,8 @@ import {
   estimateIqRaymarchAlpha,
   iqCoverageCutoff,
   IQ_TEST_DIRECTIONS,
-  mapIqCloudDensity
+  mapIqCloudDensity,
+  toIqWorldPos
 } from '../src/viewer/utils/iqCloudDensity'
 import { iqCoverageAlphaScale } from '../src/viewer/utils/iqCloudCoverage'
 
@@ -36,6 +37,15 @@ describe('iqCloudDensity', () => {
         cloudScale: 1
       })
       expect(zenithDense).toBeGreaterThanOrEqual(zenithLight)
+    })
+
+    it('responds to cloudScale via noise-space position scaling', () => {
+      const posLarge = toIqWorldPos(IQ_TEST_DIRECTIONS.zenith, 0.3, { x: 100, z: 50 }, 2)
+      const posSmall = toIqWorldPos(IQ_TEST_DIRECTIONS.zenith, 0.3, { x: 100, z: 50 }, 0.5)
+      expect(posLarge.x).toBeCloseTo(0.0125, 5)
+      expect(posSmall.x).toBeCloseTo(0.05, 5)
+      expect(posLarge.z).toBeCloseTo(0.00625, 5)
+      expect(posSmall.z).toBeCloseTo(0.025, 5)
     })
   })
 
