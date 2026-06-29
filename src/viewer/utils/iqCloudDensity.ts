@@ -1,8 +1,19 @@
-import { IQ_CLOUD_CAMERA_Y, IQ_CLOUD_NOISE_XZ_SCALE } from '../effects/IqCloudSkyShader'
+import {
+  IQ_CLOUD_CAMERA_Y,
+  IQ_CLOUD_DENSITY_Y0,
+  IQ_CLOUD_NOISE_XZ_SCALE,
+  iqCloudElevSampleBias,
+  iqCloudHorizonFade
+} from '../effects/IqCloudSkyShader'
 import {
   iqCoverageCutoff
 } from './iqCloudCoverage'
 
+export {
+  iqCloudElevSampleBias,
+  iqCloudHorizonFade,
+  iqCloudOriginY
+} from '../effects/IqCloudSkyShader'
 export { iqCoverageCutoff, iqCoverageAlphaScale } from './iqCloudCoverage'
 
 export interface Vec3 {
@@ -17,6 +28,10 @@ export interface IqCloudDensityOptions {
   time?: number
   windSpeed?: number
   cameraXz?: { x: number; z: number }
+  /** World camera Y — used with cloudBaseY for iq origin lift */
+  cameraY?: number
+  /** World cloud band base — matches DynamicSky cloudBaseY uniform */
+  cloudBaseY?: number
 }
 
 function hash(n: number): number {
@@ -65,9 +80,10 @@ export function toIqWorldPos(
   cloudScale: number
 ): Vec3 {
   const xzScale = IQ_CLOUD_NOISE_XZ_SCALE / Math.max(0.35, cloudScale)
+  const elevBias = iqCloudElevSampleBias(rd.y)
   return {
     x: cameraXz.x * xzScale + rd.x * t,
-    y: IQ_CLOUD_CAMERA_Y + rd.y * t,
+    y: IQ_CLOUD_CAMERA_Y + rd.y * t + elevBias,
     z: cameraXz.z * xzScale + rd.z * t
   }
 }
@@ -83,7 +99,7 @@ export function mapIqCloudDensityAtPos(
   const time = options.time ?? 0
   const windSpeed = options.windSpeed ?? 0.1
 
-  let d = 0.2 - p.y
+  let d = IQ_CLOUD_DENSITY_Y0 - p.y
 
   let q = {
     x: p.x - time * windSpeed,
@@ -128,6 +144,8 @@ export function estimateIqRaymarchAlpha(
 
   const steps = options.steps ?? 64
   const dayFactor = options.dayFactor ?? 1
+  const horizonFade = iqCloudHorizonFade(rd.y)
+  if (horizonFade <= 0.001) return 0
   let sumA = 0
   let t = 0
 
@@ -141,7 +159,7 @@ export function estimateIqRaymarchAlpha(
     t += Math.max(0.1, 0.025 * t)
   }
 
-  return Math.max(0, Math.min(1, sumA))
+  return Math.max(0, Math.min(1, sumA * horizonFade))
 }
 
 /** Normalized view directions for unit tests */
