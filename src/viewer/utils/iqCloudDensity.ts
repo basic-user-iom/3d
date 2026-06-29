@@ -1,6 +1,9 @@
 import {
   IQ_CLOUD_CAMERA_Y,
+  IQ_CLOUD_DENSITY_SHARPEN,
   IQ_CLOUD_DENSITY_Y0,
+  IQ_CLOUD_MARCH_STEP_MIN,
+  IQ_CLOUD_MARCH_STEP_SCALE,
   IQ_CLOUD_NOISE_XZ_SCALE,
   iqCloudElevSampleBias,
   iqCloudHorizonFade
@@ -114,12 +117,15 @@ export function mapIqCloudDensityAtPos(
   f += 0.125 * iqNoise(q)
   q = { x: q.x * 2.01, y: q.y * 2.01, z: q.z * 2.01 }
   f += 0.0625 * iqNoise(q)
+  q = { x: q.x * 2.02, y: q.y * 2.02, z: q.z * 2.02 }
+  f += 0.0312 * iqNoise(q)
 
   d += 3 * f
   d = Math.max(0, Math.min(1, d))
 
   const cutoff = iqCoverageCutoff(coverage)
-  return Math.max(0, (d - cutoff) / Math.max(0.001, 1 - cutoff))
+  d = Math.max(0, (d - cutoff) / Math.max(0.001, 1 - cutoff))
+  return Math.pow(d, IQ_CLOUD_DENSITY_SHARPEN)
 }
 
 /** Sample density along a view ray at march distance t */
@@ -156,7 +162,7 @@ export function estimateIqRaymarchAlpha(
       const a = den * 0.35 * mix(0.6, 1, dayFactor)
       sumA += a * (1 - sumA)
     }
-    t += Math.max(0.1, 0.025 * t)
+    t += Math.max(IQ_CLOUD_MARCH_STEP_MIN, IQ_CLOUD_MARCH_STEP_SCALE * t)
   }
 
   return Math.max(0, Math.min(1, sumA * horizonFade))
