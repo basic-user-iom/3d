@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import {
   clampStandaloneSunSkyDirection,
+  computeSunLightingFromElevation,
   isNightTimeOfDay,
   standaloneLightSunDirection,
   standaloneSkySunDirection,
@@ -69,5 +70,53 @@ describe('standalone sun lighting', () => {
 
     expect(lightDir.y).toBeGreaterThan(0)
     expect(travel.y).toBeLessThan(0)
+  })
+
+  describe('computeSunLightingFromElevation', () => {
+    it('provides full sun and ambient at zenith', () => {
+      const noon = computeSunLightingFromElevation(Math.PI / 2)
+      expect(noon.sunIntensity).toBeCloseTo(1.0, 1)
+      expect(noon.ambientIntensity).toBeCloseTo(0.6, 1)
+      expect(noon.sunColor).toBe('#ffffff')
+    })
+
+    it('keeps ambient fill high at low sun for shadow detail', () => {
+      const lowSun = computeSunLightingFromElevation(0.1)
+      expect(lowSun.ambientIntensity).toBeGreaterThanOrEqual(0.42)
+      expect(lowSun.sunIntensity).toBeLessThan(0.75)
+      expect(lowSun.sunIntensity).toBeGreaterThan(0.35)
+    })
+
+    it('uses desaturated warm sun color at golden hour, not saturated orange', () => {
+      const lowSun = computeSunLightingFromElevation(0.08)
+      const color = lowSun.sunColor.replace('#', '')
+      const r = parseInt(color.slice(0, 2), 16)
+      const g = parseInt(color.slice(2, 4), 16)
+      const b = parseInt(color.slice(4, 6), 16)
+      expect(r).toBeGreaterThan(200)
+      expect(g).toBeGreaterThan(160)
+      expect(b).toBeGreaterThan(100)
+      expect(r - b).toBeLessThan(120)
+    })
+
+    it('uses cool sky-tinted ambient at golden hour', () => {
+      const lowSun = computeSunLightingFromElevation(0.12)
+      const color = lowSun.ambientColor.replace('#', '')
+      const r = parseInt(color.slice(0, 2), 16)
+      const b = parseInt(color.slice(4, 6), 16)
+      expect(b).toBeGreaterThan(r * 0.7)
+    })
+
+    it('dims lighting below the horizon', () => {
+      const night = computeSunLightingFromElevation(-0.2)
+      expect(night.sunIntensity).toBeLessThan(0.1)
+      expect(night.ambientIntensity).toBeLessThan(0.25)
+    })
+
+    it('boosts tone mapping exposure slightly at golden hour', () => {
+      const lowSun = computeSunLightingFromElevation(0.1)
+      const highSun = computeSunLightingFromElevation(0.6)
+      expect(lowSun.toneMappingExposure).toBeGreaterThan(highSun.toneMappingExposure)
+    })
   })
 })

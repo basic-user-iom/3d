@@ -35,6 +35,65 @@ export function timeOfDayToSkyAngles(
 /** Minimum sun elevation (Y) for standalone weather — keeps sun above horizon */
 export const STANDALONE_MIN_SUN_ELEVATION_Y = 0.05
 
+export interface SunLightingParams {
+  sunIntensity: number
+  sunColor: string
+  ambientIntensity: number
+  ambientColor: string
+  toneMappingExposure: number
+}
+
+function lerpHexColor(a: string, b: string, t: number): string {
+  const ca = new THREE.Color(a)
+  const cb = new THREE.Color(b)
+  return `#${ca.lerp(cb, t).getHexString()}`
+}
+
+/**
+ * Physically-motivated sun + ambient fill from solar elevation (radians).
+ * Low sun: warm but desaturated direct light, cool sky hemisphere fill, exposure lift
+ * so metallic PBR materials keep base color in shadow (not crushed to black).
+ */
+export function computeSunLightingFromElevation(elevation: number): SunLightingParams {
+  if (elevation < -0.02) {
+    return {
+      sunIntensity: 0.05,
+      sunColor: '#6688cc',
+      ambientIntensity: 0.18,
+      ambientColor: '#3a4a6a',
+      toneMappingExposure: 0.85
+    }
+  }
+
+  const aboveHorizon = THREE.MathUtils.smoothstep(elevation, -0.02, 0.08)
+  const goldenHour = 1 - THREE.MathUtils.smoothstep(elevation, 0.06, 0.38)
+  const dayFactor = THREE.MathUtils.clamp(elevation / (Math.PI / 2), 0, 1)
+
+  const elevationIntensity = 0.32 + 0.68 * Math.pow(dayFactor, 0.55)
+  const sunIntensity = aboveHorizon * elevationIntensity
+
+  const sunColor =
+    goldenHour > 0.01
+      ? lerpHexColor('#ffffff', '#ffd0a0', goldenHour * 0.8)
+      : '#ffffff'
+
+  const baseAmbient = 0.36 + 0.24 * Math.pow(dayFactor, 0.45)
+  const goldenAmbientFloor = 0.42
+  const ambientIntensity =
+    goldenHour > 0.2
+      ? Math.max(baseAmbient + goldenHour * 0.12, goldenAmbientFloor)
+      : baseAmbient
+
+  const ambientColor =
+    goldenHour > 0.01
+      ? lerpHexColor('#c8d8ec', '#dcc8b0', goldenHour * 0.5)
+      : lerpHexColor('#d0d8e8', '#f0f0f0', dayFactor * 0.35)
+
+  const toneMappingExposure = 1.0 + goldenHour * 0.1
+
+  return { sunIntensity, sunColor, ambientIntensity, ambientColor, toneMappingExposure }
+}
+
 /**
  * Normalized direction toward the sun in the sky (from scene origin).
  */
