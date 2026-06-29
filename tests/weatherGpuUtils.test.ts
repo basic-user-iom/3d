@@ -21,11 +21,12 @@ describe('weatherGpuUtils', () => {
       expect(getAdaptiveIqRaymarchSteps('ultra', 0.5)).toBe(88)
     })
 
-    it('reduces steps for low/medium based on cloud density', () => {
+    it('enforces iq-aligned minimum on low/medium when clouds are visible', () => {
       const sparse = getAdaptiveIqRaymarchSteps('low', 0.2)
       const dense = getAdaptiveIqRaymarchSteps('low', 0.9)
-      expect(sparse).toBeLessThan(dense)
-      expect(sparse).toBeGreaterThanOrEqual(40)
+      expect(sparse).toBe(64)
+      expect(dense).toBe(64)
+      expect(getAdaptiveIqRaymarchSteps('medium', 0.5)).toBe(64)
     })
 
     it('uses minimal steps when coverage is near zero', () => {
