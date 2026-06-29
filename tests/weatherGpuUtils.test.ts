@@ -17,16 +17,16 @@ describe('weatherGpuUtils', () => {
 
   describe('getAdaptiveIqRaymarchSteps', () => {
     it('preserves full steps on high and ultra presets', () => {
-      expect(getAdaptiveIqRaymarchSteps('high', 0.75)).toBe(72)
-      expect(getAdaptiveIqRaymarchSteps('ultra', 0.5)).toBe(88)
+      expect(getAdaptiveIqRaymarchSteps('high', 0.75)).toBe(80)
+      expect(getAdaptiveIqRaymarchSteps('ultra', 0.5)).toBe(96)
     })
 
     it('enforces iq-aligned minimum on low/medium when clouds are visible', () => {
       const sparse = getAdaptiveIqRaymarchSteps('low', 0.2)
       const dense = getAdaptiveIqRaymarchSteps('low', 0.9)
-      expect(sparse).toBe(64)
-      expect(dense).toBe(64)
-      expect(getAdaptiveIqRaymarchSteps('medium', 0.5)).toBe(64)
+      expect(sparse).toBe(72)
+      expect(dense).toBe(72)
+      expect(getAdaptiveIqRaymarchSteps('medium', 0.5)).toBe(72)
     })
 
     it('uses minimal steps when coverage is near zero', () => {

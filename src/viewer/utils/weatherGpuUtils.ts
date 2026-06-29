@@ -1,10 +1,10 @@
 export type WeatherQuality = 'low' | 'medium' | 'high' | 'ultra'
 
 const IQ_RAYMARCH_BASE: Record<WeatherQuality, number> = {
-  low: 48,
-  medium: 56,
-  high: 72,
-  ultra: 88
+  low: 56,
+  medium: 64,
+  high: 80,
+  ultra: 96
 }
 
 /** CSM shadow map size per weather quality preset (Three.js power-of-two sizes only). */
@@ -25,7 +25,7 @@ export function getAdaptiveIqRaymarchSteps(
     return Math.min(base, 24)
   }
   // iq XslGRr uses 64 steps — keep enough for wisps at 1–25% slider
-  const minSteps = 64
+  const minSteps = 72
   if (quality === 'high' || quality === 'ultra') {
     return Math.max(minSteps, base)
   }

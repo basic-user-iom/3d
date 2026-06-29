@@ -25,6 +25,8 @@ describe('IqCloudSkyShader', () => {
     expect(fragment).toContain('pow(sun, 8.0)')
     expect(fragment).toContain('mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), res.x)')
     expect(fragment).toContain('col.a *= 0.35')
+    expect(fragment).toContain('pow(d, IQ_DENSITY_SHARPEN)')
+    expect(fragment).toContain('0.0312 * noise')
     expect(fragment).toContain('col * (1.0 - clouds.w) + clouds.xyz')
     expect(fragment).not.toContain('sum.xyz /= (0.001 + sum.w)')
     expect(fragment).not.toContain('smoothstep(0.0, feather')

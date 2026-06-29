@@ -37,17 +37,19 @@ describe('iqCloudDensity', () => {
     it('keeps horizon wisps below zenith after elevation fade', () => {
       const horizon = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.horizon, {
         ...overcast,
-        steps: 64,
+        steps: 72,
         dayFactor: 1
       })
       const zenith = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
         ...overcast,
-        steps: 64,
+        steps: 72,
         dayFactor: 1
       })
       expect(zenith).toBeGreaterThan(0.15)
-      expect(horizon).toBeLessThan(zenith * 0.35)
-      expect(iqCloudHorizonFade(IQ_TEST_DIRECTIONS.horizon.y)).toBeLessThan(0.2)
+      expect(horizon).toBeLessThan(zenith * 0.58)
+      expect(iqCloudHorizonFade(0.03)).toBeLessThan(0.05)
+      expect(iqCloudHorizonFade(IQ_TEST_DIRECTIONS.horizon.y)).toBeGreaterThan(0.2)
+      expect(iqCloudHorizonFade(0.12)).toBe(1)
     })
 
     it('responds to coverage slider via density cutoff', () => {
@@ -87,7 +89,7 @@ describe('iqCloudDensity', () => {
         dayFactor: 1
       })
       expect(zenithAlpha).toBeGreaterThan(0.15)
-      expect(horizonAlpha).toBeLessThan(zenithAlpha * 0.35)
+      expect(horizonAlpha).toBeLessThan(zenithAlpha * 0.58)
     })
 
     it('produces measurable raymarch alpha at 1% coverage (zenith wisps)', () => {
