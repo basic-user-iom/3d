@@ -1,6 +1,5 @@
 import {
   IQ_CLOUD_CAMERA_Y,
-  IQ_CLOUD_DENSITY_SHARPEN,
   IQ_CLOUD_DENSITY_Y0,
   IQ_CLOUD_MARCH_STEP_MIN,
   IQ_CLOUD_MARCH_STEP_SCALE,
@@ -28,6 +27,7 @@ export interface Vec3 {
 export interface IqCloudDensityOptions {
   coverage?: number
   cloudScale?: number
+  cloudDetail?: number
   time?: number
   windSpeed?: number
   cameraXz?: { x: number; z: number }
@@ -117,15 +117,15 @@ export function mapIqCloudDensityAtPos(
   f += 0.125 * iqNoise(q)
   q = { x: q.x * 2.01, y: q.y * 2.01, z: q.z * 2.01 }
   f += 0.0625 * iqNoise(q)
-  q = { x: q.x * 2.02, y: q.y * 2.02, z: q.z * 2.02 }
-  f += 0.0312 * iqNoise(q)
 
   d += 3 * f
   d = Math.max(0, Math.min(1, d))
 
   const cutoff = iqCoverageCutoff(coverage)
   d = Math.max(0, (d - cutoff) / Math.max(0.001, 1 - cutoff))
-  return Math.pow(d, IQ_CLOUD_DENSITY_SHARPEN)
+  const detail = options.cloudDetail ?? 0.5
+  const sharp = 1.1 + (2.1 - 1.1) * Math.max(0, Math.min(1, detail))
+  return Math.pow(d, sharp)
 }
 
 /** Sample density along a view ray at march distance t */

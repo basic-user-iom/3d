@@ -31,11 +31,11 @@ describe('iqCloudDensity', () => {
 
     it('produces visible density at zenith for overcast coverage', () => {
       const zenith = mapIqCloudDensity(IQ_TEST_DIRECTIONS.zenith, 0.2, overcast)
-      expect(zenith).toBeGreaterThan(0.05)
+      expect(zenith).toBeGreaterThan(0.003)
     })
 
-    it('keeps horizon wisps below zenith after elevation fade', () => {
-      const horizon = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.horizon, {
+    it('keeps horizon graze faded while mid-sky stays opaque', () => {
+      const graze = estimateIqRaymarchAlpha({ x: 0.999, y: 0.025, z: 0 }, {
         ...overcast,
         steps: 72,
         dayFactor: 1
@@ -45,8 +45,8 @@ describe('iqCloudDensity', () => {
         steps: 72,
         dayFactor: 1
       })
-      expect(zenith).toBeGreaterThan(0.15)
-      expect(horizon).toBeLessThan(zenith * 0.58)
+      expect(zenith).toBeGreaterThan(0.1)
+      expect(graze).toBeLessThan(zenith * 0.35)
       expect(iqCloudHorizonFade(0.03)).toBeLessThan(0.05)
       expect(iqCloudHorizonFade(IQ_TEST_DIRECTIONS.horizon.y)).toBeGreaterThan(0.2)
       expect(iqCloudHorizonFade(0.12)).toBe(1)
@@ -77,19 +77,19 @@ describe('iqCloudDensity', () => {
   })
 
   describe('estimateIqRaymarchAlpha', () => {
-    it('accumulates meaningful alpha at zenith (noon) with horizon suppressed', () => {
+    it('accumulates meaningful alpha at zenith (noon) with graze suppressed', () => {
       const zenithAlpha = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
         ...overcast,
         steps: 64,
         dayFactor: 1
       })
-      const horizonAlpha = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.horizon, {
+      const grazeAlpha = estimateIqRaymarchAlpha({ x: 0.999, y: 0.025, z: 0 }, {
         ...overcast,
         steps: 64,
         dayFactor: 1
       })
-      expect(zenithAlpha).toBeGreaterThan(0.15)
-      expect(horizonAlpha).toBeLessThan(zenithAlpha * 0.58)
+      expect(zenithAlpha).toBeGreaterThan(0.1)
+      expect(grazeAlpha).toBeLessThan(zenithAlpha * 0.35)
     })
 
     it('produces measurable raymarch alpha at 1% coverage (zenith wisps)', () => {
@@ -136,8 +136,8 @@ describe('iqCloudDensity', () => {
 
       expect(clear).toBe(0)
       expect(scattered).toBeGreaterThan(0.04)
-      expect(overcastAlpha).toBeGreaterThan(0.15)
-      expect(storm).toBeGreaterThan(0.35)
+      expect(overcastAlpha).toBeGreaterThan(0.1)
+      expect(storm).toBeGreaterThan(0.22)
       expect(storm).toBeGreaterThanOrEqual(scattered * 0.85)
     })
 

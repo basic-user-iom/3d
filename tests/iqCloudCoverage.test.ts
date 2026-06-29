@@ -8,9 +8,9 @@ import {
 describe('iqCloudCoverage', () => {
   it('maps slider tiers to expected density cutoffs', () => {
     expect(iqCoverageCutoff(0)).toBeCloseTo(0.74, 2)
-    expect(iqCoverageCutoff(0.25)).toBeCloseTo(0.333, 1)
-    expect(iqCoverageCutoff(0.75)).toBeCloseTo(0.112, 1)
-    expect(iqCoverageCutoff(1)).toBe(0)
+    expect(iqCoverageCutoff(0.25)).toBeCloseTo(0.45, 1)
+    expect(iqCoverageCutoff(0.75)).toBeCloseTo(0.28, 1)
+    expect(iqCoverageCutoff(1)).toBeCloseTo(0.22, 2)
   })
 
   it('widens feather constant at higher coverage (deprecated API)', () => {

@@ -464,6 +464,7 @@ export class DynamicSky {
           windSpeed: { value: (this.config.windIntensity ?? 0) * 0.2 + 0.05 },
           exposure: { value: this.config.exposure ?? 1.0 },
           cloudScale: { value: this.config.cloudScale ?? 1.0 },
+          cloudDetail: { value: this.config.cloudDetail ?? 0.5 },
           cloudBaseY: { value: cloudBand.base },
           cloudTopY: { value: cloudBand.top },
           raymarchSteps: {
@@ -1069,6 +1070,7 @@ export class DynamicSky {
         this.skyMaterial.uniforms.windSpeed.value = (this.config.windIntensity ?? 0) * 0.2 + 0.05
         this.skyMaterial.uniforms.exposure.value = this.config.exposure ?? 1.0
         this.skyMaterial.uniforms.cloudScale.value = this.config.cloudScale ?? 1.0
+        this.skyMaterial.uniforms.cloudDetail.value = this.config.cloudDetail ?? 0.5
         this.skyMaterial.uniforms.cloudBaseY.value = band.base
         this.skyMaterial.uniforms.cloudTopY.value = band.top
         this.skyMaterial.uniforms.raymarchSteps.value = getAdaptiveIqRaymarchSteps(
