@@ -100,10 +100,10 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       return ro + rd * t;
     }
 
-    // iq map() with UI coverage cutoff layered on top
-    float mapDensity(vec3 p) {
+    // iq map() — raw FBM density in .w; UI coverage is a linear cutoff only (no smoothstep rim)
+    vec4 map(vec3 p) {
       if (coverage <= 0.004) {
-        return 0.0;
+        return vec4(0.0);
       }
 
       float d = 0.2 - p.y;
@@ -119,18 +119,12 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       d = clamp(d, 0.0, 1.0);
 
       float cutoff = iqCoverageCutoff(coverage);
-      float feather = iqCoverageFeather(coverage);
-      // Linear remap above cutoff preserves iq's natural wispy edge falloff (no narrow smoothstep rim)
-      float den = clamp((d - cutoff) / max(0.06, 1.0 - cutoff), 0.0, 1.0);
-      // Wide soft knee at the coverage gate only — avoids a visible density band at cloud boundaries
-      return smoothstep(0.0, feather, den);
-    }
+      d = max(0.0, (d - cutoff) / max(0.001, 1.0 - cutoff));
 
-    vec4 mapColorDensity(vec3 p) {
-      float den = mapDensity(p);
-      vec3 albedo = mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), den);
-      albedo = mix(albedo, albedo * vec3(0.55, 0.58, 0.62), storminess * 0.4);
-      return vec4(albedo, den);
+      vec4 res = vec4(d);
+      res.xyz = mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), res.x);
+      res.xyz = mix(res.xyz, res.xyz * vec3(0.55, 0.58, 0.62), storminess * 0.4);
+      return res;
     }
 
     // World-space raymarch — literal port of iq raymarch() with sunDir lighting
@@ -144,13 +138,9 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
         if (sum.a > 0.99) break;
 
         vec3 pos = toIqWorldPos(rd, t);
-        vec4 col = mapColorDensity(pos);
+        vec4 col = map(pos);
 
-        float shadowDen = mapDensity(pos + 0.3 * sunDir);
-        // Thin wisps: sun-shadow sample is denser than the local shell — blend toward local density
-        float wispBlend = smoothstep(0.0, 0.25, col.w);
-        shadowDen = mix(shadowDen, col.w, (1.0 - wispBlend) * 0.7);
-        float dif = clamp((col.w - shadowDen) / 0.6, 0.0, 1.0);
+        float dif = clamp((col.w - map(pos + 0.3 * sunDir).w) / 0.6, 0.0, 1.0);
         vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
         lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
         lin *= mix(0.28, 1.0, dayFactor);
