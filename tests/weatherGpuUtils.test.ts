@@ -1,17 +1,29 @@
 import { describe, expect, it } from 'vitest'
 import {
   getAdaptiveIqRaymarchSteps,
+  getCsmCascadeCountForQuality,
   getCsmShadowMapSizeForQuality,
-  getEffectivePixelRatio
+  getEffectiveMaxFps,
+  getEffectivePixelRatio,
+  getWeatherMaxPixelRatio
 } from '../src/viewer/utils/weatherGpuUtils'
 
 describe('weatherGpuUtils', () => {
   describe('getCsmShadowMapSizeForQuality', () => {
-    it('uses 1024 for low quality only', () => {
-      expect(getCsmShadowMapSizeForQuality('low')).toBe(1024)
-      expect(getCsmShadowMapSizeForQuality('medium')).toBe(2048)
+    it('scales shadow maps down on low and medium tiers', () => {
+      expect(getCsmShadowMapSizeForQuality('low')).toBe(512)
+      expect(getCsmShadowMapSizeForQuality('medium')).toBe(1024)
       expect(getCsmShadowMapSizeForQuality('high')).toBe(2048)
       expect(getCsmShadowMapSizeForQuality('ultra')).toBe(2048)
+    })
+  })
+
+  describe('getCsmCascadeCountForQuality', () => {
+    it('reduces cascade count on low and medium tiers', () => {
+      expect(getCsmCascadeCountForQuality('low')).toBe(1)
+      expect(getCsmCascadeCountForQuality('medium')).toBe(2)
+      expect(getCsmCascadeCountForQuality('high')).toBe(3)
+      expect(getCsmCascadeCountForQuality('ultra')).toBe(3)
     })
   })
 
@@ -21,12 +33,15 @@ describe('weatherGpuUtils', () => {
       expect(getAdaptiveIqRaymarchSteps('ultra', 0.5)).toBe(96)
     })
 
-    it('enforces iq-aligned minimum on low/medium when clouds are visible', () => {
-      const sparse = getAdaptiveIqRaymarchSteps('low', 0.2)
-      const dense = getAdaptiveIqRaymarchSteps('low', 0.9)
-      expect(sparse).toBe(64)
-      expect(dense).toBe(64)
-      expect(getAdaptiveIqRaymarchSteps('medium', 0.5)).toBe(64)
+    it('uses reduced steps on low and medium when clouds are visible', () => {
+      const sparseLow = getAdaptiveIqRaymarchSteps('low', 0.2)
+      const denseLow = getAdaptiveIqRaymarchSteps('low', 0.9)
+      expect(sparseLow).toBeGreaterThanOrEqual(32)
+      expect(sparseLow).toBeLessThanOrEqual(48)
+      expect(denseLow).toBeGreaterThanOrEqual(32)
+      expect(denseLow).toBeLessThanOrEqual(48)
+      expect(getAdaptiveIqRaymarchSteps('medium', 0.5)).toBeGreaterThanOrEqual(48)
+      expect(getAdaptiveIqRaymarchSteps('medium', 0.5)).toBeLessThanOrEqual(56)
     })
 
     it('uses minimal steps when coverage is near zero', () => {
@@ -42,6 +57,21 @@ describe('weatherGpuUtils', () => {
 
     it('respects maxPixelRatio on smaller canvases', () => {
       expect(getEffectivePixelRatio(3, 2, 1920)).toBe(2)
+    })
+
+    it('applies weather quality tier caps', () => {
+      expect(getWeatherMaxPixelRatio('low', 3)).toBe(1.5)
+      expect(getEffectivePixelRatio(2, 3, 1920, 'low')).toBe(1.5)
+      expect(getEffectivePixelRatio(2, 3, 1920, 'medium')).toBe(2)
+    })
+  })
+
+  describe('getEffectiveMaxFps', () => {
+    it('caps unlimited FPS to 60 on low weather quality', () => {
+      expect(getEffectiveMaxFps('low', 0, true)).toBe(60)
+      expect(getEffectiveMaxFps('low', 30, true)).toBe(30)
+      expect(getEffectiveMaxFps('high', 0, true)).toBe(0)
+      expect(getEffectiveMaxFps('low', 0, false)).toBe(0)
     })
   })
 })

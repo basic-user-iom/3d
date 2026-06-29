@@ -6,33 +6,44 @@ This document summarizes the main GPU workloads in standalone weather mode and h
 
 | System | Cost driver | Notes |
 |--------|-------------|-------|
-| **Dynamic Sky (iq mode)** | Fullscreen sky dome raymarch every frame | 48–88 steps/pixel depending on `weatherQuality`; adaptive reduction on Low/Medium when cloud coverage is sparse |
-| **CSM shadows** | 3 cascades × shadow map resolution | 1024² per cascade on **Low**, 2048² on Medium/High/Ultra (~12 MB vs ~48 MB GPU) |
+| **Dynamic Sky (iq mode)** | Fullscreen sky dome raymarch every frame | 32–96 steps/pixel depending on `weatherQuality`; adaptive reduction on Low/Medium |
+| **CSM shadows** | Cascade count × shadow map resolution | Low: 1×512²; Medium: 2×1024²; High/Ultra: 3×2048² |
 | **Post-processing** | Bloom, SSR, AO, tone mapping | Multiple fullscreen passes when enabled |
 | **Particles (rain/snow)** | Point count × update frequency | Skipped entirely when intensity is 0; Low preset caps at 5k particles |
 | **Path tracer** | Per-sample GPU path trace | Render loop stops when paused or max samples reached |
-| **Streets GL iframe** | Separate WebGL context | Runs its own render loop when overlay is active |
+| **Streets GL iframe** | Separate WebGL context | Only runs in **City** or **Hybrid** render mode; paused when tab is hidden |
 
 ## Existing idle / visibility optimizations
 
-- **Page Visibility**: render loop cancels when the tab is hidden.
-- **Idle pause**: when the camera is static and nothing is animating, frames are not rendered until user input or scene change wakes the loop.
+- **Page Visibility**: render loop cancels when the tab is hidden; Streets GL iframe unloads (`about:blank`).
+- **Idle pause**: when the camera is static, wind is off, and no rain/snow/particles animate, frames are not rendered until user input wakes the loop. CSM and static clouds do not force continuous redraw.
 - **Path tracer**: viewer raster render is skipped while the path tracer owns the WebGL context.
+- **Low weather + unlimited FPS**: automatically capped at 60 FPS when standalone weather is active.
 
 ## Quality preset (`weatherQuality`)
 
-| Preset | iq raymarch steps | CSM map size | Particle cap |
-|--------|-------------------|--------------|--------------|
-| Low | 48 (density-scaled) | 1024 | 5,000 |
-| Medium | 56 (density-scaled) | 2048 | 10,000 |
-| High | 72 (fixed) | 2048 | 15,000 |
-| Ultra | 88 (fixed) | 2048 | 20,000 |
+| Preset | iq raymarch steps | CSM cascades | CSM map size | Max pixel ratio | GPU preference |
+|--------|-------------------|--------------|--------------|-----------------|--------------|
+| Low | 32–48 (density-scaled) | 1 | 512 | 1.5 | `low-power` |
+| Medium | 48–56 (density-scaled) | 2 | 1024 | 2.0 | default |
+| High | 64–80 (fixed) | 3 | 2048 | store cap | default |
+| Ultra | 64–96 (fixed) | 3 | 2048 | store cap | default |
 
 **High** and **Ultra** keep full iq raymarch step counts regardless of cloud density to preserve visual quality.
 
+### Estimated GPU savings (Low vs High, standalone weather)
+
+| Optimization | Approx. savings |
+|--------------|-----------------|
+| Raymarch steps 32–48 vs 80 | ~40–60% sky shader cost |
+| 1×512² CSM vs 3×2048² | ~94% shadow map memory & passes |
+| Pixel ratio cap 1.5 vs 2+ | ~44% fill rate on retina |
+| Idle pause (static camera) | ~100% when not interacting |
+| Streets GL paused (Product mode) | Entire second WebGL context |
+
 ## Pixel ratio
 
-Auto pixel ratio is capped by `maxPixelRatio` (default 2) and further limited on very wide canvases so effective render width does not exceed ~3840 px (4K fill-rate protection).
+Auto pixel ratio is capped by `maxPixelRatio` (default 2), further limited per weather tier (Low 1.5, Medium 2.0), and on very wide canvases so effective render width does not exceed ~3840 px (4K fill-rate protection).
 
 ## Cloud density slider (iq mode)
 
@@ -59,7 +70,9 @@ Presets use the same `cloudDensity` field: Clear 0, Foggy 0.35, Overcast 0.75, S
 
 ## Recommendations
 
-1. Use **Low** weather quality on integrated GPUs or when Streets GL + weather run together.
-2. Disable SSR/AO/bloom in post-processing if GPU usage is still high.
-3. Set **maxFPS** to 30–60 in settings to cap frame rate when full quality is not needed.
-4. Disable standalone weather when using Streets GL iframe overlay (two WebGL contexts).
+1. Use **Low** weather quality on integrated GPUs or when the GPU runs hot.
+2. Set **maxFPS** to 30–60 in Rendering settings for sustained sessions.
+3. Disable SSR/AO/bloom in post-processing if GPU usage is still high.
+4. Disable standalone weather when using Streets GL iframe overlay (two WebGL contexts when both are active in City/Hybrid mode).
+5. Leave the camera idle after framing — the render loop pauses automatically when wind and effects are off.
+6. Switch render mode to **Product** when Streets GL map is not needed — the iframe WebGL context stays unloaded.

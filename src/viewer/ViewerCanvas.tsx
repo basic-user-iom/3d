@@ -27,7 +27,7 @@ import {
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
-import { getCsmShadowMapSizeForQuality, getEffectivePixelRatio } from './utils/weatherGpuUtils'
+import { getCsmShadowMapSizeForQuality, getCsmCascadeCountForQuality, getEffectiveMaxFps, getEffectivePixelRatio, prefersLowPowerGpu } from './utils/weatherGpuUtils'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
 import { ToneMappingType } from './postprocessing/ToneMappingShader'
@@ -476,9 +476,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     camera.lookAt(0, 0, 0)
 
       // Renderer setup with enhanced quality settings
-      // Determine power preference: preferCPU > useHighPerformanceGPU > default
+      // Determine power preference: preferCPU > low weather quality > useHighPerformanceGPU > default
       let powerPreference: "high-performance" | "low-power" | "default" = "default"
-      if (preferCPU) {
+      const initWeatherQuality = appStoreInit.weatherQuality ?? 'high'
+      if (preferCPU || prefersLowPowerGpu(initWeatherQuality)) {
         powerPreference = "low-power" // Prefer integrated GPU or CPU fallback (software rendering)
       } else if (useHighPerformanceGPU) {
         powerPreference = "high-performance" // Prefer dedicated GPU
@@ -518,7 +519,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       effectivePixelRatio = getEffectivePixelRatio(
         window.devicePixelRatio,
         maxPixelRatio,
-        containerRef.current.clientWidth
+        containerRef.current.clientWidth,
+        initWeatherQuality
       )
     }
     renderer.setPixelRatio(effectivePixelRatio)
@@ -4328,8 +4330,14 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // VSync and FPS limiting
     let lastFrameTime = 0
     const getFrameInterval = () => {
-      if (maxFPS <= 0) return 0 // Unlimited or VSync (-1)
-      return 1000 / maxFPS // Convert FPS to milliseconds per frame
+      const store = useAppStore.getState()
+      const effectiveFps = getEffectiveMaxFps(
+        store.weatherQuality ?? 'high',
+        maxFPS,
+        !!store.enableStandaloneWeather
+      )
+      if (effectiveFps <= 0) return 0 // Unlimited or VSync (-1)
+      return 1000 / effectiveFps
     }
 
     let documentVisible = typeof document === 'undefined' || !document.hidden
@@ -4351,10 +4359,21 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       )
     }
 
+    const getSceneActivity = () => {
+      const s = useAppStore.getState()
+      return {
+        enableStandaloneWeather: s.enableStandaloneWeather,
+        windIntensity: s.windIntensity,
+        cloudDensity: s.cloudDensity,
+        rainIntensity: s.rainIntensity,
+        snowIntensity: s.snowIntensity
+      }
+    }
+
     const needsViewerRenderUpdates = (): boolean =>
       controlsInteracting ||
       hasOrbitControlsDamping(controls) ||
-      needsContinuousSceneUpdates(viewerRef.current, controls)
+      needsContinuousSceneUpdates(viewerRef.current, controls, getSceneActivity())
 
     if (viewerRef.current) {
       viewerRef.current.requestRender = restartAnimationLoop
@@ -5248,6 +5267,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   // Update pixel ratio and upscaling when quality settings change
   const upscalingEnabled = useAppStore((state) => state.upscalingEnabled)
   const upscalingQuality = useAppStore((state) => state.upscalingQuality)
+  const weatherQualityForPixelRatio = useAppStore((state) => state.weatherQuality)
   
   useEffect(() => {
     if (!viewerRef.current) return
@@ -5261,7 +5281,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       effectivePixelRatio = getEffectivePixelRatio(
         window.devicePixelRatio,
         maxPixelRatio,
-        containerRef.current?.clientWidth ?? window.innerWidth
+        containerRef.current?.clientWidth ?? window.innerWidth,
+        weatherQualityForPixelRatio
       )
     }
     
@@ -5273,7 +5294,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
     
     renderer.setPixelRatio(effectivePixelRatio)
-  }, [pixelRatio, maxPixelRatio, upscalingEnabled, upscalingQuality])
+  }, [pixelRatio, maxPixelRatio, upscalingEnabled, upscalingQuality, weatherQualityForPixelRatio])
 
   // Resize viewer when panels toggle and re-center selected object
   useEffect(() => {
@@ -5307,7 +5328,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         effectivePixelRatio = getEffectivePixelRatio(
           window.devicePixelRatio,
           maxPixelRatio,
-          width
+          width,
+          useAppStore.getState().weatherQuality
         )
       }
       renderer.setPixelRatio(effectivePixelRatio)
@@ -7339,7 +7361,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           parent: scene,
           lightIntensity: 1.0,
           lightColor: new THREE.Color(0xffffff),
-          cascades: 3,
+          cascades: getCsmCascadeCountForQuality(weatherQuality || 'high'),
           maxFar: 5000,
           shadowMapSize: getCsmShadowMapSizeForQuality(weatherQuality || 'high'),
           lightDirection: sunLightTravelDir,
@@ -8717,11 +8739,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
 rainCollisionEnabled, snowParticleScale, snowParticleSpeed, snowCollisionEnabled, waterEnabled, waterLevel,
 waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistortionScale, oceanSize, windGustsEnabled, hdrEnabled, weatherQuality])
 
-  // Scale CSM shadow map resolution when weather quality preset changes
+  // Scale CSM shadow quality when weather quality preset changes
   useEffect(() => {
     const csm = viewerRef.current?.csmShadowSystem
     if (!csm?.isEnabled()) return
-    csm.setShadowMapSize(getCsmShadowMapSizeForQuality(weatherQuality))
+    csm.applyWeatherQuality(weatherQuality)
   }, [weatherQuality])
 
   // Destroy particle/water systems only on viewer unmount (not on every slider change)
@@ -8906,9 +8928,9 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           parent: scene,
           lightIntensity: 1.0,
           lightColor: new THREE.Color(0xffffff),
-          cascades: 3, // 3 cascades for high quality (like Streets GL)
+          cascades: getCsmCascadeCountForQuality(store.weatherQuality || 'high'),
           maxFar: 5000,
-          shadowMapSize: getCsmShadowMapSizeForQuality(store.weatherQuality || 'high'), // Quality-scaled resolution
+          shadowMapSize: getCsmShadowMapSizeForQuality(store.weatherQuality || 'high'),
           lightDirection: new THREE.Vector3(-1, -1, -1), // Will be updated by time of day
           shadowBias: -0.0002,
           shadowNormalBias: 0.01
