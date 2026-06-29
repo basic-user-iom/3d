@@ -4,11 +4,11 @@ export const IQ_COVERAGE_CUTOFF_CLEAR = 0.74
 /** Density cutoff at 100% coverage — storm ceiling, nearly all noise passes */
 export const IQ_COVERAGE_CUTOFF_STORM = 0.0
 
-/** smoothstep feather width at scattered (25%) coverage */
-export const IQ_COVERAGE_FEATHER_LIGHT = 0.1
+/** Soft knee width at scattered (25%) coverage — wider than iq cutoff band to avoid rim halos */
+export const IQ_COVERAGE_FEATHER_LIGHT = 0.18
 
-/** smoothstep feather width at storm (100%) coverage */
-export const IQ_COVERAGE_FEATHER_STORM = 0.16
+/** Soft knee width at storm (100%) coverage */
+export const IQ_COVERAGE_FEATHER_STORM = 0.28
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))

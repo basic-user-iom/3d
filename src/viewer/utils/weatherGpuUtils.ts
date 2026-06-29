@@ -25,7 +25,7 @@ export function getAdaptiveIqRaymarchSteps(
     return Math.min(base, 24)
   }
   // iq XslGRr uses 64 steps — keep enough for wisps at 1–25% slider
-  const minSteps = 56
+  const minSteps = 64
   if (quality === 'high' || quality === 'ultra') {
     return Math.max(minSteps, base)
   }
