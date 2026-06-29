@@ -9,6 +9,14 @@ export interface FrameMotionState {
   controlsTarget: THREE.Vector3
 }
 
+export interface SceneActivityFlags {
+  enableStandaloneWeather?: boolean
+  windIntensity?: number
+  cloudDensity?: number
+  rainIntensity?: number
+  snowIntensity?: number
+}
+
 export interface RenderLoopViewerState {
   animationMixers?: THREE.AnimationMixer[]
   csmShadowSystem?: { isEnabled?: () => boolean }
@@ -102,16 +110,29 @@ export function restartAnimationLoopIfIdle(
 
 export function needsContinuousSceneUpdates(
   viewer: RenderLoopViewerState | null | undefined,
-  controls?: OrbitControls
+  controls?: OrbitControls,
+  activity?: SceneActivityFlags
 ): boolean {
   if (controls && hasOrbitControlsDamping(controls)) return true
   if (!viewer) return false
   if ((viewer.transformControls as { dragging?: boolean } | null | undefined)?.dragging) return true
-  if (viewer.csmShadowSystem?.isEnabled?.()) return true
-  if (viewer.dynamicSky) return true
+  if (hasActiveAnimationMixers(viewer)) return true
   if (viewer.particleSystems?.length) return true
   if (viewer.waterSystem) return true
   if (viewer.standaloneWaterSystem) return true
-  if (hasActiveAnimationMixers(viewer)) return true
+
+  const rain = activity?.rainIntensity ?? 0
+  const snow = activity?.snowIntensity ?? 0
+  if (rain > 0 || snow > 0) return true
+
+  // CSM shadows update on camera motion — no idle redraw required.
+  // Dynamic sky: animate only when wind or visible volumetric clouds need motion.
+  if (viewer.dynamicSky && activity?.enableStandaloneWeather) {
+    const wind = activity.windIntensity ?? 0
+    const clouds = activity.cloudDensity ?? 0
+    if (wind > 0.01) return true
+    if (clouds > 0.01 && wind > 0.001) return true
+  }
+
   return false
 }

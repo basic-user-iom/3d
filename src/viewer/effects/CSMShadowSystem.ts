@@ -1,5 +1,10 @@
 import * as THREE from 'three'
 import { StreetsGLCSM, StreetsGLCSMConfig } from './StreetsGLCSM'
+import {
+  getCsmCascadeCountForQuality,
+  getCsmShadowMapSizeForQuality,
+  type WeatherQuality
+} from '../utils/weatherGpuUtils'
 
 export interface CSMConfig {
   camera: THREE.PerspectiveCamera
@@ -517,6 +522,26 @@ export class CSMShadowSystem {
     })
     
     console.log(`[CSMShadowSystem] Shadow radius updated to: ${radius}`)
+  }
+
+  /**
+   * Apply weather quality tier (cascade count + shadow map resolution).
+   */
+  public applyWeatherQuality(quality: WeatherQuality): void {
+    if (!this.csm) return
+
+    const cascades = getCsmCascadeCountForQuality(quality)
+    const shadowMapSize = getCsmShadowMapSizeForQuality(quality)
+    if (this.config.cascades === cascades && this.config.shadowMapSize === shadowMapSize) {
+      return
+    }
+
+    this.config.cascades = cascades
+    this.config.shadowMapSize = shadowMapSize
+    this.init()
+    console.log(
+      `[CSMShadowSystem] Weather quality ${quality}: ${cascades} cascade(s), ${shadowMapSize}px maps`
+    )
   }
 
   /**

@@ -90,4 +90,34 @@ describe('renderLoopIdle', () => {
     expect(hasOrbitControlsDamping(controls)).toBe(true)
     expect(needsContinuousSceneUpdates(null, controls)).toBe(true)
   })
+
+  it('allows idle pause with static standalone weather (no wind, sparse clouds)', () => {
+    const viewer = { dynamicSky: {}, csmShadowSystem: { isEnabled: () => true } }
+    expect(
+      needsContinuousSceneUpdates(viewer, undefined, {
+        enableStandaloneWeather: true,
+        windIntensity: 0,
+        cloudDensity: 0.13,
+        rainIntensity: 0,
+        snowIntensity: 0
+      })
+    ).toBe(false)
+  })
+
+  it('keeps animating when rain or wind is active', () => {
+    const viewer = { dynamicSky: {} }
+    expect(
+      needsContinuousSceneUpdates(viewer, undefined, {
+        enableStandaloneWeather: true,
+        windIntensity: 0.5,
+        cloudDensity: 0.5
+      })
+    ).toBe(true)
+    expect(
+      needsContinuousSceneUpdates(viewer, undefined, {
+        enableStandaloneWeather: true,
+        rainIntensity: 0.2
+      })
+    ).toBe(true)
+  })
 })
