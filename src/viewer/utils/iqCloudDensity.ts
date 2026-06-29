@@ -1,10 +1,9 @@
 import { IQ_CLOUD_CAMERA_Y, IQ_CLOUD_NOISE_XZ_SCALE } from '../effects/IqCloudSkyShader'
 import {
-  iqCoverageCutoff,
-  iqCoverageFeather
+  iqCoverageCutoff
 } from './iqCloudCoverage'
 
-export { iqCoverageCutoff, iqCoverageFeather, iqCoverageAlphaScale } from './iqCloudCoverage'
+export { iqCoverageCutoff, iqCoverageAlphaScale } from './iqCloudCoverage'
 
 export interface Vec3 {
   x: number
@@ -30,11 +29,6 @@ function fract(x: number): number {
 
 function mix(a: number, b: number, t: number): number {
   return a + (b - a) * t
-}
-
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = Math.max(0, Math.min(1, (x - edge0) / Math.max(0.0001, edge1 - edge0)))
-  return t * t * (3 - 2 * t)
 }
 
 /** iq 3D value noise (CPU port of GLSL) */
@@ -109,9 +103,7 @@ export function mapIqCloudDensityAtPos(
   d = Math.max(0, Math.min(1, d))
 
   const cutoff = iqCoverageCutoff(coverage)
-  const feather = iqCoverageFeather(coverage)
-  const den = Math.max(0, Math.min(1, (d - cutoff) / Math.max(0.06, 1 - cutoff)))
-  return smoothstep(0.0, feather, den)
+  return Math.max(0, (d - cutoff) / Math.max(0.001, 1 - cutoff))
 }
 
 /** Sample density along a view ray at march distance t */

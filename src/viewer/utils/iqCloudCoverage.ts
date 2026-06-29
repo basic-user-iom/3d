@@ -4,10 +4,10 @@ export const IQ_COVERAGE_CUTOFF_CLEAR = 0.74
 /** Density cutoff at 100% coverage — storm ceiling, nearly all noise passes */
 export const IQ_COVERAGE_CUTOFF_STORM = 0.0
 
-/** Soft knee width at scattered (25%) coverage — wider than iq cutoff band to avoid rim halos */
+/** Soft knee width — deprecated; linear cutoff only (iq raw d edges) */
 export const IQ_COVERAGE_FEATHER_LIGHT = 0.18
 
-/** Soft knee width at storm (100%) coverage */
+/** @deprecated Linear cutoff replaces smoothstep feather at cloud boundaries */
 export const IQ_COVERAGE_FEATHER_STORM = 0.28
 
 function clamp01(value: number): number {
@@ -26,7 +26,7 @@ export function iqCoverageCutoff(coverage: number): number {
   return IQ_COVERAGE_CUTOFF_CLEAR + (IQ_COVERAGE_CUTOFF_STORM - IQ_COVERAGE_CUTOFF_CLEAR) * iqCoverageCurve(c)
 }
 
-/** smoothstep upper bound offset — wider band at high coverage for solid overcast */
+/** @deprecated Linear cutoff only — kept for API compatibility */
 export function iqCoverageFeather(coverage: number): number {
   const c = clamp01(coverage)
   return IQ_COVERAGE_FEATHER_LIGHT + (IQ_COVERAGE_FEATHER_STORM - IQ_COVERAGE_FEATHER_LIGHT) * c
@@ -51,8 +51,6 @@ export function iqCoverageToThickness(coverage: number): number {
 export function getIqCoverageGlsl(): string {
   const clear = IQ_COVERAGE_CUTOFF_CLEAR.toFixed(2)
   const storm = IQ_COVERAGE_CUTOFF_STORM.toFixed(2)
-  const featherLight = IQ_COVERAGE_FEATHER_LIGHT.toFixed(2)
-  const featherStorm = IQ_COVERAGE_FEATHER_STORM.toFixed(2)
 
   return `
     float iqCoverageCurve(float cov) {
@@ -63,11 +61,6 @@ export function getIqCoverageGlsl(): string {
     float iqCoverageCutoff(float cov) {
       cov = clamp(cov, 0.0, 1.0);
       return mix(${clear}, ${storm}, iqCoverageCurve(cov));
-    }
-
-    float iqCoverageFeather(float cov) {
-      cov = clamp(cov, 0.0, 1.0);
-      return mix(${featherLight}, ${featherStorm}, cov);
     }
   `
 }

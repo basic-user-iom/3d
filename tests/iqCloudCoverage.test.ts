@@ -13,7 +13,7 @@ describe('iqCloudCoverage', () => {
     expect(iqCoverageCutoff(1)).toBe(0)
   })
 
-  it('widens smoothstep feather at higher coverage', () => {
+  it('widens feather constant at higher coverage (deprecated API)', () => {
     expect(iqCoverageFeather(0.25)).toBeLessThan(iqCoverageFeather(1))
   })
 
