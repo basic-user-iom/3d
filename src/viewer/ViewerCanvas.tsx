@@ -42,6 +42,7 @@ import {
   timeOfDayToSkyAngles,
   createLight,
   computeLightDirection as computeLightDirectionUtil,
+  computeSunLightingFromElevation,
   isNightTimeOfDay,
   standaloneSkySunDirection,
   standaloneLightSunDirection,
@@ -7056,47 +7057,18 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       enableFogOnSceneMeshes(scene)
     }
 
-    // Apply time of day lighting changes
-    // 0-6 = night, 6-8 = dawn, 8-18 = day, 18-20 = dusk, 20-24 = night
-    let sunIntensity = 1.0
-    let sunColor = '#ffffff'
-    let ambientIntensity = 0.6
-    let ambientColor = '#ffffff'
-    let skyColor = '#87CEEB' // Sky blue as default
-
-    if (timeOfDay >= 6 && timeOfDay <= 20) {
-      // Daytime
-      if (timeOfDay >= 8 && timeOfDay <= 18) {
-        // Full daylight
-        sunIntensity = 1.0
-        sunColor = '#ffffff'
-        ambientIntensity = 0.6
-        ambientColor = '#ffffff'
-        skyColor = '#87CEEB'
-      } else if (timeOfDay < 8) {
-        // Dawn (6-8)
-        const progress = (timeOfDay - 6) / 2
-        sunIntensity = progress
-        sunColor = '#ff9500'
-        ambientIntensity = 0.3 + progress * 0.3
-        ambientColor = '#ffaa44'
-        skyColor = '#ffaa44'
-      } else {
-        // Dusk (18-20)
-        const progress = (timeOfDay - 18) / 2
-        sunIntensity = 1.0 - progress
-        sunColor = '#ff6600'
-        ambientIntensity = 0.6 - progress * 0.3
-        ambientColor = '#ff8844'
-        skyColor = '#ff8844'
-      }
-    } else {
-      // Night (20-24 or 0-6)
-      sunIntensity = 0.1
-      sunColor = '#4444ff'
-      ambientIntensity = 0.2
-      ambientColor = '#4444aa'
+    // Elevation-based sun + ambient (replaces coarse time-of-day buckets)
+    const { elevation: sunElevation } = timeOfDayToSkyAngles(timeOfDay, northOffset)
+    const elevationLighting = computeSunLightingFromElevation(sunElevation)
+    let sunIntensity = elevationLighting.sunIntensity
+    let sunColor = elevationLighting.sunColor
+    let ambientIntensity = elevationLighting.ambientIntensity
+    let ambientColor = elevationLighting.ambientColor
+    let skyColor = '#87CEEB'
+    if (sunElevation < 0) {
       skyColor = '#000033'
+    } else if (sunElevation < 0.15) {
+      skyColor = '#c8d0e0'
     }
 
     // Update ambient light
@@ -7109,7 +7081,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // Apply cloud and weather effects to lighting
     // Overcast: much darker, more diffuse lighting
     let weatherDimming = 1.0
-    let toneMappingExposure = 1.0 // Default exposure
+    let toneMappingExposure = elevationLighting.toneMappingExposure
     const isDarkWeather = weatherPreset === 'overcast' || weatherPreset === 'foggy' || weatherPreset === 'stormy'
     const weatherMaterialKey = [
       weatherPreset,
