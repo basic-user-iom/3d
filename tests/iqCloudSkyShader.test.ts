@@ -14,24 +14,25 @@ describe('IqCloudSkyShader', () => {
   it('exports shader sources with iq raymarch primitives', () => {
     const fragment = getIqCloudSkyFragmentShader()
     expect(fragment).toContain('raymarchClouds')
-    expect(fragment).toContain('mapDensityAtDepth')
-    expect(fragment).toContain('toIqSpaceFromRay')
+    expect(fragment).toContain('mapDensity')
+    expect(fragment).toContain('toIqWorldPos')
     expect(fragment).toContain('uniform float cloudScale')
     expect(fragment).toContain('float d = 0.2 - p.y')
     expect(fragment).toContain('pow(sun, 8.0)')
     expect(fragment).toContain('mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), den)')
+    expect(fragment).toContain('col.a *= 0.35')
     expect(fragment).toContain('gl_FragColor = vec4(col, 1.0)')
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
 
-  it('uses direction-space raymarch (not world-Y slab)', () => {
+  it('uses world-space iq raymarch (ro + t*rd)', () => {
     const fragment = getIqCloudSkyFragmentShader()
-    expect(fragment).toContain('toIqSpaceFromRay')
+    expect(fragment).toContain('toIqWorldPos')
     expect(fragment).toContain('iqCoverageCutoff')
-    expect(fragment).toContain('iqCoverageAlphaScale')
+    expect(fragment).toContain('pos + 0.3 * sunDir')
+    expect(fragment).not.toContain('toIqSpaceFromRay')
     expect(fragment).not.toContain('cloudBaseY - ro.y')
-    expect(fragment).not.toContain('pathLen / max(1.0, float(steps))')
-    expect(fragment).not.toContain('toIqSpace(')
+    expect(fragment).not.toContain('iqCoverageAlphaScale')
   })
 
   it('includes night sky features', () => {
@@ -56,8 +57,8 @@ describe('IqCloudSkyShader', () => {
   it('maps coverage to decreasing density threshold', () => {
     expect(iqCoverageToThickness(0)).toBeGreaterThan(iqCoverageToThickness(0.9))
     expect(iqCoverageToThickness(0)).toBeCloseTo(IQ_COVERAGE_CUTOFF_CLEAR, 2)
-    expect(iqCoverageToThickness(0.75)).toBeCloseTo(0.143, 1)
-    expect(iqCoverageToThickness(0.25)).toBeCloseTo(0.423, 1)
+    expect(iqCoverageToThickness(0.75)).toBeCloseTo(0.112, 1)
+    expect(iqCoverageToThickness(0.25)).toBeCloseTo(0.333, 1)
   })
 
   it('can omit cloud raymarch for hybrid sky-only mode', () => {

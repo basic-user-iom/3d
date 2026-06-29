@@ -1,11 +1,11 @@
-/** Density cutoff at 0% coverage — only the highest noise peaks become wisps (matches d651232 ~0.78) */
-export const IQ_COVERAGE_CUTOFF_CLEAR = 0.76
+/** Density cutoff at 0% coverage — only the highest noise peaks become wisps */
+export const IQ_COVERAGE_CUTOFF_CLEAR = 0.74
 
 /** Density cutoff at 100% coverage — storm ceiling, nearly all noise passes */
 export const IQ_COVERAGE_CUTOFF_STORM = 0.0
 
 /** smoothstep feather width at scattered (25%) coverage */
-export const IQ_COVERAGE_FEATHER_LIGHT = 0.07
+export const IQ_COVERAGE_FEATHER_LIGHT = 0.1
 
 /** smoothstep feather width at storm (100%) coverage */
 export const IQ_COVERAGE_FEATHER_STORM = 0.16
@@ -17,7 +17,7 @@ function clamp01(value: number): number {
 /** Perceptual ramp — low slider values still pass wisps through the density cutoff */
 function iqCoverageCurve(coverage: number): number {
   const c = clamp01(coverage)
-  return Math.pow(c, 0.55)
+  return Math.pow(c, 0.42)
 }
 
 /** Maps UI cloud density (0–1) to iq density threshold — lower cutoff = more cloud mass */
@@ -32,12 +32,14 @@ export function iqCoverageFeather(coverage: number): number {
   return IQ_COVERAGE_FEATHER_LIGHT + (IQ_COVERAGE_FEATHER_STORM - IQ_COVERAGE_FEATHER_LIGHT) * c
 }
 
-/** Raymarch opacity multiplier — perceptual ramp so 100% reads as storm ceiling */
+/**
+ * Legacy opacity helper — iq shader uses fixed 0.35 alpha (XslGRr).
+ * Kept for CPU raymarch estimators; returns 1 when clouds are enabled.
+ */
 export function iqCoverageAlphaScale(coverage: number): number {
   const c = clamp01(coverage)
   if (c <= 0.004) return 0
-  // Low coverage stays wispy; high coverage builds to overcast/storm
-  return 0.15 + 0.97 * Math.pow(c, 0.82)
+  return 1
 }
 
 /** @deprecated Use iqCoverageCutoff — kept for shader export tests */
@@ -55,7 +57,7 @@ export function getIqCoverageGlsl(): string {
   return `
     float iqCoverageCurve(float cov) {
       cov = clamp(cov, 0.0, 1.0);
-      return pow(cov, 0.55);
+      return pow(cov, 0.42);
     }
 
     float iqCoverageCutoff(float cov) {
@@ -66,11 +68,6 @@ export function getIqCoverageGlsl(): string {
     float iqCoverageFeather(float cov) {
       cov = clamp(cov, 0.0, 1.0);
       return mix(${featherLight}, ${featherStorm}, cov);
-    }
-
-    float iqCoverageAlphaScale(float cov) {
-      if (cov <= 0.004) return 0.0;
-      return 0.15 + 0.97 * pow(cov, 0.82);
     }
   `
 }
