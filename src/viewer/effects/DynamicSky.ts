@@ -35,7 +35,7 @@ export interface SkyConfig {
   windIntensity?: number // 0-1, affects cloud scrolling speed
   cloudThickness?: number // 0-1, affects opacity/volume
   cloudDetail?: number // 0-1, fine detail contribution
-  cloudScale?: number // 0.5-2, controls noise scale
+  cloudScale?: number // 0.25-2, controls noise scale (lower = smaller clouds)
   cloudStorminess?: number // 0-1, darker heavier clouds
   cloudShadowStrength?: number // 0-1, self-shadow strength
   cloudColor?: THREE.Color

@@ -37,6 +37,8 @@ export default function WeatherPanel() {
     setWindIntensity,
     cloudDensity,
     setCloudDensity,
+    cloudScale,
+    setCloudScale,
     cloudStorminess,
     setCloudStorminess,
     hdrGroundProjectionEnabled
@@ -296,6 +298,28 @@ export default function WeatherPanel() {
                 />
                 <span className="value-label">{(cloudDensity * 100).toFixed(0)}%</span>
               </label>
+            </div>
+            <div className="control-group">
+              <label>
+                Cloud scale
+                <input
+                  type="range"
+                  min="0.25"
+                  max="2"
+                  step="0.05"
+                  value={cloudScale}
+                  onChange={(e) => {
+                    const newValue = parseFloat(e.target.value)
+                    trackSliderInteraction('Cloud Scale', newValue, 'WeatherPanel', () => {
+                      setCloudScale(newValue)
+                    })
+                  }}
+                />
+                <span className="value-label">{(cloudScale * 100).toFixed(0)}%</span>
+              </label>
+              <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                Lower = smaller, finer clouds. 100% = default size.
+              </small>
             </div>
             <div className="control-group">
               <label>

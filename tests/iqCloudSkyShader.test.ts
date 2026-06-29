@@ -23,6 +23,9 @@ describe('IqCloudSkyShader', () => {
     expect(fragment).toContain('col.a *= 0.35')
     expect(fragment).toContain('col * (1.0 - clouds.w) + clouds.xyz')
     expect(fragment).not.toContain('sum.xyz /= (0.001 + sum.w)')
+    expect(fragment).toContain('shadowDen = mix(shadowDen, col.w')
+    expect(fragment).not.toContain('max(dif, 0.42)')
+    expect(fragment).toContain('cloudAlpha * 0.9')
     expect(IQ_CLOUD_SKY_VERTEX_SHADER).toContain('vWorldPosition')
   })
 
@@ -34,6 +37,7 @@ describe('IqCloudSkyShader', () => {
     expect(fragment).not.toContain('toIqSpaceFromRay')
     expect(fragment).not.toContain('cloudBaseY - ro.y')
     expect(fragment).toContain('wispBlend')
+    expect(fragment).toContain('cloudAlpha')
     expect(fragment).toContain('gl_FragColor = vec4(col, 1.0)')
   })
 
