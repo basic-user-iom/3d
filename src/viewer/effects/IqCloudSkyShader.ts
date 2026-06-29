@@ -18,6 +18,9 @@ export const IQ_CLOUD_BASE = 2500
 /** iq XslGRr horizontal noise scale (before cloudScale divisor) */
 export const IQ_CLOUD_NOISE_XZ_SCALE = 0.00025
 
+/** iq camera height in noise space — matches Shadertoy ro.y ≈ 1 */
+export const IQ_CLOUD_CAMERA_Y = 1.0
+
 export interface IqCloudShaderOptions {
   groundLevel?: number
   /** When true, sky gradient + sun only — box Worley layer handles clouds (hybrid mode) */
@@ -37,7 +40,7 @@ export function iqCloudBandY(cameraY: number): IqCloudBand {
 
 /**
  * iq / Inigo Quilez "Clouds" (Shadertoy XslGRr) sky + volumetric raymarch,
- * adapted for Three.js sky dome using direction-space density (works at horizon + zenith).
+ * adapted for Three.js sky dome using scaled world-space march (matches iq map/raymarch).
  */
 export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}): string {
   const groundLevel = options.groundLevel ?? WEATHER_GROUND_LEVEL
@@ -64,6 +67,7 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     varying vec3 vWorldPosition;
 
     const float GROUND_LEVEL = ${groundLevel.toFixed(1)};
+    const float IQ_CAMERA_Y = ${IQ_CLOUD_CAMERA_Y.toFixed(1)};
 
     ${coverageGlsl}
 
@@ -75,7 +79,7 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       return fract(sin(dot(floor(p), vec3(1.0, 57.0, 113.0))) * 43758.5453);
     }
 
-    // iq 3D value noise
+    // iq 3D value noise (XslGRr)
     float noise(in vec3 x) {
       vec3 p = floor(x);
       vec3 f = fract(x);
@@ -89,23 +93,19 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
         f.z);
     }
 
-    // Direction-space iq coords — clouds across full sky dome (horizon + zenith)
-    vec3 toIqSpaceFromRay(vec3 rd, float depth) {
+    // Scaled world-space position along view ray — iq ro at y≈1, xz tiles with camera
+    vec3 toIqWorldPos(vec3 rd, float t) {
       float xzScale = ${IQ_CLOUD_NOISE_XZ_SCALE.toFixed(6)} / max(0.35, cloudScale);
-      float spread = 1.85 + depth * 0.55;
-      vec3 p;
-      p.y = rd.y * 0.38 - 0.06 + depth * 0.045;
-      p.x = rd.x * spread + cameraPosition.x * xzScale;
-      p.z = rd.z * spread + cameraPosition.z * xzScale;
-      return p;
+      vec3 ro = vec3(cameraPosition.x * xzScale, IQ_CAMERA_Y, cameraPosition.z * xzScale);
+      return ro + rd * t;
     }
 
-    float mapDensityAtDepth(vec3 rd, float depth) {
+    // iq map() with UI coverage cutoff layered on top
+    float mapDensity(vec3 p) {
       if (coverage <= 0.004) {
         return 0.0;
       }
 
-      vec3 p = toIqSpaceFromRay(rd, depth);
       float d = 0.2 - p.y;
 
       vec3 q = p - vec3(1.0, 0.1, 0.0) * (iTime * windSpeed);
@@ -120,42 +120,41 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
 
       float cutoff = iqCoverageCutoff(coverage);
       float feather = iqCoverageFeather(coverage);
-      d = smoothstep(cutoff, cutoff + feather, d);
-      return d;
+      return smoothstep(cutoff, cutoff + feather, d);
     }
 
-    vec4 mapColorDensityAtDepth(vec3 rd, float depth) {
-      float den = mapDensityAtDepth(rd, depth);
+    vec4 mapColorDensity(vec3 p) {
+      float den = mapDensity(p);
       vec3 albedo = mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), den);
       albedo = mix(albedo, albedo * vec3(0.55, 0.58, 0.62), storminess * 0.4);
       return vec4(albedo, den);
     }
 
-    // Direction-space raymarch (Shadertoy-style) — not world-Y slab
+    // World-space raymarch — literal port of iq raymarch() with sunDir lighting
     vec4 raymarchClouds(vec3 rd, vec3 sunDir, float dayFactor) {
       vec4 sum = vec4(0.0);
       float t = 0.0;
       int steps = raymarchSteps;
-      float alphaScale = iqCoverageAlphaScale(coverage);
 
       for (int i = 0; i < 96; i++) {
         if (i >= steps) break;
         if (sum.a > 0.99) break;
 
-        vec4 col = mapColorDensityAtDepth(rd, t);
-        float denAhead = mapDensityAtDepth(normalize(rd + 0.08 * sunDir), t + 0.15);
+        vec3 pos = toIqWorldPos(rd, t);
+        vec4 col = mapColorDensity(pos);
 
-        float dif = clamp((col.w - denAhead) / 0.6, 0.0, 1.0);
+        float shadowDen = mapDensity(pos + 0.3 * sunDir);
+        float dif = clamp((col.w - shadowDen) / 0.6, 0.0, 1.0);
         vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
         lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
         lin *= mix(0.28, 1.0, dayFactor);
 
         col.xyz *= lin;
-        col.a *= 0.42 * alphaScale * mix(0.6, 1.0, dayFactor);
+        col.a *= 0.35;
         col.rgb *= col.a;
         sum = sum + col * (1.0 - sum.a);
 
-        t += max(0.08, 0.025 * t);
+        t += max(0.1, 0.025 * t);
       }
 
       sum.xyz /= (0.001 + sum.w);

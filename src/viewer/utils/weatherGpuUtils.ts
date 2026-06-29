@@ -24,11 +24,13 @@ export function getAdaptiveIqRaymarchSteps(
   if (cloudDensity <= 0.004) {
     return Math.min(base, 24)
   }
+  // iq XslGRr uses 64 steps — keep enough for wisps at 1–25% slider
+  const minSteps = 56
   if (quality === 'high' || quality === 'ultra') {
-    return base
+    return Math.max(minSteps, base)
   }
   const densityScale = 0.72 + Math.min(1, cloudDensity) * 0.28
-  return Math.max(40, Math.round(base * densityScale))
+  return Math.max(minSteps, Math.round(base * densityScale))
 }
 
 /** Cap effective pixel ratio on large displays to limit fill rate (e.g. 4K). */

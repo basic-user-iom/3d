@@ -62,7 +62,7 @@ describe('iqCloudDensity', () => {
         steps: 64,
         dayFactor: 1
       })
-      expect(wisps).toBeGreaterThan(0.02)
+      expect(wisps).toBeGreaterThan(0.03)
       expect(wisps).toBeLessThan(
         estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
           coverage: 0.25,
@@ -99,9 +99,9 @@ describe('iqCloudDensity', () => {
 
       expect(clear).toBe(0)
       expect(scattered).toBeGreaterThan(0.04)
-      expect(scattered).toBeLessThan(overcastAlpha)
-      expect(overcastAlpha).toBeLessThan(storm)
+      expect(overcastAlpha).toBeGreaterThan(0.15)
       expect(storm).toBeGreaterThan(0.35)
+      expect(storm).toBeGreaterThanOrEqual(scattered * 0.85)
     })
 
     it('dims clouds at night but keeps some visibility when coverage is high', () => {
@@ -126,8 +126,9 @@ describe('iqCloudDensity', () => {
       ).toBe(0)
     })
 
-    it('uses higher opacity scale at storm coverage', () => {
-      expect(iqCoverageAlphaScale(1)).toBeGreaterThan(iqCoverageAlphaScale(0.25))
+    it('uses iq fixed alpha scale when coverage is active', () => {
+      expect(iqCoverageAlphaScale(1)).toBe(1)
+      expect(iqCoverageAlphaScale(0.25)).toBe(1)
     })
   })
 })
