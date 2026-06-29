@@ -1,15 +1,28 @@
 import { describe, expect, it } from 'vitest'
 import {
   estimateIqRaymarchAlpha,
+  iqCloudElevSampleBias,
+  iqCloudHorizonFade,
+  iqCloudOriginY,
   iqCoverageCutoff,
   IQ_TEST_DIRECTIONS,
   mapIqCloudDensity,
   toIqWorldPos
 } from '../src/viewer/utils/iqCloudDensity'
+import { iqCloudBandY, IQ_CLOUD_BASE_OFFSET, IQ_CLOUD_CAMERA_Y } from '../src/viewer/effects/IqCloudSkyShader'
 import { iqCoverageAlphaScale } from '../src/viewer/utils/iqCloudCoverage'
 
 describe('iqCloudDensity', () => {
-  const overcast = { coverage: 0.75, cloudScale: 1, time: 12.5, windSpeed: 0.1 }
+  const cameraY = 5
+  const cloudBaseY = cameraY + IQ_CLOUD_BASE_OFFSET
+  const overcast = {
+    coverage: 0.75,
+    cloudScale: 1,
+    time: 12.5,
+    windSpeed: 0.1,
+    cameraY,
+    cloudBaseY
+  }
 
   describe('mapIqCloudDensity', () => {
     it('returns zero when coverage is near zero', () => {
@@ -21,9 +34,20 @@ describe('iqCloudDensity', () => {
       expect(zenith).toBeGreaterThan(0.05)
     })
 
-    it('produces visible density at horizon for overcast coverage', () => {
-      const horizon = mapIqCloudDensity(IQ_TEST_DIRECTIONS.horizon, 0.2, overcast)
-      expect(horizon).toBeGreaterThan(0.05)
+    it('keeps horizon wisps below zenith after elevation fade', () => {
+      const horizon = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.horizon, {
+        ...overcast,
+        steps: 64,
+        dayFactor: 1
+      })
+      const zenith = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
+        ...overcast,
+        steps: 64,
+        dayFactor: 1
+      })
+      expect(zenith).toBeGreaterThan(0.15)
+      expect(horizon).toBeLessThan(zenith * 0.35)
+      expect(iqCloudHorizonFade(IQ_TEST_DIRECTIONS.horizon.y)).toBeLessThan(0.2)
     })
 
     it('responds to coverage slider via density cutoff', () => {
@@ -46,11 +70,12 @@ describe('iqCloudDensity', () => {
       expect(posSmall.x).toBeCloseTo(0.05, 5)
       expect(posLarge.z).toBeCloseTo(0.00625, 5)
       expect(posSmall.z).toBeCloseTo(0.025, 5)
+      expect(posLarge.y).toBeCloseTo(IQ_CLOUD_CAMERA_Y + 0.3 + iqCloudElevSampleBias(IQ_TEST_DIRECTIONS.zenith.y), 5)
     })
   })
 
   describe('estimateIqRaymarchAlpha', () => {
-    it('accumulates meaningful alpha at zenith and horizon (noon)', () => {
+    it('accumulates meaningful alpha at zenith (noon) with horizon suppressed', () => {
       const zenithAlpha = estimateIqRaymarchAlpha(IQ_TEST_DIRECTIONS.zenith, {
         ...overcast,
         steps: 64,
@@ -62,7 +87,7 @@ describe('iqCloudDensity', () => {
         dayFactor: 1
       })
       expect(zenithAlpha).toBeGreaterThan(0.15)
-      expect(horizonAlpha).toBeGreaterThan(0.12)
+      expect(horizonAlpha).toBeLessThan(zenithAlpha * 0.35)
     })
 
     it('produces measurable raymarch alpha at 1% coverage (zenith wisps)', () => {

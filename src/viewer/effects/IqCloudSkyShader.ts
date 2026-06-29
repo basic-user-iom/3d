@@ -21,6 +21,43 @@ export const IQ_CLOUD_NOISE_XZ_SCALE = 0.00025
 /** iq camera height in noise space — matches Shadertoy ro.y ≈ 1 */
 export const IQ_CLOUD_CAMERA_Y = 1.0
 
+/** iq map() density floor (XslGRr default 0.2) */
+export const IQ_CLOUD_DENSITY_Y0 = 0.2
+
+/** Below this view elevation (rd.y), shift noise samples upward — keeps layer above horizon */
+export const IQ_CLOUD_ELEV_BIAS_THRESHOLD = 0.28
+
+/** Strength of per-ray noise-Y bias for low-elevation views */
+export const IQ_CLOUD_ELEV_SAMPLE_LIFT = 1.05
+
+/** Subtle iq Y lift from world cloud band (cloudBaseY uniform) */
+export const IQ_CLOUD_WORLD_TO_NOISE_Y = 0.0004
+
+/** Fixed iq Y lift above Shadertoy default ro.y */
+export const IQ_CLOUD_GLOBAL_Y_LIFT = 0.12
+
+/** View-elevation fade: clouds start above rd.y ≈ horizon (ground at Y=0) */
+export const IQ_CLOUD_HORIZON_FADE_MIN = 0.05
+export const IQ_CLOUD_HORIZON_FADE_SOFT = 0.17
+
+/** Noise-Y bias for low elevation rays — pushes density band above the horizon line */
+export function iqCloudElevSampleBias(rdY: number): number {
+  return Math.max(0, IQ_CLOUD_ELEV_BIAS_THRESHOLD - rdY) * IQ_CLOUD_ELEV_SAMPLE_LIFT
+}
+
+/** iq ray origin Y from world cloud band — used by shader and CPU density mirror */
+export function iqCloudOriginY(cameraY: number, cloudBaseY: number): number {
+  const bandOffset = Math.max(0, cloudBaseY - cameraY)
+  return IQ_CLOUD_CAMERA_Y + bandOffset * IQ_CLOUD_WORLD_TO_NOISE_Y + IQ_CLOUD_GLOBAL_Y_LIFT
+}
+
+/** Smooth fade so clouds do not intersect the visual horizon / ground plane */
+export function iqCloudHorizonFade(rdY: number): number {
+  const t =
+    (rdY - IQ_CLOUD_HORIZON_FADE_MIN) / (IQ_CLOUD_HORIZON_FADE_SOFT - IQ_CLOUD_HORIZON_FADE_MIN)
+  return Math.max(0, Math.min(1, t))
+}
+
 export interface IqCloudShaderOptions {
   groundLevel?: number
   /** When true, sky gradient + sun only — box Worley layer handles clouds (hybrid mode) */
@@ -68,6 +105,11 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
 
     const float GROUND_LEVEL = ${groundLevel.toFixed(1)};
     const float IQ_CAMERA_Y = ${IQ_CLOUD_CAMERA_Y.toFixed(1)};
+    const float IQ_ELEV_BIAS_THRESH = ${IQ_CLOUD_ELEV_BIAS_THRESHOLD.toFixed(2)};
+    const float IQ_ELEV_SAMPLE_LIFT = ${IQ_CLOUD_ELEV_SAMPLE_LIFT.toFixed(2)};
+    const float IQ_HORIZON_FADE_MIN = ${IQ_CLOUD_HORIZON_FADE_MIN.toFixed(2)};
+    const float IQ_HORIZON_FADE_SOFT = ${IQ_CLOUD_HORIZON_FADE_SOFT.toFixed(2)};
+    const float IQ_DENSITY_Y0 = ${IQ_CLOUD_DENSITY_Y0.toFixed(2)};
 
     ${coverageGlsl}
 
@@ -100,13 +142,17 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       return ro + rd * t;
     }
 
+    float iqElevSampleBias(vec3 rd) {
+      return max(0.0, IQ_ELEV_BIAS_THRESH - rd.y) * IQ_ELEV_SAMPLE_LIFT;
+    }
+
     // iq map() — raw FBM density in .w; UI coverage is a linear cutoff only (no smoothstep rim)
     vec4 map(vec3 p) {
       if (coverage <= 0.004) {
         return vec4(0.0);
       }
 
-      float d = 0.2 - p.y;
+      float d = IQ_DENSITY_Y0 - p.y;
 
       vec3 q = p - vec3(1.0, 0.1, 0.0) * (iTime * windSpeed);
       float f = 0.0;
@@ -132,15 +178,18 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       vec4 sum = vec4(0.0);
       float t = 0.0;
       int steps = raymarchSteps;
+      float elevBias = iqElevSampleBias(rd);
 
       for (int i = 0; i < 96; i++) {
         if (i >= steps) break;
         if (sum.a > 0.99) break;
 
         vec3 pos = toIqWorldPos(rd, t);
+        pos.y += elevBias;
         vec4 col = map(pos);
 
-        float dif = clamp((col.w - map(pos + 0.3 * sunDir).w) / 0.6, 0.0, 1.0);
+        vec3 lightPos = pos + 0.3 * sunDir;
+        float dif = clamp((col.w - map(lightPos).w) / 0.6, 0.0, 1.0);
         vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
         lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
         lin *= mix(0.28, 1.0, dayFactor);
@@ -152,6 +201,10 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
 
         t += max(0.1, 0.025 * t);
       }
+
+      // Fade below horizon so clouds sit in the upper sky band (aligned with ground at Y=0)
+      float horizonFade = smoothstep(IQ_HORIZON_FADE_MIN, IQ_HORIZON_FADE_SOFT, rd.y);
+      sum *= horizonFade;
 
       // Return premultiplied rgb+a — composite with over operator in main()
       return clamp(sum, 0.0, 1.0);
