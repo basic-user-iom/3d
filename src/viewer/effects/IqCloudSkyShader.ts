@@ -24,11 +24,11 @@ export const IQ_CLOUD_CAMERA_Y = 1.0
 /** iq map() density floor (XslGRr default 0.2) */
 export const IQ_CLOUD_DENSITY_Y0 = 0.2
 
-/** Below this view elevation (rd.y), shift noise samples upward — keeps layer above horizon */
-export const IQ_CLOUD_ELEV_BIAS_THRESHOLD = 0.22
+/** Below this view elevation (rd.y), shift noise samples upward — disabled by default (0) */
+export const IQ_CLOUD_ELEV_BIAS_THRESHOLD = 0
 
 /** Strength of per-ray noise-Y bias for low-elevation views */
-export const IQ_CLOUD_ELEV_SAMPLE_LIFT = 0.55
+export const IQ_CLOUD_ELEV_SAMPLE_LIFT = 0
 
 /** Subtle iq Y lift from world cloud band (cloudBaseY uniform) */
 export const IQ_CLOUD_WORLD_TO_NOISE_Y = 0.0004
@@ -36,19 +36,19 @@ export const IQ_CLOUD_WORLD_TO_NOISE_Y = 0.0004
 /** Fixed iq Y lift above Shadertoy default ro.y */
 export const IQ_CLOUD_GLOBAL_Y_LIFT = 0.12
 
-/** View-elevation fade: narrow band at horizon only — wide fade reads as mushy fog */
+/** View-elevation fade: last ~2.5° above horizon only — wide bands read as mushy fog */
 export const IQ_CLOUD_HORIZON_FADE_MIN = 0.02
-export const IQ_CLOUD_HORIZON_FADE_SOFT = 0.09
+export const IQ_CLOUD_HORIZON_FADE_SOFT = 0.065
 
 /** Exponent on horizon fade — steep falloff near ground, full opacity by mid sky */
-export const IQ_CLOUD_HORIZON_FADE_POWER = 2.6
+export const IQ_CLOUD_HORIZON_FADE_POWER = 3.0
 
-/** Post-cutoff density exponent — >1 sharpens cloud bodies without smoothstep rims */
-export const IQ_CLOUD_DENSITY_SHARPEN = 1.22
+/** Post-cutoff density exponent at cloudDetail=0.5 — >1 sharpens cloud bodies */
+export const IQ_CLOUD_DENSITY_SHARPEN = 1.55
 
-/** Raymarch step size — smaller than iq default for crisper silhouettes */
-export const IQ_CLOUD_MARCH_STEP_MIN = 0.06
-export const IQ_CLOUD_MARCH_STEP_SCALE = 0.02
+/** Raymarch step size — matches iq XslGRr (0.1 / 0.025*t) */
+export const IQ_CLOUD_MARCH_STEP_MIN = 0.1
+export const IQ_CLOUD_MARCH_STEP_SCALE = 0.025
 
 /** Noise-Y bias for low elevation rays — pushes density band above the horizon line */
 export function iqCloudElevSampleBias(rdY: number): number {
@@ -110,6 +110,7 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     uniform float cloudScale;
     uniform float cloudBaseY;
     uniform float cloudTopY;
+    uniform float cloudDetail;
     uniform int raymarchSteps;
 
     varying vec3 vWorldPosition;
@@ -122,7 +123,6 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
     const float IQ_HORIZON_FADE_SOFT = ${IQ_CLOUD_HORIZON_FADE_SOFT.toFixed(2)};
     const float IQ_HORIZON_FADE_POWER = ${IQ_CLOUD_HORIZON_FADE_POWER.toFixed(1)};
     const float IQ_DENSITY_Y0 = ${IQ_CLOUD_DENSITY_Y0.toFixed(2)};
-    const float IQ_DENSITY_SHARPEN = ${IQ_CLOUD_DENSITY_SHARPEN.toFixed(2)};
     const float IQ_MARCH_STEP_MIN = ${IQ_CLOUD_MARCH_STEP_MIN.toFixed(2)};
     const float IQ_MARCH_STEP_SCALE = ${IQ_CLOUD_MARCH_STEP_SCALE.toFixed(3)};
 
@@ -174,15 +174,15 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
       f += 0.5000 * noise(q); q *= 2.02;
       f += 0.2500 * noise(q); q *= 2.03;
       f += 0.1250 * noise(q); q *= 2.01;
-      f += 0.0625 * noise(q); q *= 2.02;
-      f += 0.0312 * noise(q);
+      f += 0.0625 * noise(q);
 
       d += 3.0 * f;
       d = clamp(d, 0.0, 1.0);
 
       float cutoff = iqCoverageCutoff(coverage);
       d = max(0.0, (d - cutoff) / max(0.001, 1.0 - cutoff));
-      d = pow(d, IQ_DENSITY_SHARPEN);
+      float densitySharp = mix(1.1, 2.1, clamp(cloudDetail, 0.0, 1.0));
+      d = pow(d, densitySharp);
 
       vec4 res = vec4(d);
       res.xyz = mix(1.15 * vec3(1.0, 0.95, 0.8), vec3(0.7, 0.7, 0.7), res.x);
@@ -207,9 +207,9 @@ export function getIqCloudSkyFragmentShader(options: IqCloudShaderOptions = {}):
 
         vec3 lightPos = pos + 0.3 * sunDir;
         float dif = clamp((col.w - map(lightPos).w) / 0.6, 0.0, 1.0);
-        vec3 lin = vec3(0.65, 0.68, 0.7) * 1.35 + 0.45 * vec3(0.7, 0.5, 0.3) * dif;
+        vec3 lin = vec3(0.65, 0.68, 0.7) * 1.05 + 0.58 * vec3(0.7, 0.5, 0.3) * dif;
         lin = mix(lin, lin * vec3(0.55, 0.58, 0.62), storminess * 0.35);
-        lin *= mix(0.28, 1.0, dayFactor);
+        lin *= mix(0.22, 1.0, dayFactor);
 
         col.xyz *= lin;
         col.a *= 0.35;
@@ -276,7 +276,6 @@ ${skyOnly ? '' : `
 
       // Attenuate sun glow at cloud edges — unmasked glow caused bright white rims on wisps
       col += 0.1 * vec3(1.0, 0.4, 0.2) * pow(sun, 3.0) * dayFactor * (1.0 - cloudAlpha * 0.9);
-      col *= 0.95;
 
       float sunDisk = smoothstep(0.9993, 0.99985, sun) * dayFactor;
       col += vec3(1.0, 0.9, 0.62) * sunDisk * 5.0;

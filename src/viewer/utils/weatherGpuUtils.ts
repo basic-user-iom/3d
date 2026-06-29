@@ -24,8 +24,8 @@ export function getAdaptiveIqRaymarchSteps(
   if (cloudDensity <= 0.004) {
     return Math.min(base, 24)
   }
-  // iq XslGRr uses 64 steps — keep enough for wisps at 1–25% slider
-  const minSteps = 72
+  // iq XslGRr uses 64 steps — larger steps need fewer samples for crisp structure
+  const minSteps = 64
   if (quality === 'high' || quality === 'ultra') {
     return Math.max(minSteps, base)
   }

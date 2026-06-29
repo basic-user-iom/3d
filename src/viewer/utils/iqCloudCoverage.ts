@@ -1,8 +1,8 @@
 /** Density cutoff at 0% coverage — only the highest noise peaks become wisps */
 export const IQ_COVERAGE_CUTOFF_CLEAR = 0.74
 
-/** Density cutoff at 100% coverage — storm ceiling, nearly all noise passes */
-export const IQ_COVERAGE_CUTOFF_STORM = 0.0
+/** Density cutoff at 100% coverage — keep structure; 0 reads as uniform fog */
+export const IQ_COVERAGE_CUTOFF_STORM = 0.22
 
 /** Soft knee width — deprecated; linear cutoff only (iq raw d edges) */
 export const IQ_COVERAGE_FEATHER_LIGHT = 0.18
