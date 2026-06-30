@@ -77,6 +77,10 @@ import {
   resolveLightingMode,
   shouldUseWeatherShadowMapTiers
 } from './utils/lightingContext'
+import {
+  applyHdrShadowContrastToMaterials,
+  computeHdrAmbientIntensity
+} from '../utils/lightProbeUtils'
 
 interface ViewerCanvasProps {
   onViewerReady?: (viewer: ViewerInstance) => void
@@ -5706,35 +5710,64 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     if (!viewerRef.current) return
     const { renderer, scene, directionalLights } = viewerRef.current
     
-    // v1.7: Shadows are always enabled (hardcoded true at initialization)
+    // Respect store shadow toggle and lighting-mode authority (CSM vs legacy sun maps)
     if (renderer) {
-      // Always enable shadows - v1.7 behavior
-      renderer.shadowMap.enabled = true
-      
-      // Ensure shadow map type is set
-      if (renderer.shadowMap.type !== THREE.PCFSoftShadowMap) {
+      renderer.shadowMap.enabled = shadowsEnabled
+
+      if (shadowsEnabled && renderer.shadowMap.type !== THREE.PCFSoftShadowMap) {
         renderer.shadowMap.type = THREE.PCFSoftShadowMap
       }
     }
-    
-    // v1.7: Ensure sun light always casts shadows if enabled
+
+    const store = useAppStore.getState()
+    const csmActive = viewerRef.current?.csmShadowSystem?.isEnabled() ?? false
+    const lightingMode = resolveLightingMode({
+      enableStandaloneWeather: store.enableStandaloneWeather,
+      streetsGLIframeOverlay: store.streetsGLIframeOverlay,
+      pathTracerActive: store.pathTracerActive,
+      hdrEnabled: store.hdrEnabled,
+      hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+      csmEnabled: csmActive
+    })
+
     const lightsMap = viewerRef.current.directionalLights
-    const lightsConfig = useAppStore.getState().directionalLights
-    
+    const lightsConfig = store.directionalLights
+
     lightsMap.forEach((light, lightId) => {
-      const lightConfig = lightsConfig.find(l => l.id === lightId)
-      // Sun light should always cast shadows if enabled
-      if (lightConfig && lightConfig.isSun && lightConfig.enabled) {
-        light.castShadow = true
-        if (light.shadow) {
-          light.shadow.needsUpdate = true
-          // Ensure shadow camera is properly configured
-          if (light.shadow.camera) {
-            light.shadow.camera.updateProjectionMatrix()
-          }
+      const lightConfig = lightsConfig.find((l) => l.id === lightId)
+      if (!lightConfig) return
+
+      const shouldCastShadow = resolveDirectionalCastShadow({
+        mode: lightingMode,
+        csmEnabled: csmActive,
+        isSun: !!lightConfig.isSun,
+        enabled: lightConfig.enabled,
+        castShadowConfig: !!lightConfig.castShadow,
+        shadowsEnabled
+      })
+
+      light.castShadow = shouldCastShadow
+      if (shouldCastShadow && light.shadow) {
+        light.shadow.needsUpdate = true
+        if (light.shadow.camera) {
+          light.shadow.camera.updateProjectionMatrix()
         }
       }
     })
+
+    if (store.hdrEnabled && scene.environment) {
+      viewerRef.current?.indirectLightingSystem?.refreshShadowContrast()
+      const contrastCount = applyHdrShadowContrastToMaterials(
+        scene,
+        store.hdrIntensity,
+        shadowsEnabled
+      )
+      if (contrastCount > 0) {
+        console.log(
+          `[ShadowDebug] HDR shadow contrast applied to ${contrastCount} material(s) (shadows ${shadowsEnabled ? 'on' : 'off'})`
+        )
+      }
+    }
     
     // Update shadow plane visibility
     scene.traverse((obj) => {
@@ -5866,7 +5899,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         obj.material.needsUpdate = true
       }
     })
-  }, [shadowsEnabled, shadowIntensity, shadowPlaneTransparent, shadowBias, showShadowPlane, shadowMapSize, useAdaptiveShadowSettings])
+  }, [shadowsEnabled, shadowIntensity, shadowPlaneTransparent, shadowBias, showShadowPlane, shadowMapSize, useAdaptiveShadowSettings, hdrEnabled, hdrIntensity])
   
   // Effect to update shadow map size and bias settings when they change
   useEffect(() => {
@@ -7351,21 +7384,16 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // Check if HDR is enabled and scene has environment map
       // hdrEnabled is already declared earlier in the file (line 3695)
       const hasHDREnvironment = hdrEnabled && scene.environment !== null
-      const hdrAmbientFloor = hdrEnabled ? 0.35 : 0.0
-      
-      // When HDR is active, keep some ambient fill but allow HDR reflections to do most work
-      // CRITICAL: When shadows are enabled, don't reduce ambient light as much to prevent model from becoming too dark
-      // Shadows create dark areas, so we need more ambient fill to compensate
       const shadowsEnabled = useAppStore.getState().shadowsEnabled
-      const ambientReductionFactor = shadowsEnabled ? 0.65 : 0.4 // Less reduction when shadows are enabled
-      const probeAmbientMul =
-        viewerRef.current?.indirectLightingSystem?.getAmbientMultiplier(shadowsEnabled) ?? 1
-      const effectiveAmbientIntensity = hasHDREnvironment 
-        ? Math.max(
-            ambientIntensity * ambientReductionFactor * hdrSunBoost * 0.85 * probeAmbientMul,
-            hdrAmbientFloor * probeAmbientMul
-          )
-        : ambientIntensity // Use full intensity when no HDR
+      const probeActive = viewerRef.current?.indirectLightingSystem?.isActive() ?? false
+      const effectiveAmbientIntensity = hasHDREnvironment
+        ? computeHdrAmbientIntensity({
+            sliderAmbient: ambientIntensity,
+            shadowsEnabled,
+            probeActive,
+            hdrSunBoost
+          })
+        : ambientIntensity
       
       ambientLight.intensity = effectiveAmbientIntensity
       ambientLight.color.set(ambientColor)
@@ -8546,16 +8574,24 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     const hdrEnabledFromStore = useAppStore.getState().hdrEnabled
     
     if (ambientLight) {
-      // IMPROVED: When HDR is enabled and scene has environment map, reduce ambient light
-      // HDR environment maps already provide ambient lighting through reflections
-      // Only use 15% of ambient intensity when HDR is active to avoid washing out shadows
       const hasHDREnvironment = hdrEnabledFromStore && scene.environment !== null
       const shadowsEnabled = useAppStore.getState().shadowsEnabled
-      const probeAmbientMul =
-        viewerRef.current?.indirectLightingSystem?.getAmbientMultiplier(shadowsEnabled) ?? 1
-      const effectiveAmbientIntensity = hasHDREnvironment 
-        ? ambientIntensity * 0.15 * probeAmbientMul // HDR + optional SH probe reduce flat ambient
-        : ambientIntensity // Use full intensity when no HDR
+      const probeActive = viewerRef.current?.indirectLightingSystem?.isActive() ?? false
+      const hdrSunBoost = hdrEnabledFromStore
+        ? THREE.MathUtils.clamp(
+            0.85 + useAppStore.getState().hdrIntensity * 0.35,
+            1.0,
+            2.2
+          )
+        : 1.0
+      const effectiveAmbientIntensity = hasHDREnvironment
+        ? computeHdrAmbientIntensity({
+            sliderAmbient: ambientIntensity,
+            shadowsEnabled,
+            probeActive,
+            hdrSunBoost
+          })
+        : ambientIntensity
       
       ambientLight.intensity = effectiveAmbientIntensity
       
@@ -8567,11 +8603,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // Only log if value changed or it's been more than 2 seconds since last log
         if (lastAmbientLog.value !== effectiveAmbientIntensity || now - lastAmbientLog.time > 2000) {
           (window as any).__lastAmbientSliderLog = { value: effectiveAmbientIntensity, time: now }
-          console.log(`[AmbientLight] HDR enabled - reducing ambient light from ${ambientIntensity.toFixed(2)} to ${effectiveAmbientIntensity.toFixed(2)} (15% of slider value)`)
+          console.log(`[AmbientLight] HDR enabled - adjusting ambient light from ${ambientIntensity.toFixed(2)} to ${effectiveAmbientIntensity.toFixed(2)} (HDR shadow-aware fill)`)
         }
       }
     }
-  }, [ambientIntensity])
+  }, [ambientIntensity, hdrEnabled, hdrIntensity, shadowsEnabled])
 
   // Effect to manage particle systems and water
   const rainParticleScale = useAppStore((state) => state.rainParticleScale)

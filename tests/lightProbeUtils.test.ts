@@ -4,6 +4,10 @@ import {
   scaleSphericalHarmonics,
   createScaledLightProbe,
   getAmbientMultiplierWithProbe,
+  computeHdrAmbientIntensity,
+  getEnvMapIntensityForHdrShadows,
+  applyHdrShadowContrastToMaterials,
+  HDR_AMBIENT_FLOOR_WITH_SHADOWS,
   INTERIOR_PROBE_SH_SCALE,
   AMBIENT_MULTIPLIER_WITH_PROBE_SHADOWS
 } from '../src/utils/lightProbeUtils'
@@ -33,5 +37,37 @@ describe('lightProbeUtils', () => {
   it('reduces ambient multiplier when probe is active', () => {
     expect(getAmbientMultiplierWithProbe(false, true)).toBe(1)
     expect(getAmbientMultiplierWithProbe(true, true)).toBe(AMBIENT_MULTIPLIER_WITH_PROBE_SHADOWS)
+  })
+
+  it('computeHdrAmbientIntensity keeps a lower floor when shadows are on', () => {
+    const withShadows = computeHdrAmbientIntensity({
+      sliderAmbient: 0.1,
+      shadowsEnabled: true,
+      probeActive: false
+    })
+    const withoutShadows = computeHdrAmbientIntensity({
+      sliderAmbient: 0.1,
+      shadowsEnabled: false,
+      probeActive: false
+    })
+    expect(withShadows).toBeLessThan(withoutShadows)
+    expect(withShadows).toBeGreaterThanOrEqual(HDR_AMBIENT_FLOOR_WITH_SHADOWS * 0.99)
+  })
+
+  it('getEnvMapIntensityForHdrShadows scales down when shadows enabled', () => {
+    expect(getEnvMapIntensityForHdrShadows(1.0, true)).toBeLessThan(1.0)
+    expect(getEnvMapIntensityForHdrShadows(1.0, false)).toBe(1.0)
+  })
+
+  it('applyHdrShadowContrastToMaterials updates PBR envMapIntensity', () => {
+    const scene = new THREE.Scene()
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ envMapIntensity: 1.0 })
+    )
+    scene.add(mesh)
+    const count = applyHdrShadowContrastToMaterials(scene, 1.0, true)
+    expect(count).toBe(1)
+    expect((mesh.material as THREE.MeshStandardMaterial).envMapIntensity).toBeLessThan(1.0)
   })
 })

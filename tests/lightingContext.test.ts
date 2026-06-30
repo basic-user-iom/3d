@@ -107,6 +107,32 @@ describe('lightingContext', () => {
         })
       ).toBe(false)
     })
+
+    it('HDR enabled does not suppress sun legacy shadow maps in standard mode', () => {
+      expect(
+        resolveDirectionalCastShadow({
+          mode: 'standard',
+          csmEnabled: false,
+          isSun: true,
+          enabled: true,
+          castShadowConfig: true,
+          shadowsEnabled: true
+        })
+      ).toBe(true)
+    })
+
+    it('HDR + weather uses CSM — sun legacy maps still suppressed', () => {
+      expect(
+        resolveDirectionalCastShadow({
+          mode: 'standalone-weather',
+          csmEnabled: true,
+          isSun: true,
+          enabled: true,
+          castShadowConfig: true,
+          shadowsEnabled: true
+        })
+      ).toBe(false)
+    })
   })
 
   describe('weather shadow map tiers', () => {
@@ -137,6 +163,15 @@ describe('lightingContext', () => {
         sunLightCastShadowConfig: true
       })
       expect(conflicts.some((c) => c.code === 'SUN_LEGACY_SHADOW_WITH_CSM')).toBe(true)
+    })
+
+    it('info when HDR on with shadows for contrast tuning', () => {
+      const conflicts = detectLightingConflicts({
+        ...base,
+        hdrEnabled: true,
+        shadowsEnabled: true
+      })
+      expect(conflicts.some((c) => c.code === 'HDR_SHADOW_CONTRAST')).toBe(true)
     })
   })
 

@@ -151,6 +151,15 @@ export function detectLightingConflicts(input: LightingContextInput): LightingCo
     })
   }
 
+  if (input.hdrEnabled && input.shadowsEnabled) {
+    conflicts.push({
+      severity: 'info',
+      code: 'HDR_SHADOW_CONTRAST',
+      message:
+        'HDR on with shadows — sun/CSM shadow maps stay active; IBL ambient, probe, and envMapIntensity are reduced for contrast'
+    })
+  }
+
   if ((input.nonSunShadowCastingCount ?? 0) > 0 && authority === 'csm') {
     conflicts.push({
       severity: 'info',
