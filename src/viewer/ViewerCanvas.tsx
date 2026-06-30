@@ -28,7 +28,7 @@ import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvent
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
 import { getCsmShadowMapSizeForQuality, getCsmCascadeCountForQuality, getEffectiveMaxFps, getEffectivePixelRatio, prefersLowPowerGpu } from './utils/weatherGpuUtils'
-import { reapplyInteriorCavityEnhancements } from '../utils/enhanceInternalShadows'
+import { reapplyInteriorCavityEnhancements, applyInteriorVisibility } from '../utils/enhanceInternalShadows'
 import { applyCavityAoIfEligible } from './utils/cavityOcclusion'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
@@ -287,16 +287,22 @@ function ensureCavityOcclusionSession(viewer: ViewerInstance): { applied: boolea
 
 function refreshInteriorCavityEnhancements(viewer: ViewerInstance, scene: THREE.Scene): void {
   const lights = viewer.csmShadowSystem?.getDirectionalLights() ?? []
-  const result = reapplyInteriorCavityEnhancements(scene, lights)
+  const { hideInteriorGeometry } = useAppStore.getState()
+  const result = reapplyInteriorCavityEnhancements(scene, lights, {
+    hideInteriorGeometry,
+    refreshDimming: true
+  })
   if (
     result.cavityMeshesDimmed > 0 ||
     result.exteriorPanelsFrontSided > 0 ||
-    result.materialsMadeDoubleSided > 0
+    result.materialsMadeDoubleSided > 0 ||
+    result.interiorMeshesHidden > 0
   ) {
     console.log('[CavityOcclusion] Interior shadow refresh:', {
       cavityMeshesDimmed: result.cavityMeshesDimmed,
       exteriorPanelsFrontSided: result.exteriorPanelsFrontSided,
       materialsDoubleSided: result.materialsMadeDoubleSided,
+      interiorMeshesHidden: result.interiorMeshesHidden,
       fixes: result.fixesApplied
     })
   }
@@ -7074,7 +7080,21 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const moonSize = useAppStore((state) => state.moonSize)
   const weatherQuality = useAppStore((state) => state.weatherQuality)
   const enableStandaloneWeather = useAppStore((state) => state.enableStandaloneWeather)
+  const hideInteriorGeometry = useAppStore((state) => state.hideInteriorGeometry)
   const streetsGLBridge = useAppStore((state) => state.streetsGLBridge)
+
+  useEffect(() => {
+    if (!viewerRef.current?.scene) return
+    const scene = viewerRef.current.scene
+    if (hideInteriorGeometry) {
+      refreshInteriorCavityEnhancements(viewerRef.current, scene)
+    } else {
+      const restored = applyInteriorVisibility(scene, false)
+      if (restored > 0) {
+        console.log(`[CavityOcclusion] Restored visibility on ${restored} interior mesh(es)`)
+      }
+    }
+  }, [hideInteriorGeometry])
 
   useEffect(() => {
     if (!viewerRef.current) return

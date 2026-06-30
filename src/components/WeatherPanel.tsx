@@ -22,6 +22,8 @@ export default function WeatherPanel() {
     streetsGLIframeOverlay,
     enableStandaloneWeather,
     setEnableStandaloneWeather,
+    hideInteriorGeometry,
+    setHideInteriorGeometry,
     weatherPreset,
     setWeatherPreset,
     applyWeatherPreset,
@@ -212,6 +214,20 @@ export default function WeatherPanel() {
                 HDR ground projection was disabled — it conflicts with standalone weather and can darken materials.
               </small>
             )}
+            <div className="control-group" style={{ marginTop: '12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={hideInteriorGeometry}
+                  onChange={(e) => setHideInteriorGeometry(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span>Hide interior geometry (engine bay)</span>
+              </label>
+              <small style={{ display: 'block', color: '#888', marginTop: '6px' }}>
+                Hides structural engine/exhaust parts visible through rear hood gaps. Turn off to inspect internals.
+              </small>
+            </div>
           </div>
 
           <div className="weather-section">

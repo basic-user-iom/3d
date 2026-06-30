@@ -1511,6 +1511,58 @@ export function useViewer() {
     }
   }, [])
 
+  async function applyInteriorEnhancementsToModel(
+    modelScene: THREE.Object3D,
+    scene: THREE.Scene,
+    viewer: { csmShadowSystem?: { getDirectionalLights?: () => THREE.DirectionalLight[] } } | null
+  ): Promise<void> {
+    try {
+      const { enhanceInternalShadows } = await import('../utils/enhanceInternalShadows')
+      const appStore = await import('../store/useAppStore')
+      const { hideInteriorGeometry } = appStore.useAppStore.getState()
+
+      const directionalLights: THREE.DirectionalLight[] = []
+      scene.traverse((obj) => {
+        if (obj instanceof THREE.DirectionalLight && obj.castShadow) {
+          directionalLights.push(obj)
+        }
+      })
+      const csmLights = viewer?.csmShadowSystem?.getDirectionalLights?.()
+      if (Array.isArray(csmLights)) {
+        csmLights.forEach((light) => {
+          if (!directionalLights.includes(light)) {
+            directionalLights.push(light)
+          }
+        })
+      }
+
+      const enhancementResult = enhanceInternalShadows(modelScene, directionalLights, {
+        hideInteriorGeometry,
+        logAffectedMeshes: modelScene.userData.isAutoLoaded === true
+      })
+
+      if (
+        enhancementResult.meshesEnhanced > 0 ||
+        enhancementResult.materialsMadeDoubleSided > 0 ||
+        enhancementResult.transparentMaterialsFixed > 0 ||
+        enhancementResult.cavityMeshesDimmed > 0 ||
+        enhancementResult.interiorMeshesHidden > 0
+      ) {
+        console.log('[ShadowEnhancement] Interior cavity enhancements:', {
+          meshesEnhanced: enhancementResult.meshesEnhanced,
+          materialsDoubleSided: enhancementResult.materialsMadeDoubleSided,
+          transparentMaterialsFixed: enhancementResult.transparentMaterialsFixed,
+          cavityMeshesDimmed: enhancementResult.cavityMeshesDimmed,
+          interiorMeshesHidden: enhancementResult.interiorMeshesHidden,
+          exteriorPanelsFrontSided: enhancementResult.exteriorPanelsFrontSided,
+          fixes: enhancementResult.fixesApplied
+        })
+      }
+    } catch (error) {
+      console.warn('[ShadowEnhancement] Failed to enhance internal shadows:', error)
+    }
+  }
+
   const loadFromFile = useCallback(async (file: File, onProgress?: (progress: number) => void, textureFiles?: Map<string, File>, mergedTextures?: Map<string, string>): Promise<LoadedModel> => {
     const storeAtStart = useAppStore.getState()
     const cityModeStreetsGL =
@@ -1766,35 +1818,6 @@ export function useViewer() {
     if (!isGaussianSplat) {
       const maxAnisotropy = renderer.capabilities.getMaxAnisotropy()
       fixTextureFiltering(model.scene, maxAnisotropy, renderer, customAnisotropy)
-    }
-    
-    // Enhance shadows on internal surfaces (like vents, openings, cavities) — skip for Gaussian splats
-    if (!isGaussianSplat) {
-      try {
-        const { enhanceInternalShadows } = await import('../utils/enhanceInternalShadows')
-        // Get directional lights from scene for shadow optimization
-        const directionalLights: THREE.DirectionalLight[] = []
-        scene.traverse((obj) => {
-          if (obj instanceof THREE.DirectionalLight && obj.castShadow) {
-            directionalLights.push(obj)
-          }
-        })
-        
-        const enhancementResult = enhanceInternalShadows(model.scene, directionalLights)
-        if (enhancementResult.meshesEnhanced > 0 || enhancementResult.materialsMadeDoubleSided > 0 || enhancementResult.transparentMaterialsFixed > 0 || enhancementResult.cavityMeshesDimmed > 0) {
-          console.log(`[ShadowEnhancement] Enhanced shadows on internal surfaces:`, {
-            meshesEnhanced: enhancementResult.meshesEnhanced,
-            materialsDoubleSided: enhancementResult.materialsMadeDoubleSided,
-            transparentMaterialsFixed: enhancementResult.transparentMaterialsFixed,
-            cavityMeshesDimmed: enhancementResult.cavityMeshesDimmed,
-            exteriorPanelsFrontSided: enhancementResult.exteriorPanelsFrontSided,
-            fixes: enhancementResult.fixesApplied
-          })
-        }
-      } catch (error) {
-        console.warn('[ShadowEnhancement] Failed to enhance internal shadows:', error)
-        // Continue without enhancement - shadows will still work, just not optimized for internal surfaces
-      }
     }
     
     // Mesh/material processing (shadow, envMap, depth masking) — skip for Gaussian splats
@@ -2254,6 +2277,9 @@ export function useViewer() {
         appStore.useAppStore.getState().setError('Some materials/textures were missing. Applied default editable materials. You can adjust them in the Material panel.')
       } catch {}
     }
+
+    // After HDR/envMap — interior dimming must run last so values are not overwritten
+    await applyInteriorEnhancementsToModel(model.scene, scene, viewer)
     }
 
     // CRITICAL: Setup CSM materials for newly loaded model if CSM is active
@@ -2343,7 +2369,7 @@ export function useViewer() {
               shadowFixedCount++
             }
             // Ensure mesh is visible
-            if (!child.visible) {
+            if (!child.visible && !child.userData.interiorHiddenByViewer) {
               child.visible = true
             }
             
@@ -2826,7 +2852,7 @@ export function useViewer() {
         }
         
         // Ensure mesh is visible (shadows don't work on invisible objects)
-        if (!child.visible) {
+        if (!child.visible && !child.userData.interiorHiddenByViewer) {
           child.visible = true
         }
         
@@ -2946,6 +2972,9 @@ export function useViewer() {
         console.log(`[ShadowDebug] Configured shadows on ${shadowConfiguredCount} meshes during model load`)
       } catch {}
     }
+
+    // After material/HDR setup — Pagani auto-load uses loadFromUrl; interior pass was missing here
+    await applyInteriorEnhancementsToModel(model.scene, scene, viewer)
     }
     
     // CRITICAL: Diagnostic check for light and material configuration in standard mode
@@ -3329,7 +3358,7 @@ export function useViewer() {
               child.receiveShadow = true
               shadowFixedCount++
             }
-            if (!child.visible) {
+            if (!child.visible && !child.userData.interiorHiddenByViewer) {
               child.visible = true
             }
             if (child.castShadow) shadowCastingCount++
