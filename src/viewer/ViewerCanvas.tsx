@@ -5705,6 +5705,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const shadowMapSize = useAppStore((state) => state.shadowMapSize)
   const useAdaptiveShadowSettings = useAppStore((state) => state.useAdaptiveShadowSettings)
   const gridSize = useAppStore((state) => state.gridSize)
+  const hdrEnabled = useAppStore((state) => state.hdrEnabled)
+  const hdrIntensity = useAppStore((state) => state.hdrIntensity)
 
   useEffect(() => {
     if (!viewerRef.current) return
@@ -5720,7 +5722,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
 
     const store = useAppStore.getState()
-    const csmActive = viewerRef.current?.csmShadowSystem?.isEnabled() ?? false
+    const csmSystem = viewerRef.current?.csmShadowSystem
+    const csmActive = csmSystem?.isEnabled() ?? false
     const lightingMode = resolveLightingMode({
       enableStandaloneWeather: store.enableStandaloneWeather,
       streetsGLIframeOverlay: store.streetsGLIframeOverlay,
@@ -5777,10 +5780,6 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         obj.receiveShadow = true
       }
     })
-    
-    // Check if CSM is active
-    const csmSystem = viewerRef.current.csmShadowSystem
-    const csmActive = csmSystem?.isEnabled()
     
     if (csmActive && csmSystem) {
       // Apply shadow bias to CSM system
@@ -6662,10 +6661,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   }, [gridSize])
 
   // Effect to handle HDR environment map - COMPLETE REWRITE using HDRSystem
-  const hdrEnabled = useAppStore((state) => state.hdrEnabled)
   const hdrUrl = useAppStore((state) => state.hdrUrl)
   const hdrFile = useAppStore((state) => state.hdrFile)
-  const hdrIntensity = useAppStore((state) => state.hdrIntensity)
   const hdrGroundProjectionEnabled = useAppStore((state) => state.hdrGroundProjectionEnabled)
   const hdrGroundProjectionHeight = useAppStore((state) => state.hdrGroundProjectionHeight)
   const hdrGroundProjectionRadius = useAppStore((state) => state.hdrGroundProjectionRadius)
