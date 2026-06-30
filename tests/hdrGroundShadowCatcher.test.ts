@@ -4,57 +4,80 @@ import {
   applyHdrGroundShadowCatcherMaterial,
   effectiveShadowPlaneVisible,
   shadowCatcherOpacity,
+  shouldAutoShowShadowPlaneForHdr,
   shouldUseHdrGroundShadowCatcher
 } from '../src/viewer/utils/hdrGroundShadowCatcher'
 
 describe('hdrGroundShadowCatcher', () => {
-  it('activates for HDR ground projection + shadows', () => {
+  it('auto-shows shadow plane when HDR and shadows are both on', () => {
     expect(
-      shouldUseHdrGroundShadowCatcher({
+      shouldAutoShowShadowPlaneForHdr({
         hdrEnabled: true,
-        hdrGroundProjectionEnabled: true,
+        hdrGroundProjectionEnabled: false,
         shadowsEnabled: true
       })
     ).toBe(true)
 
     expect(
-      shouldUseHdrGroundShadowCatcher({
-        hdrEnabled: true,
-        hdrGroundProjectionEnabled: true,
-        shadowsEnabled: false
-      })
-    ).toBe(false)
-
-    expect(
-      shouldUseHdrGroundShadowCatcher({
-        hdrEnabled: false,
-        hdrGroundProjectionEnabled: true,
-        shadowsEnabled: true
-      })
-    ).toBe(false)
-  })
-
-  it('activates for standard 360 HDR when shadow plane is toggled on', () => {
-    expect(
-      shouldUseHdrGroundShadowCatcher({
+      effectiveShadowPlaneVisible(false, {
         hdrEnabled: true,
         hdrGroundProjectionEnabled: false,
-        shadowsEnabled: true,
-        showShadowPlane: true
+        shadowsEnabled: true
       })
+    ).toBe(true)
+  })
+
+  it('activates catcher for HDR ground projection + shadows', () => {
+    expect(
+      shouldUseHdrGroundShadowCatcher(
+        {
+          hdrEnabled: true,
+          hdrGroundProjectionEnabled: true,
+          shadowsEnabled: true
+        },
+        false
+      )
     ).toBe(true)
 
     expect(
-      shouldUseHdrGroundShadowCatcher({
-        hdrEnabled: true,
-        hdrGroundProjectionEnabled: false,
-        shadowsEnabled: true,
-        showShadowPlane: false
-      })
+      shouldUseHdrGroundShadowCatcher(
+        {
+          hdrEnabled: true,
+          hdrGroundProjectionEnabled: true,
+          shadowsEnabled: false
+        },
+        false
+      )
     ).toBe(false)
   })
 
-  it('shows shadow plane when HDR catcher is active even if toggle is off (ground projection)', () => {
+  it('uses regular plane material when user toggles shadow plane on under standard HDR', () => {
+    expect(
+      shouldUseHdrGroundShadowCatcher(
+        {
+          hdrEnabled: true,
+          hdrGroundProjectionEnabled: false,
+          shadowsEnabled: true
+        },
+        true
+      )
+    ).toBe(false)
+  })
+
+  it('uses catcher for auto-shown standard HDR grid when toggle is off', () => {
+    expect(
+      shouldUseHdrGroundShadowCatcher(
+        {
+          hdrEnabled: true,
+          hdrGroundProjectionEnabled: false,
+          shadowsEnabled: true
+        },
+        false
+      )
+    ).toBe(true)
+  })
+
+  it('shows shadow plane when HDR ground catcher is active even if toggle is off', () => {
     expect(
       effectiveShadowPlaneVisible(false, {
         hdrEnabled: true,
