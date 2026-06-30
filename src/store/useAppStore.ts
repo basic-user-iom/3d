@@ -1475,7 +1475,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setStreetsGLGroundZoom: (zoom) => set({ streetsGLGroundZoom: zoom }),
   setStreetsGLGroundLayerType: (type) => set({ streetsGLGroundLayerType: type }),
   setStreetsGLGroundCustomTexture: (texture) => set({ streetsGLGroundCustomTexture: texture }),
-  setStreetsGLIframeOverlay: (enabled) => set({ streetsGLIframeOverlay: enabled }),
+  setStreetsGLIframeOverlay: (enabled) => {
+    const state = get()
+    if (enabled && state.enableStandaloneWeather) {
+      console.warn(
+        '[Lighting] Disabling standalone weather — Streets GL overlay owns sun/shadows.'
+      )
+      set({ streetsGLIframeOverlay: enabled, enableStandaloneWeather: false })
+      return
+    }
+    set({ streetsGLIframeOverlay: enabled })
+  },
   setStreetsGLIframeInteractive: (enabled) => set({ streetsGLIframeInteractive: enabled }),
   setStreetsGLShowUI: (show) => set({ streetsGLShowUI: show }),
   setStreetsGLBridge: (bridge) => set({ streetsGLBridge: bridge }),
@@ -2097,9 +2107,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   setShadowMapViewerPosition: (position) => set({ shadowMapViewerPosition: position }),
   // Shadow quality actions
   setShadowMapSize: (size) => {
+    const state = get()
+    if (state.enableStandaloneWeather && !state.streetsGLIframeOverlay) {
+      console.warn(
+        '[Lighting] Shadow map size is controlled by Weather quality while standalone weather is on. Use Weather panel quality preset instead.'
+      )
+      return
+    }
     // Clamp to valid power-of-2 values: 512, 1024, 2048, 4096, 8192, 16384
     const validSizes = [512, 1024, 2048, 4096, 8192, 16384]
-    const closestSize = validSizes.reduce((prev, curr) => 
+    const closestSize = validSizes.reduce((prev, curr) =>
       Math.abs(curr - size) < Math.abs(prev - size) ? curr : prev
     )
     set({ shadowMapSize: closestSize })
@@ -2395,6 +2412,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   setDynamicSkyEnabled: (enabled) => set({ dynamicSkyEnabled: enabled }),
   setEnableStandaloneWeather: (enabled: boolean) => {
     const state = get()
+    if (enabled && state.streetsGLIframeOverlay) {
+      console.warn(
+        '[Lighting] Disabling Streets GL overlay — standalone weather owns CSM sun/shadows.'
+      )
+      set({
+        enableStandaloneWeather: enabled,
+        streetsGLIframeOverlay: false,
+        hdrGroundProjectionEnabled: false,
+        ...(enabled && state.cloudDensity === 0 ? { cloudDensity: 0.45 } : {})
+      })
+      return
+    }
     if (enabled && state.hdrGroundProjectionEnabled) {
       console.warn(
         '[Weather] Disabling HDR ground projection — conflicts with standalone weather and can darken materials.'

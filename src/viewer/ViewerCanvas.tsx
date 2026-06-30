@@ -65,6 +65,12 @@ import {
   computeLightDirection
 } from './utils/lightGizmos'
 import { updateShadowCameraBounds, updateAllShadowCameraBounds } from './utils/shadowManager'
+import {
+  detectLightingConflicts,
+  resolveDirectionalCastShadow,
+  resolveLightingMode,
+  shouldUseWeatherShadowMapTiers
+} from './utils/lightingContext'
 
 interface ViewerCanvasProps {
   onViewerReady?: (viewer: ViewerInstance) => void
@@ -5851,11 +5857,24 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   // Effect to update shadow map size and bias settings when they change
   useEffect(() => {
     if (!viewerRef.current) return
-    
-    // Check if CSM is active
+
+    const store = useAppStore.getState()
     const csmSystem = viewerRef.current.csmShadowSystem
-    const csmActive = csmSystem?.isEnabled()
-    
+    const csmActive = csmSystem?.isEnabled() ?? false
+    const lightingMode = resolveLightingMode({
+      enableStandaloneWeather: store.enableStandaloneWeather,
+      streetsGLIframeOverlay: store.streetsGLIframeOverlay,
+      pathTracerActive: store.pathTracerActive,
+      hdrEnabled: store.hdrEnabled,
+      hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+      csmEnabled: csmActive
+    })
+
+    if (shouldUseWeatherShadowMapTiers(lightingMode, csmActive)) {
+      // Weather quality preset owns CSM resolution — ignore manual shadowMapSize slider
+      return
+    }
+
     if (csmActive && csmSystem) {
       // Apply settings to CSM shadow system
       
@@ -6314,15 +6333,25 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         }
       }
       
-      // v1.7: Simple shadow configuration
-      // Sun light always casts shadows if enabled (regardless of castShadow flag in store)
-      // Other lights: if castShadow is explicitly true, cast shadows regardless of global toggle
-      // This allows individual lights to work independently when user checks "Cast Shadows"
-      // The global toggle (shadowsEnabledForLights) is still respected for lights without explicit castShadow=true
-      const shouldCastShadow = config.enabled && (
-        config.isSun || // Sun light: always cast shadows if enabled
-        config.castShadow // Other lights: if castShadow is true, always cast shadows (independent of global toggle)
-      )
+      // v1.7: Simple shadow configuration — respect lighting mode authority
+      const store = useAppStore.getState()
+      const csmActive = viewerRef.current?.csmShadowSystem?.isEnabled() ?? false
+      const lightingMode = resolveLightingMode({
+        enableStandaloneWeather: store.enableStandaloneWeather,
+        streetsGLIframeOverlay: store.streetsGLIframeOverlay,
+        pathTracerActive: store.pathTracerActive,
+        hdrEnabled: store.hdrEnabled,
+        hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+        csmEnabled: csmActive
+      })
+      const shouldCastShadow = resolveDirectionalCastShadow({
+        mode: lightingMode,
+        csmEnabled: csmActive,
+        isSun: !!config.isSun,
+        enabled: config.enabled,
+        castShadowConfig: !!config.castShadow,
+        shadowsEnabled: shadowsEnabledForLights
+      })
       
       // Configure shadow if needed
       if (shouldCastShadow && ((light as any).isDirectionalLight || (light as any).isPointLight || (light as any).isSpotLight)) {
@@ -7765,6 +7794,38 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       conflicts.push('INFO: Physical lights (with power/decay) + high ambient light - may cause overexposure')
     }
     
+    // ===== SHADOW CONFLICTS (lighting context) =====
+    const lightingMode = resolveLightingMode({
+      enableStandaloneWeather,
+      streetsGLIframeOverlay,
+      pathTracerActive: useAppStore.getState().pathTracerActive,
+      hdrEnabled,
+      hdrGroundProjectionEnabled: useAppStore.getState().hdrGroundProjectionEnabled,
+      csmEnabled: viewerRef.current?.csmShadowSystem?.isEnabled() ?? false,
+      shadowsEnabled,
+      sunLightCastShadowConfig: directionalLightsConfig.some((l) => l.isSun && l.castShadow),
+      nonSunShadowCastingCount: shadowCastingLights.filter((l) => !l.isSun).length
+    })
+    const contextConflicts = detectLightingConflicts({
+      enableStandaloneWeather,
+      streetsGLIframeOverlay,
+      pathTracerActive: useAppStore.getState().pathTracerActive,
+      hdrEnabled,
+      hdrGroundProjectionEnabled: useAppStore.getState().hdrGroundProjectionEnabled,
+      csmEnabled: viewerRef.current?.csmShadowSystem?.isEnabled() ?? false,
+      shadowsEnabled,
+      sunLightCastShadowConfig: directionalLightsConfig.some((l) => l.isSun && l.castShadow),
+      nonSunShadowCastingCount: shadowCastingLights.filter((l) => !l.isSun).length
+    })
+    contextConflicts.forEach((c) => {
+      const prefix = c.severity === 'error' ? 'ERROR' : c.severity === 'warning' ? 'WARNING' : 'INFO'
+      conflicts.push(`${prefix}: [${c.code}] ${c.message}`)
+    })
+
+    if (lightingMode === 'standalone-weather' && shadowCastingLights.some((l) => l.isSun && l.castShadow)) {
+      conflicts.push('INFO: Sun legacy shadow maps suppressed — CSM provides sun shadows')
+    }
+
     // ===== SHADOW CONFLICTS =====
     if (shadowCastingLights.length > 0 && !shadowsEnabled) {
       conflicts.push('WARNING: Shadow-casting lights enabled but global shadows disabled - shadows will not render')

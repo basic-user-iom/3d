@@ -83,6 +83,51 @@ Low sun **color** (metallic PBR not crushed to black) is handled in `computeSunL
 
 Path tracer uses separate `ShadowCatcherMaterial` — not CSM. CSM is raster/standalone-weather only.
 
+## Conflict matrix
+
+Which lighting/shadow paths can run together (raster viewer unless noted):
+
+| System A | System B | Both active? | Conflict | Guard |
+|----------|----------|--------------|----------|-------|
+| CSM (standalone weather) | Legacy sun `castShadow` | **No** (sun) | Double sun shadow maps | `resolveDirectionalCastShadow` disables sun legacy maps; CSM cascade lights at intensity 0 |
+| CSM | `shadowMapSize` slider | **No** (size) | Recreates CSM at wrong tier | `setShadowMapSize` no-op + Lighting panel disabled when weather on |
+| CSM | Weather quality preset | **Yes** | Stale resolution if slider wins | `applyWeatherQuality()` + `shouldUseWeatherShadowMapTiers` |
+| Streets GL iframe | Standalone weather | **No** | Two sun/shadow systems | `setStreetsGLIframeOverlay` / `setEnableStandaloneWeather` mutual exclusion |
+| Streets GL iframe | Main viewer shadows | Partial | Models hidden in main scene | `renderInStreetsGL` + visibility traverse |
+| HDR ground projection | Standalone weather | **No** | Dark materials / double ground | Auto-disable ground projection when weather enables |
+| HDR IBL (`scene.environment`) | AmbientLight | **Yes** | Washed interiors | Ambient reduced ~85% when HDR active |
+| HDR IBL | Directional sun | **Yes** | Overexposure if both maxed | Weather dimming + `computeSunLightingFromElevation` |
+| SAO (cavity) | CSM sun shadows | **Yes** | Different scales — OK | SAO after render pass; CSM in material shader |
+| SSS contact shadows | CSM / standard shadows | **Yes** | Double darkening | SSS intensity × 0.2 when `shadowMap.enabled` |
+| Path tracer | Any raster shadow | **No** (replaces loop) | Separate renderer | `pathTracerActive` mode; coordinator saves/restores state |
+| `enhanceInternalShadows` | CSM bias | **Yes** | Bias override on cascade lights | Skips `userData.isCSMLight` lights |
+| Interior cavity dimming | HDR env refresh | **Yes** | HDR overwrites dimming | `reapplyInteriorCavityEnhancements` after HDR |
+| Multiple sun flags in store | — | **No** | Duplicate sun | `ensureSunLight` in store |
+
+Mode resolution lives in `src/viewer/utils/lightingContext.ts` (`resolveLightingMode`, `detectLightingConflicts`).
+
+## Exterior / interior strategy (WebGL)
+
+Three.js `WebGLRenderer` does **not** support selective per-mesh lighting via layers (WebGPURenderer does). Practical split without an engine rewrite:
+
+1. **Exterior sun** — single `isSun` DirectionalLight + CSM or standard shadow maps on layer 0 meshes.
+2. **Interior fill** — reduced HDR `envMapIntensity` + cavity dimming (`enhanceInternalShadows`) on meshes tagged `userData.lightingZone = 'interior'` or keyword-matched mechanical parts.
+3. **Render layers** — `EXTERIOR_RENDER_LAYER` (0) / `INTERIOR_RENDER_LAYER` (1) assigned automatically for future camera filtering; not yet used for light masking.
+4. **Cavity AO** — conservative SAO auto-enabled on medium+ standalone weather when post-processing is on.
+5. **Industry parity** — reflection probes / light portals / localized IBL cubes are feasible as future `PMREMGenerator` boxes per zone; full Lumen-style requires WebGPU or offline path trace.
+
+Tag meshes manually: `mesh.userData.lightingZone = 'interior' | 'exterior'` or `userData.interior = true`.
+
+## Troubleshooting (extended)
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| Double shadows on ground | SSS + CSM both strong | Lower SSS intensity; PostProcessing uses 20% when shadow maps on |
+| Sun shadow checkbox does nothing | CSM active | Expected — use Weather quality / CSM bias sliders |
+| Shadow map size slider ignored | Standalone weather on | Use Weather panel quality preset |
+| Interior too bright with HDR | IBL fills cavities | Enable interior tagging; cavity dimming + SAO |
+| Streets GL + weather both on | Store race | Toggle one — store enforces mutual exclusion |
+
 ## References
 
 - [Lighting & HDR architecture](./lighting-hdr.md) — sun, ambient, HDR, tone mapping, weather
