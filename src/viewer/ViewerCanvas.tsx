@@ -1901,6 +1901,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // Axes helper
     const axesHelper = new THREE.AxesHelper(5)
     axesHelper.name = 'Axes'
+    axesHelper.userData.isAxesHelper = true
     nativeObjectsGroup.add(axesHelper)
 
     // CineShader-style demo screen near the origin (acts like a framed light wall close to the car)
@@ -6673,6 +6674,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         newGridHelper.name = 'Grid'
         newGridHelper.userData.isGridHelper = true
         newGridHelper.renderOrder = 1 // Preserve render order to prevent z-fighting
+        newGridHelper.visible = useAppStore.getState().showGrid
         
         // Find the Native Objects group and add to it
         let nativeGroup: THREE.Object3D | undefined

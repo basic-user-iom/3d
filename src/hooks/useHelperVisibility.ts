@@ -6,12 +6,10 @@
  */
 
 import { useEffect } from 'react'
-import * as THREE from 'three'
 import type { ViewerInstance } from '../viewer/ViewerCanvas'
 import { useAppStore } from '../store/useAppStore'
-import {
-  effectiveShadowPlaneVisible
-} from '../viewer/utils/hdrGroundShadowCatcher'
+import { applySceneHelperVisibility } from '../viewer/utils/sceneHelperVisibility'
+import { wakeViewerRender } from '../viewer/utils/wakeViewerRender'
 
 interface UseHelperVisibilityProps {
   viewer: ViewerInstance | null
@@ -40,45 +38,26 @@ export function useHelperVisibility({
 
   useEffect(() => {
     if (!viewer) return
-    
-    // When Streets GL overlay is active, force hide grid/axes/shadow plane (they're not synced with Streets GL coordinate system)
-    const forceHideHelpers = streetsGLIframeOverlay
-    const effectiveShowShadowPlane = effectiveShadowPlaneVisible(showShadowPlane, {
+
+    applySceneHelperVisibility(viewer.scene, {
+      showGrid,
+      showAxes,
+      showShadowPlane,
+      showLightHelpers,
+      showShaderEditorPanel,
+      streetsGLIframeOverlay,
       hdrEnabled,
       hdrGroundProjectionEnabled,
       shadowsEnabled
-    })
-    
-    viewer.scene.traverse((obj: THREE.Object3D) => {
-      if (obj instanceof THREE.GridHelper) {
-        // Force hide grid when Streets GL overlay is active - grid is not synced with Streets GL's coordinate system
-        obj.visible = forceHideHelpers ? false : showGrid
-      }
-      if (obj instanceof THREE.AxesHelper) {
-        // Force hide axes when Streets GL overlay is active
-        obj.visible = forceHideHelpers ? false : showAxes
-      }
-      if (obj.userData.isShadowPlane) {
-        // Force hide shadow plane when Streets GL overlay is active.
-        // HDR ground projection auto-shows a transparent shadow catcher even when showShadowPlane is off.
-        obj.visible = forceHideHelpers ? false : effectiveShowShadowPlane
-      }
-      // CRITICAL: Control gizmo visibility based on showLightHelpers setting
-      // Both Three.js helpers and gizmos are controlled by the same setting
-      if (obj.userData.isLightGizmo) {
-        const light = obj.userData.light as THREE.Light | undefined
-        obj.visible = showLightHelpers && (light ? light.visible : true)
-      }
-      // Control CineShader demo screen visibility based on shader editor panel state
-      if (obj.userData.isDemoShaderScreen && obj.name === 'CineShaderDemoScreenGroup') {
-        obj.visible = showShaderEditorPanel
-      }
     })
     
     // Update bounding boxes
     if ((viewer as any).updateBoundingBoxes) {
       (viewer as any).updateBoundingBoxes()
     }
+
+    // Idle render pause may be active; repaint after visibility mutations.
+    wakeViewerRender(viewer)
   }, [
     viewer,
     showGrid,
