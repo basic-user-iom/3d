@@ -37,6 +37,14 @@ weather presets, fog, and how they connect to CSM shadows. For shadow-specific t
 | Standard (no weather) | `isSun` DirectionalLight | Per-light shadow maps | Optional HDR background | `sceneFog.ts` FogExp2 |
 | Standalone weather | `isSun` light (illumination) | CSM cascade lights (intensity 0, shadow-only) | DynamicSky iq raymarch | AtmosphericPerspective |
 | Streets GL overlay | Sun light hidden | Streets GL internal | DynamicSky box/LUT | Streets GL atmosphere |
+| Path tracer | Baked from scene export | Path-traced | HDR / env | N/A (offline) |
+
+Authoritative mode enum: `resolveLightingMode()` in `src/viewer/utils/lightingContext.ts`. See [`shadow-system.md`](shadow-system.md) for the full conflict matrix.
+
+**Mutual exclusion (enforced in store):**
+
+- `streetsGLIframeOverlay` + `enableStandaloneWeather` cannot both be true.
+- `hdrGroundProjectionEnabled` + `enableStandaloneWeather` cannot both be true.
 
 **Night split:** sky shader uses true below-horizon sun (`standaloneSkySunDirection`); scene
 lights and CSM use clamped direction (`standaloneLightSunDirection`) so shadows stay stable.
@@ -101,6 +109,22 @@ The HDR panel lives on the right sidebar:
 - If you want HDR-only lighting, disable all directional lights but leave the
   ambient slider around 0.35–0.5 to keep interiors readable.
 
+### Exterior vs interior (without engine rewrite)
+
+| Technique | Status | Notes |
+|-----------|--------|-------|
+| HDR sun + reduced ambient | Implemented | Ambient ×0.15 when `scene.environment` set |
+| Cavity material dimming | Implemented | `enhanceInternalShadows` — envMap ×0.05 on interior meshes |
+| `userData.lightingZone` tags | Implemented | `'interior'` / `'exterior'` + render layers 0/1 |
+| Per-zone reflection probes | Future | PMREM box per room (Godot/Witcher-style) |
+| Light portals | Path tracer only | Real-time portals need WebGPU or RT |
+| RectAreaLight interiors | Partial | Supported in Lighting panel; no shadows |
+| Selective sun via light layers | **Not in WebGL** | Use material dimming + CSM instead |
+
+**Too bright interior:** tag mesh `userData.lightingZone = 'interior'`, reload model or call `reapplyInteriorCavityEnhancements`, enable SAO (medium+ weather + post-processing).
+
+**Double shadows:** check only one shadow authority is active (see conflict matrix in shadow-system guide); disable sun `castShadow` when CSM is on.
+
 ## Standalone Weather (offline sky + clouds)
 
 Enable **Standalone Weather** in the Weather panel (`WeatherPanel.tsx`) when you
@@ -143,6 +167,9 @@ camera-relative direction-space raymarching (see weather-system guide).
 | Symptom | Fix |
 | ------- | --- |
 | Shadows missing after toggling panels | Reopen Lighting panel and reapply “Shadow Quality” or click “Run Diagnostics” to reinitialize CSM. |
+| Double shadows on terrain | SSS + CSM — lower SSS intensity in Rendering panel | 
+| Interior too bright with HDR on | Tag `userData.lightingZone = 'interior'`; enable standalone weather SAO |
+| Shadow map size slider dead | Standalone weather on — use Weather quality preset |
 | HDR looks washed out | Lower `hdrIntensity` or switch tone mapping to `ACES` with exposure ~1.0–1.2. |
 | Ground projection too bright/dark | Adjust “Ground Projection Radius/Height” and the shadow plane opacity simultaneously. |
 | Path tracer stuck white | Ensure HDR is enabled, `scene.background` isn’t null, and the path tracer panel actually shows “Running” (otherwise `renderFrame()` is never invoked). |
@@ -150,6 +177,7 @@ camera-relative direction-space raymarching (see weather-system guide).
 ## Related Files
 
 - `src/components/LightingPanel.tsx` – UI hooks for lights/shadows.
+- `src/viewer/utils/lightingContext.ts` – mode enum, conflict detection, shadow guards.
 - `src/viewer/effects/CSMShadowSystem.ts` – cascading shadow maps.
 - `src/viewer/effects/HDRSystem.ts` – HDR loading, PMREM generation, ground projection dome.
 - `src/components/PathTracerDemoPanel.tsx` & `src/viewer/pathTracer/PathTracerDemo.ts` – how HDR + lighting feed the progressive renderer.

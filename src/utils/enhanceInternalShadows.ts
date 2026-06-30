@@ -1,5 +1,9 @@
 import * as THREE from 'three'
 
+/** Render layers for future selective lighting / camera filtering (WebGL has no per-light layers). */
+export const EXTERIOR_RENDER_LAYER = 0
+export const INTERIOR_RENDER_LAYER = 1
+
 /** Reduce HDR/ambient fill on recessed interior geometry visible through body gaps. */
 export const CAVITY_ENV_MAP_DIM_FACTOR = 0.05
 export const CAVITY_COLOR_DIM_FACTOR = 0.2
@@ -326,6 +330,29 @@ function patchInteriorCavityShader(
   mat.userData.originalOnBeforeCompile = originalOnBeforeCompile
 }
 
+function tagLightingZone(mesh: THREE.Mesh): void {
+  if (mesh.userData.lightingZone) {
+    if (mesh.userData.lightingZone === 'interior') {
+      mesh.layers.set(INTERIOR_RENDER_LAYER)
+    } else if (mesh.userData.lightingZone === 'exterior') {
+      mesh.layers.set(EXTERIOR_RENDER_LAYER)
+    }
+    return
+  }
+  if (mesh.userData.interior || mesh.userData.isInterior || isLikelyInteriorMesh(mesh)) {
+    mesh.userData.lightingZone = 'interior'
+    mesh.layers.set(INTERIOR_RENDER_LAYER)
+  } else if (
+    mesh.userData.exterior ||
+    mesh.userData.isExterior ||
+    mesh.userData.isBodyPanel ||
+    isLikelyExteriorBodyPanel(mesh)
+  ) {
+    mesh.userData.lightingZone = 'exterior'
+    mesh.layers.set(EXTERIOR_RENDER_LAYER)
+  }
+}
+
 function applyCavityDimming(
   mat: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial,
   result: InternalShadowEnhancementResult,
@@ -570,6 +597,8 @@ export function enhanceInternalShadows(
         result.meshesEnhanced++
       }
 
+      tagLightingZone(obj)
+
       const isTransparent = materials.some(isTransparentMaterial)
       if (!isTransparent && !obj.castShadow) {
         obj.castShadow = true
@@ -672,6 +701,7 @@ export function enhanceInternalShadows(
       obj.userData.isInteriorCavity = true
 
       const aggressive =
+        obj.userData.lightingZone === 'interior' ||
         getMeshAverageAlbedo(obj) > BRIGHT_ALBEDO_THRESHOLD ||
         !isLikelyInteriorMesh(obj)
 

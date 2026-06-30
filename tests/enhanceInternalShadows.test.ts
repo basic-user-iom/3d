@@ -13,7 +13,8 @@ import {
   CAVITY_ENV_MAP_DIM_FACTOR,
   CAVITY_COLOR_DIM_FACTOR,
   CAVITY_BRIGHT_COLOR_DIM_FACTOR,
-  BRIGHT_ALBEDO_THRESHOLD
+  BRIGHT_ALBEDO_THRESHOLD,
+  INTERIOR_RENDER_LAYER
 } from '../src/utils/enhanceInternalShadows'
 import {
   shouldAutoEnableCavityAo,
@@ -62,6 +63,15 @@ describe('enhanceInternalShadows', () => {
     expect(isLikelyInteriorMesh(mesh)).toBe(true)
   })
 
+  it('tags lightingZone and interior render layer', () => {
+    mesh.name = 'engine_block'
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+    enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
+    expect(mesh.userData.lightingZone).toBe('interior')
+    expect(mesh.layers.mask).toBe(1 << 1) // INTERIOR_RENDER_LAYER
+  })
+
   it('dims envMapIntensity and color on interior meshes', () => {
     mesh.name = 'engine_block'
     const mat = mesh.material as THREE.MeshStandardMaterial
@@ -75,7 +85,7 @@ describe('enhanceInternalShadows', () => {
     const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
     expect(result.cavityMeshesDimmed).toBe(1)
     expect(mat.envMapIntensity).toBeCloseTo(2.0 * CAVITY_ENV_MAP_DIM_FACTOR)
-    expect(mat.color.r).toBeCloseTo(0.5 * CAVITY_COLOR_DIM_FACTOR)
+    expect(mat.color.r).toBeCloseTo(0.5 * CAVITY_BRIGHT_COLOR_DIM_FACTOR)
     expect(mat.emissiveIntensity).toBe(0)
     expect(mat.userData.cavityDimApplied).toBe(true)
     expect(mat.userData.cavityShaderPatched).toBe(true)

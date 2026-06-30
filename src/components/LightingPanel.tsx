@@ -553,6 +553,7 @@ export default function LightingPanel() {
                           max="8192"
                           step="512"
                           value={shadowMapSize}
+                          disabled={enableStandaloneWeather && !streetsGLIframeOverlay && !!viewer?.csmShadowSystem?.isEnabled()}
                           onChange={(e) => {
                             const newValue = parseInt(e.target.value)
                             trackSliderInteraction('Shadow Map Size', newValue, 'LightingPanel', () => setShadowMapSize(newValue))
@@ -565,7 +566,7 @@ export default function LightingPanel() {
                         Higher = sharper shadows (512 = fast, 2048 = good, 4096 = high quality, 8192 = ultra)
                         {enableStandaloneWeather && viewer?.csmShadowSystem?.isEnabled() && (
                           <span style={{ display: 'block', color: '#4a9eff', marginTop: '4px' }}>
-                            ⚠️ Changing this will recreate CSM with new resolution
+                            Controlled by Weather quality preset while standalone weather is on
                           </span>
                         )}
                       </small>
@@ -1937,8 +1938,22 @@ export default function LightingPanel() {
                 <input
                   type="checkbox"
                   checked={selectedLight.castShadow}
+                  disabled={
+                    !!selectedLight.isSun &&
+                    enableStandaloneWeather &&
+                    !streetsGLIframeOverlay &&
+                    !!viewer?.csmShadowSystem?.isEnabled()
+                  }
                   onChange={(e) => updateDirectionalLight(selectedLight.id, { castShadow: e.target.checked })}
                 />
+                {selectedLight.isSun &&
+                  enableStandaloneWeather &&
+                  !streetsGLIframeOverlay &&
+                  viewer?.csmShadowSystem?.isEnabled() && (
+                  <small style={{ display: 'block', color: '#4a9eff', marginTop: '4px' }}>
+                    Sun shadows come from CSM while standalone weather is on
+                  </small>
+                )}
               </label>
 
               {(selectedLight.type === 'directional' || !selectedLight.type) && (
