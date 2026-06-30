@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import {
   applyHdrGroundShadowCatcherMaterial,
   effectiveShadowPlaneVisible,
+  HDR_SHADOW_CATCHER_PLANE_Y,
   shadowCatcherOpacity,
   shouldAutoShowShadowPlaneForHdr,
   shouldUseHdrGroundShadowCatcher
@@ -51,7 +52,7 @@ describe('hdrGroundShadowCatcher', () => {
     ).toBe(false)
   })
 
-  it('uses regular plane material when user toggles shadow plane on under standard HDR', () => {
+  it('uses ShadowMaterial catcher whenever HDR and shadows are on', () => {
     expect(
       shouldUseHdrGroundShadowCatcher(
         {
@@ -61,20 +62,31 @@ describe('hdrGroundShadowCatcher', () => {
         },
         true
       )
-    ).toBe(false)
-  })
+    ).toBe(true)
 
-  it('uses catcher for auto-shown standard HDR grid when toggle is off', () => {
     expect(
       shouldUseHdrGroundShadowCatcher(
         {
           hdrEnabled: true,
-          hdrGroundProjectionEnabled: false,
+          hdrGroundProjectionEnabled: true,
           shadowsEnabled: true
         },
         false
       )
     ).toBe(true)
+  })
+
+  it('skips catcher when shadows are off', () => {
+    expect(
+      shouldUseHdrGroundShadowCatcher(
+        {
+          hdrEnabled: true,
+          hdrGroundProjectionEnabled: true,
+          shadowsEnabled: false
+        },
+        true
+      )
+    ).toBe(false)
   })
 
   it('shows shadow plane when HDR ground catcher is active even if toggle is off', () => {
@@ -118,12 +130,13 @@ describe('hdrGroundShadowCatcher', () => {
     if (!(material instanceof THREE.ShadowMaterial)) {
       throw new Error('expected ShadowMaterial')
     }
-    expect(material.depthWrite).toBe(true)
+    expect(material.depthWrite).toBe(false)
     expect(material.transparent).toBe(true)
     expect(material.side).toBe(THREE.DoubleSide)
     expect(material.opacity).toBe(shadowCatcherOpacity(1.0))
     expect(plane.receiveShadow).toBe(true)
     expect(plane.castShadow).toBe(false)
+    expect(plane.position.y).toBe(HDR_SHADOW_CATCHER_PLANE_Y)
     expect(plane.renderOrder).toBe(100)
   })
 })
