@@ -1538,7 +1538,8 @@ export function useViewer() {
 
       const enhancementResult = enhanceInternalShadows(modelScene, directionalLights, {
         hideInteriorGeometry,
-        logAffectedMeshes: modelScene.userData.isAutoLoaded === true
+        logAffectedMeshes: modelScene.userData.isAutoLoaded === true,
+        logAllMeshNames: modelScene.userData.isAutoLoaded === true
       })
 
       if (

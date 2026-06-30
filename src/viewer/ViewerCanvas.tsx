@@ -6953,6 +6953,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             // Re-run CSM material setup so shader patches survive the HDR recompile
             viewerRef.current.csmShadowSystem.setupSceneMaterials(true)
           }
+
+          // Re-apply interior cavity dimming after HDR overwrites envMapIntensity
+          if (viewerRef.current?.scene) {
+            refreshInteriorCavityEnhancements(viewerRef.current, viewerRef.current.scene)
+          }
           
           // CRITICAL: Update shadow camera bounds after HDR application
           // HDR material updates may affect shadow rendering, so we need to recalculate bounds
