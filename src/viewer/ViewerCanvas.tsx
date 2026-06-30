@@ -4,6 +4,7 @@ import { EnvironmentManager } from './effects/EnvironmentManager'
 import { OrbitControls, TransformControls, RectAreaLightHelper } from 'three-stdlib'
 import { useAppStore } from '../store/useAppStore'
 import { HDRSystem } from './effects/HDRSystem'
+import { IndirectLightingSystem } from './effects/IndirectLightingSystem'
 import { ParticleSystem } from './particles/ParticleSystem'
 import { WaterSystem } from './effects/WaterSystem'
 // Streets GL only - Three.js Sky removed
@@ -262,6 +263,7 @@ export interface ViewerInstance {
   pmremEnvMap?: THREE.Texture | null // PMREM cube map (for reflections/environment)
   defaultEnvTexture?: THREE.Texture | null
   hdrSystem?: import('./effects/HDRSystem').HDRSystem
+  indirectLightingSystem?: IndirectLightingSystem
   pivotWrappers?: WeakMap<THREE.Object3D, THREE.Group>
   startingObjectsGroup?: THREE.Group
   particleSystems?: Array<import('./particles/ParticleSystem').ParticleSystem>
@@ -6728,9 +6730,17 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         console.log('[HDRSystem] Initialized HDR System and exposed globally for path tracer')
       }
     }
+
+    if (!viewerRef.current.indirectLightingSystem) {
+      viewerRef.current.indirectLightingSystem = new IndirectLightingSystem(scene, renderer)
+    }
     
     return () => {
       // Cleanup on unmount
+      if (viewerRef.current?.indirectLightingSystem) {
+        viewerRef.current.indirectLightingSystem.dispose()
+        viewerRef.current.indirectLightingSystem = undefined
+      }
       if (viewerRef.current?.hdrSystem) {
         viewerRef.current.hdrSystem.dispose()
         viewerRef.current.hdrSystem = undefined
@@ -6996,6 +7006,16 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             viewerRef.current.csmShadowSystem.setupSceneMaterials(true)
           }
 
+          // HDR-derived SH probe replaces part of flat ambient fill (specular stays on scene.environment)
+          const equirectForProbe =
+            hdrSystem.getOriginalTexture() ??
+            (viewerRef.current.scene.environment instanceof THREE.Texture
+              ? viewerRef.current.scene.environment
+              : null)
+          if (viewerRef.current?.indirectLightingSystem && equirectForProbe) {
+            viewerRef.current.indirectLightingSystem.applyFromEquirect(equirectForProbe, hdrIntensity)
+          }
+
           // Re-apply interior cavity dimming after HDR overwrites envMapIntensity
           if (viewerRef.current?.scene) {
             refreshInteriorCavityEnhancements(viewerRef.current, viewerRef.current.scene)
@@ -7016,6 +7036,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         } else {
           // Disable HDR
           hdrSystem.disableHDR()
+          viewerRef.current?.indirectLightingSystem?.remove()
           
           // Streets GL only - Three.js Sky removed
           
@@ -7057,6 +7078,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // Only update if HDR is enabled and has a PMREM map
     if (hdrEnabled && hdrSystem.getPMREMMap()) {
       hdrSystem.updateIntensity(hdrIntensity)
+      viewerRef.current.indirectLightingSystem?.updateIntensity(hdrIntensity)
     }
   }, [hdrEnabled, hdrIntensity])
 
@@ -7336,8 +7358,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // Shadows create dark areas, so we need more ambient fill to compensate
       const shadowsEnabled = useAppStore.getState().shadowsEnabled
       const ambientReductionFactor = shadowsEnabled ? 0.65 : 0.4 // Less reduction when shadows are enabled
+      const probeAmbientMul =
+        viewerRef.current?.indirectLightingSystem?.getAmbientMultiplier(shadowsEnabled) ?? 1
       const effectiveAmbientIntensity = hasHDREnvironment 
-        ? Math.max(ambientIntensity * ambientReductionFactor * hdrSunBoost * 0.85, hdrAmbientFloor)
+        ? Math.max(
+            ambientIntensity * ambientReductionFactor * hdrSunBoost * 0.85 * probeAmbientMul,
+            hdrAmbientFloor * probeAmbientMul
+          )
         : ambientIntensity // Use full intensity when no HDR
       
       ambientLight.intensity = effectiveAmbientIntensity
@@ -8523,8 +8550,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // HDR environment maps already provide ambient lighting through reflections
       // Only use 15% of ambient intensity when HDR is active to avoid washing out shadows
       const hasHDREnvironment = hdrEnabledFromStore && scene.environment !== null
+      const shadowsEnabled = useAppStore.getState().shadowsEnabled
+      const probeAmbientMul =
+        viewerRef.current?.indirectLightingSystem?.getAmbientMultiplier(shadowsEnabled) ?? 1
       const effectiveAmbientIntensity = hasHDREnvironment 
-        ? ambientIntensity * 0.15 // Reduce to 15% when HDR is active (HDR provides the rest)
+        ? ambientIntensity * 0.15 * probeAmbientMul // HDR + optional SH probe reduce flat ambient
         : ambientIntensity // Use full intensity when no HDR
       
       ambientLight.intensity = effectiveAmbientIntensity
