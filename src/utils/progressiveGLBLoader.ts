@@ -90,7 +90,7 @@ export async function loadGLBProgressive(
   const opts: ProgressiveLoadOptions = {
     maxProgressiveSize: 500, // 500MB
     chunkSize: 10 * 1024 * 1024, // 10MB chunks
-    separateInteriors: true,
+    separateInteriors: false,
     ...options
   }
 
@@ -208,14 +208,15 @@ export async function loadGLBProgressive(
                 exterior.add(obj)
               })
               
-              // Add interior objects (hidden initially)
+              // Add interior objects — always visible (never hide interior geometry)
               if (interior) {
                 interiorObjs.forEach(obj => {
                   if (obj.parent) {
                     obj.parent.remove(obj)
                   }
                   interior.add(obj)
-                  obj.visible = false // Hide interior initially
+                  obj.visible = true
+                  delete (obj.userData as Record<string, unknown>).interiorHiddenByViewer
                 })
               }
               

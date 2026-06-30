@@ -29,7 +29,7 @@ import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvent
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
 import { getCsmShadowMapSizeForQuality, getCsmCascadeCountForQuality, getEffectiveMaxFps, getEffectivePixelRatio, prefersLowPowerGpu } from './utils/weatherGpuUtils'
-import { reapplyInteriorCavityEnhancements, applyInteriorCavityDimming, ensureImportedMeshesVisible } from '../utils/enhanceInternalShadows'
+import { reapplyInteriorCavityEnhancements, applyInteriorCavityDimming, ensureImportedMeshesVisible, auditHiddenImportedMeshes } from '../utils/enhanceInternalShadows'
 import { applyCavityAoIfEligible } from './utils/cavityOcclusion'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
@@ -4325,6 +4325,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (restored > 0) {
         console.log(`[enhanceInternalShadows] Init restore: fixed ${restored} stale visibility/layer issue(s)`)
       }
+      auditHiddenImportedMeshes(scene)
     })
 
     requestAnimationFrame(() => {

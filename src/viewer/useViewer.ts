@@ -605,6 +605,8 @@ export function registerImportedModelInRegistry(
       })
     )
     store.markSceneRevision()
+  } else {
+    store.updateProjectObject(objectId, { visible: true })
   }
   return objectId
 }
@@ -624,6 +626,12 @@ function tagImportedModelScene(scene: THREE.Object3D, fileName: string, extras: 
     child.userData.isImportedModel = true
     child.userData.excludeFromSkyModifications = true
     child.userData.excludeFromWeatherModifications = true
+    if (child instanceof THREE.Mesh) {
+      child.visible = true
+      delete child.userData.interiorHiddenByViewer
+      delete child.userData.preHideVisible
+      delete child.userData.wasInteriorHidden
+    }
   })
 }
 
@@ -1517,9 +1525,13 @@ export function useViewer() {
     viewer: { csmShadowSystem?: { getDirectionalLights?: () => THREE.DirectionalLight[] } } | null
   ): Promise<void> {
     try {
-      const { enhanceInternalShadows } = await import('../utils/enhanceInternalShadows')
+      const { enhanceInternalShadows, ensureImportedMeshesVisible } = await import(
+        '../utils/enhanceInternalShadows'
+      )
       const appStore = await import('../store/useAppStore')
       const { darkenInteriorCavities } = appStore.useAppStore.getState()
+
+      ensureImportedMeshesVisible(modelScene)
 
       const directionalLights: THREE.DirectionalLight[] = []
       scene.traverse((obj) => {

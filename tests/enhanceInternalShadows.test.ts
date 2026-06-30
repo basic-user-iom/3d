@@ -70,8 +70,21 @@ describe('enhanceInternalShadows', () => {
     scene.add(mesh)
     enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(mesh.userData.lightingZone).toBe('interior')
-    expect(mesh.layers.isEnabled(EXTERIOR_RENDER_LAYER)).toBe(true)
-    expect(mesh.layers.isEnabled(INTERIOR_RENDER_LAYER)).toBe(true)
+    expect(mesh.layers.mask).toBe(1 << EXTERIOR_RENDER_LAYER)
+    expect(mesh.layers.isEnabled(INTERIOR_RENDER_LAYER)).toBe(false)
+  })
+
+  it('restores meshes stuck on interior-only render layer from older builds', () => {
+    mesh.name = 'engine_block'
+    mesh.layers.set(INTERIOR_RENDER_LAYER)
+    mesh.visible = false
+
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+
+    ensureImportedMeshesVisible(scene)
+    expect(mesh.visible).toBe(true)
+    expect(mesh.layers.mask).toBe(1 << EXTERIOR_RENDER_LAYER)
   })
 
   it('dims envMapIntensity and color on interior meshes — visible dark grey not black', () => {
