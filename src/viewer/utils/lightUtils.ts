@@ -1,6 +1,11 @@
 import * as THREE from 'three'
 import { useAppStore } from '../../store/useAppStore'
 import type { DirectionalLightConfig, LightType } from '../../store/useAppStore'
+import {
+  PHYSICAL_DIRECTIONAL_SHADOW_BIAS,
+  PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS,
+  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+} from './physicalShadowSettings'
 
 /**
  * Converts time of day (0-24 hours) and north offset (degrees) to sun elevation and azimuth
@@ -341,12 +346,9 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
       light.shadow.mapSize.height = shadowMapSize
       // Initial bias will be refined in updateShadowCameraBounds based on object size
       // CRITICAL: Use conservative initial bias to prevent shadows leaking through opaque objects
-      light.shadow.bias = -0.0002
-      // IMPROVED: Use initial normal bias - will be refined in updateShadowCameraBounds
-      // Normal bias helps reduce shadow acne on surfaces with sharp angles
-      // FIX: Increased minimum normal bias to 0.02 to prevent artifacts (recommended: 0.02-0.05)
-      light.shadow.normalBias = 0.02 // Increased from 0.01 to prevent shadow artifacts
-      light.shadow.radius = config.shadowRadius ?? 3
+      light.shadow.bias = PHYSICAL_DIRECTIONAL_SHADOW_BIAS
+      light.shadow.normalBias = PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS
+      light.shadow.radius = config.shadowRadius ?? PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
 
       // Configure shadow camera based on light type
       if (light instanceof THREE.DirectionalLight) {

@@ -2,6 +2,12 @@ import * as THREE from 'three'
 import { useAppStore } from '../../store/useAppStore'
 import { computeLightDirection } from './lightGizmos'
 import { CSMShadowSystem, CSMConfig } from '../effects/CSMShadowSystem'
+import {
+  applyAdaptiveDirectionalShadowBias,
+  applyPhysicalDirectionalShadowDefaults,
+  computeTightShadowFrustum,
+  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+} from './physicalShadowSettings'
 
 export type ShadowSystemType = 'standard' | 'csm' | 'streetsgl'
 
@@ -259,57 +265,29 @@ export function updateShadowCameraBounds(
     const center = targetBox.getCenter(new THREE.Vector3())
     const maxDim = Math.max(size.x, size.y, size.z)
     const minDim = Math.min(size.x, size.y, size.z)
-
-    // Calculate shadow camera bounds with better precision
-    // CRITICAL: For interior shadows, use larger multiplier to ensure full model coverage
-    // Since useVisibleBounds is now false, we always use the larger multiplier
-    const baseMultiplier = 3.5 // Increased from 4.0 to ensure full coverage including interior
-    const sizeFactor = maxDim > 50 ? Math.max(0.6, 1.0 - (maxDim - 50) / 200) : 1.0 // Increased minimum from 0.5 to 0.6
-    const boundsMultiplier = baseMultiplier * sizeFactor
-    const shadowSize = Math.max(maxDim * boundsMultiplier, minDim * 2.0, 50) // Increased minDim multiplier from 1.5 to 2.0
-
-    // Add padding based on object size - increased for interior shadow coverage
-    // CRITICAL: More padding needed to ensure shadows aren't cut off, especially for interior parts
-    const padding = Math.min(Math.max(maxDim * 0.15, 15), 100) // Increased from 0.1/10/50 to 0.15/15/100
-    const finalShadowSize = shadowSize + padding
-
-    // Cap final shadow size to prevent excessive coverage, but allow larger bounds for interior shadows
-    const adaptiveMaxSize = maxDim > 1000 ? Math.min(maxDim * 2.0, 15000) : 3000 // Increased from 1.5/10000/2000 to 2.0/15000/3000
-    const maxShadowSize = Math.max(adaptiveMaxSize, 3000) // Increased minimum from 2000 to 3000
-    const clampedShadowSize = Math.min(finalShadowSize, maxShadowSize)
+    const depthSize = size.y > size.z ? size.y : size.z
+    const frustum = computeTightShadowFrustum(maxDim, minDim, depthSize, useVisibleBounds)
 
     // Configure shadow camera for directional lights
     if (light instanceof THREE.DirectionalLight) {
-      light.shadow.camera.left = -clampedShadowSize
-      light.shadow.camera.right = clampedShadowSize
-      light.shadow.camera.top = clampedShadowSize
-      light.shadow.camera.bottom = -clampedShadowSize
+      light.shadow.camera.left = -frustum.orthoHalfExtent
+      light.shadow.camera.right = frustum.orthoHalfExtent
+      light.shadow.camera.top = frustum.orthoHalfExtent
+      light.shadow.camera.bottom = -frustum.orthoHalfExtent
 
-      // CRITICAL: Use very small near plane to capture interior surfaces (like car interiors)
-      // Interior shadows require near plane of 0.001 or smaller to see close surfaces
-      // This is more important than preventing z-fighting - interior shadows are critical
-      // ALWAYS use 0.001 for interior shadows - don't increase it even for larger objects
-      // If enhanceInternalShadows already set it smaller, preserve that value
       const currentNear = light.shadow.camera.near
-      const nearPlane = currentNear <= 0.001 ? currentNear : (minDim < 0.01 ? 0.0005 : 0.001)
-      light.shadow.camera.near = nearPlane
+      light.shadow.camera.near =
+        currentNear <= frustum.near ? currentNear : frustum.near
 
-      // Ensure far plane is large enough
-      const depthSize = size.y > size.z ? size.y : size.z
-      const shadowProjectionMargin = maxDim * 2
-      const farPlane = useVisibleBounds
-        ? Math.max(depthSize * 3 + shadowProjectionMargin, maxDim * 6, 2000)
-        : Math.max(depthSize * 5 + shadowProjectionMargin, maxDim * 10, 5000)
+      light.shadow.camera.far = frustum.far
 
-      light.shadow.camera.far = farPlane
-
-      // Position shadow camera at center, offset along light direction
       let lightDirection: THREE.Vector3
       const computedDir = computeLightDirection(light)
       lightDirection = computedDir ? computedDir.clone() : new THREE.Vector3(0, -1, 0)
 
-      const offsetDistance = Math.max(maxDim * 2, 500)
-      const shadowCameraPosition = center.clone().add(lightDirection.clone().multiplyScalar(-offsetDistance))
+      const shadowCameraPosition = center
+        .clone()
+        .add(lightDirection.clone().multiplyScalar(-frustum.offsetDistance))
       light.shadow.camera.position.copy(shadowCameraPosition)
       light.shadow.camera.lookAt(center)
       light.shadow.camera.updateProjectionMatrix()
@@ -331,26 +309,10 @@ export function updateShadowCameraBounds(
     const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
 
     if (useAdaptiveShadowSettings) {
-      // Calculate adaptive shadow bias
-      // FIX: Increased base bias to -0.0002 to prevent shadow acne artifacts
-      const shadowMapSize = light.shadow.mapSize.width
-      const biasScale = shadowMapSize / 8192
-      const resolutionScale = Math.max(0.5, 2048 / shadowMapSize) // Normalize to 2048px base
-      const sceneScaleFactor = Math.min(maxDim / 100, 2.0) // Cap scene scale influence
-      const aspectRatio = minDim / maxDim // Account for object proportions
-      
-      // FIX: Increased base bias from -0.0001 to -0.0002 to eliminate shadow acne
-      const baseBias = -0.0002
-      const adaptiveBias = baseBias * resolutionScale * sceneScaleFactor * (0.5 + aspectRatio * 0.5)
-      light.shadow.bias = THREE.MathUtils.clamp(adaptiveBias, -0.001, -0.00005)
-
-      // FIX: Increased normal bias to prevent artifacts on curved surfaces
-      // IMPROVED: Ensure minimum normal bias of 0.02 to prevent warnings (recommended: 0.02-0.05)
-      const normalBiasBase = minDim < 1.0 ? 0.05 : 0.03 // Increased from 0.02/0.01
-      const normalBiasResolutionScale = Math.max(0.5, 2048 / shadowMapSize)
-      const calculatedNormalBias = normalBiasBase * (minDim / maxDim) * normalBiasResolutionScale
-      light.shadow.normalBias = Math.max(calculatedNormalBias, 0.02) // Minimum 0.02
-      light.shadow.normalBias = THREE.MathUtils.clamp(light.shadow.normalBias, 0.02, 0.5) // Clamp to safe range
+      applyAdaptiveDirectionalShadowBias(light, maxDim, minDim)
+      if (light instanceof THREE.DirectionalLight) {
+        light.shadow.radius = PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+      }
     } else {
       // Use manual override values from store
       light.shadow.bias = useAppStore.getState().shadowBiasOverride
@@ -381,9 +343,7 @@ export function updateShadowCameraBounds(
     // Use adaptive or manual shadow bias
     const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
     if (useAdaptiveShadowSettings) {
-      // FIX: Increased bias values to match other implementations and prevent shadow artifacts
-      light.shadow.bias = -0.0002 // Increased from -0.00015 to prevent shadow acne
-      light.shadow.normalBias = 0.03 // Increased from 0.005 to prevent artifacts on curved surfaces (minimum 0.02)
+      applyPhysicalDirectionalShadowDefaults(light)
     } else {
       light.shadow.bias = useAppStore.getState().shadowBiasOverride
       light.shadow.normalBias = useAppStore.getState().shadowNormalBiasOverride

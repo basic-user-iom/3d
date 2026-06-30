@@ -7,6 +7,7 @@ import { usePanelStacking } from '../hooks/usePanelStacking'
 import { useViewer } from '../viewer/useViewer'
 import * as THREE from 'three'
 import FastHDRConverter from './FastHDRConverter'
+import { getPhysicalLightingPresetValues } from '../viewer/utils/physicalShadowSettings'
 import './LightingPanel.css'
 
 const HDR_PRESETS = [
@@ -583,6 +584,35 @@ export default function LightingPanel() {
                         Automatically adjust bias based on object size and shadow map resolution
                       </small>
                     </label>
+
+                    <button
+                      type="button"
+                      className="lighting-preset-btn"
+                      style={{
+                        marginTop: '8px',
+                        marginBottom: '12px',
+                        padding: '6px 10px',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        border: '1px solid rgba(255, 255, 255, 0.2)',
+                        borderRadius: '4px',
+                        color: '#ddd'
+                      }}
+                      onClick={() => {
+                        const preset = getPhysicalLightingPresetValues()
+                        setShadowMapSize(preset.shadowMapSize)
+                        setUseAdaptiveShadowSettings(preset.useAdaptiveShadowSettings)
+                        setShadowBiasOverride(preset.shadowBiasOverride)
+                        setShadowNormalBiasOverride(preset.shadowNormalBiasOverride)
+                        setCsmShadowRadius(0)
+                      }}
+                    >
+                      Apply Physical Lighting Preset
+                    </button>
+                    <small style={{ display: 'block', color: '#888', marginTop: '-8px', marginBottom: '12px' }}>
+                      Matches three.js webgl_lights_physical shadow reference (2048 map, tight bias, sharp CSM)
+                    </small>
                     
                     {!useAdaptiveShadowSettings && (
                       <>

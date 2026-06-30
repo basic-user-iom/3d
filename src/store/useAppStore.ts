@@ -1022,8 +1022,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Shadow quality defaults
     shadowMapSize: 8192, // Default high-quality shadow map resolution
     useAdaptiveShadowSettings: true, // Use adaptive shadow settings by default
-    shadowBiasOverride: -0.0001, // Default manual bias (used when adaptive is disabled)
-    shadowNormalBiasOverride: 0.01, // Default manual normal bias (used when adaptive is disabled)
+    shadowBiasOverride: -0.0001, // Physical reference (three.js directional shadow tutorials)
+    shadowNormalBiasOverride: 0.02, // Physical reference
     csmShadowRadius: 100, // Default CSM shadow radius
     cameraBoundsEnabled: false, // Camera bounds disabled by default
     cameraBoundsMin: { x: -Infinity, y: -Infinity, z: -Infinity }, // No minimum bounds by default
@@ -2135,7 +2135,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const id = `light-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
     const normalizedLight = {
       ...light,
-      shadowRadius: light.shadowRadius ?? 3
+      shadowRadius: light.shadowRadius ?? 1
     }
     const newLight = { ...normalizedLight, id }
     set((state) => ({

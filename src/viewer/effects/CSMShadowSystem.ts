@@ -12,6 +12,7 @@ import {
   getCsmShadowMapSizeForQuality,
   type WeatherQuality
 } from '../utils/weatherGpuUtils'
+import { PHYSICAL_CSM_SHADOW_RADIUS } from '../utils/physicalShadowSettings'
 
 export interface CSMConfig {
   camera: THREE.PerspectiveCamera
@@ -72,7 +73,7 @@ export class CSMShadowSystem {
       shadowNormalBias = CSM_SHADER_NORMAL_BIAS, // Streets GL shader bias (scaled per cascade in CSMBias)
       biasScale = 1.0,
       mode = 'practical', // Streets GL CSM mode
-      shadowRadius = 2 // IMPROVED: Default to 2 for smoother shadows (recommended: 2-3)
+      shadowRadius = PHYSICAL_CSM_SHADOW_RADIUS // Sharp CSM contact shadows; PCF via renderer when radius > 0
     } = this.config
     
     // CRITICAL: Validate shadow map size - maximum is 8192px for CSM reliability

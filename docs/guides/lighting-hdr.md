@@ -125,6 +125,45 @@ The HDR panel lives on the right sidebar:
 
 **Double shadows:** check only one shadow authority is active (see conflict matrix in shadow-system guide); disable sun `castShadow` when CSM is on.
 
+## Physical lights comparison (`webgl_lights_physical`)
+
+Reference: [three.js webgl_lights_physical](https://threejs.org/examples/#webgl_lights_physical)
+
+The official example demonstrates **physical light units** (point `power` in lumens, hemisphere irradiance in lux, `decay = 2`) with **Reinhard** tone mapping and exposure `pow(0.68, 5)`. It uses a **PointLight** shadow with Three.js default bias — not a directional sun. For outdoor sun contact shadows we align with the same principles plus directional shadow tutorials: tight orthographic frustum, `PCFSoftShadowMap`, small bias, moderate normal bias.
+
+| Aspect | `webgl_lights_physical` | Our standalone weather | Gap (before → after) |
+|--------|-------------------------|------------------------|----------------------|
+| Light model | Physical units (lumens/lux), decay 2 | Elevation-based sun + ambient (`lightUtils.ts`); point/spot support `power`/`decay` | Unitless sun — intentional for art direction |
+| Shadow technique | Single PointLight shadow map | CSM cascade lights (intensity 0) + custom shader | CSM needed for large scenes; sharper bias tuning added |
+| Map resolution | Default (512) | Weather tier: 512–2048 (`weatherGpuUtils`) | Tier-capped for GPU thermal limits — unchanged |
+| Bias / normalBias | Defaults (0) on point light | CSM shader + depth pass constants in `physicalShadowSettings.ts` | Was `-0.003` / `0.02` depth bias → **`-0.0025` / `0.005`** |
+| Shadow camera frustum | Small indoor scene (~20 m) | Was loose multipliers → **`computeTightShadowFrustum`** at ≤30 m scale |
+| Material roughness | 0.5–0.8 MeshStandard | GLTF import defaults + Material panel | Per-asset |
+| Exposure / tone mapping | Reinhard, exposure ~0.15 | ACES Filmic + weather/HDR exposure | Different look — ACES kept for HDR pipeline |
+| Shadow radius / softness | Implicit PCF | Was `radius=3` sun, CSM `radius=2` → **`radius=1` standard, `0` CSM** |
+
+### When to use standard vs CSM shadows
+
+| Mode | Use when | Shadow authority |
+|------|----------|------------------|
+| **Standard** (no standalone weather) | Single product shots, cars, interiors, Lighting panel shadow map slider | Sun `DirectionalLight.castShadow` + `updateShadowCameraBounds` |
+| **CSM** (standalone weather on) | Large outdoor scenes, moving camera, sun low on horizon | `CSMShadowSystem` cascade lights; sun light illuminates only |
+| **Streets GL overlay** | Full map atmosphere | Streets GL internal shadows; Three.js sun hidden |
+
+GPU thermal tiers (`weatherQuality`: low/medium/high/ultra) still cap CSM resolution and pixel ratio — see [`weather-system.md`](weather-system.md).
+
+### Physical lighting preset
+
+In the **Lighting** panel → **Shadow Quality**, click **Apply Physical Lighting Preset** to set 2048 map size, adaptive bias, and sharp CSM radius. Implementation: `getPhysicalLightingPresetValues()` in `src/viewer/utils/physicalShadowSettings.ts`.
+
+### Verify crisp contact shadows (car, low sun)
+
+1. Load a car GLB; enable **Standalone Weather**.
+2. Set time of day to ~7:00 or ~17:00 (low sun).
+3. Orbit near wheels/body — contact shadow should hug geometry without a wide gap.
+4. Compare with standard mode (weather off): shadows should be similarly crisp with tighter frustum.
+5. Optional: open [webgl_lights_physical](https://threejs.org/examples/#webgl_lights_physical) side-by-side for indoor point-light reference.
+
 ## Standalone Weather (offline sky + clouds)
 
 Enable **Standalone Weather** in the Weather panel (`WeatherPanel.tsx`) when you
