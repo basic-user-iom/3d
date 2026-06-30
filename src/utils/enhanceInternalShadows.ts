@@ -278,19 +278,14 @@ function patchInteriorCavityShader(
 }
 
 function tagLightingZone(mesh: THREE.Mesh): void {
-  // Meshes must remain on default layer 0 — camera only enables layer 0.
-  // Interior layer is additive metadata for future selective filtering.
-  mesh.layers.enable(EXTERIOR_RENDER_LAYER)
+  // Imported meshes must stay on default layer 0 — camera only enables layer 0.
+  mesh.layers.set(EXTERIOR_RENDER_LAYER)
 
   if (mesh.userData.lightingZone) {
-    if (mesh.userData.lightingZone === 'interior') {
-      mesh.layers.enable(INTERIOR_RENDER_LAYER)
-    }
     return
   }
   if (mesh.userData.interior || mesh.userData.isInterior || isLikelyInteriorMesh(mesh)) {
     mesh.userData.lightingZone = 'interior'
-    mesh.layers.enable(INTERIOR_RENDER_LAYER)
   } else if (
     mesh.userData.exterior ||
     mesh.userData.isExterior ||
@@ -405,17 +400,22 @@ export function logImportedMeshNames(scene: THREE.Object3D): string[] {
 /** Force all imported model meshes visible — interior geometry is never hidden. */
 export function ensureImportedMeshesVisible(scene: THREE.Object3D): number {
   let restored = 0
+  const restoredNames: string[] = []
   scene.traverse((obj) => {
     if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
       return
     }
+    const label = obj.name || '(unnamed)'
     if (!obj.visible) {
+      console.log(`[enhanceInternalShadows] Restoring visible=true on hidden mesh: ${label}`)
       obj.visible = true
+      restoredNames.push(label)
       restored++
     }
-    // Fix stale layer masks from earlier builds that used layers.set(1) (invisible to camera)
-    if (!obj.layers.isEnabled(EXTERIOR_RENDER_LAYER)) {
-      obj.layers.enable(EXTERIOR_RENDER_LAYER)
+    // Reset stale layer masks from older builds that used layers.set(1) (invisible to camera)
+    if (obj.layers.mask !== 1 << EXTERIOR_RENDER_LAYER) {
+      console.log(`[enhanceInternalShadows] Resetting render layer to 0 on: ${label} (was mask=${obj.layers.mask})`)
+      obj.layers.set(EXTERIOR_RENDER_LAYER)
       restored++
     }
     const rawMaterial = obj.material
@@ -431,23 +431,42 @@ export function ensureImportedMeshesVisible(scene: THREE.Object3D): number {
     delete obj.userData.preHideVisible
     delete obj.userData.wasInteriorHidden
   })
+  if (restoredNames.length > 0) {
+    console.log(
+      `[enhanceInternalShadows] Restored visibility on ${restoredNames.length} mesh(es):`,
+      restoredNames.slice(0, 80)
+    )
+  }
   return restored
 }
 
 /** Log any imported meshes still hidden after enhancement (should be none). */
 export function auditHiddenImportedMeshes(scene: THREE.Object3D): string[] {
   const hidden: string[] = []
+  const modelBBox = computeImportedModelBBox(scene)
   scene.traverse((obj) => {
     if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
       return
     }
+    const label = obj.name || '(unnamed)'
+    const isInterior =
+      obj.userData.isInteriorCavity === true ||
+      isLikelyInteriorMesh(obj) ||
+      isInteriorCandidate(obj, modelBBox)
     if (!obj.visible) {
-      hidden.push(obj.name || '(unnamed)')
+      hidden.push(`${label}${isInterior ? ' [interior]' : ''}: visible=false`)
       return
     }
-    if (!obj.layers.isEnabled(EXTERIOR_RENDER_LAYER)) {
-      hidden.push(`${obj.name || '(unnamed)'} [off layer 0]`)
+    if (obj.layers.mask !== 1 << EXTERIOR_RENDER_LAYER) {
+      hidden.push(`${label}${isInterior ? ' [interior]' : ''}: layerMask=${obj.layers.mask}`)
     }
+    const rawMaterial = obj.material
+    const materials = Array.isArray(rawMaterial) ? rawMaterial : rawMaterial ? [rawMaterial] : []
+    materials.forEach((mat) => {
+      if (mat.visible === false) {
+        hidden.push(`${label}${isInterior ? ' [interior]' : ''}: material.visible=false`)
+      }
+    })
   })
   if (hidden.length > 0) {
     console.warn(
