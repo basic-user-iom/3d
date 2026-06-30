@@ -5,15 +5,15 @@ export const EXTERIOR_RENDER_LAYER = 0
 export const INTERIOR_RENDER_LAYER = 1
 
 /** Reduce HDR/ambient fill on recessed interior geometry visible through body gaps. */
-export const CAVITY_ENV_MAP_DIM_FACTOR = 0.05
-export const CAVITY_COLOR_DIM_FACTOR = 0.2
-export const CAVITY_BRIGHT_COLOR_DIM_FACTOR = 0.15
+export const CAVITY_ENV_MAP_DIM_FACTOR = 0.12
+export const CAVITY_COLOR_DIM_FACTOR = 0.4
+export const CAVITY_BRIGHT_COLOR_DIM_FACTOR = 0.35
 export const CAVITY_EMISSIVE_DIM_FACTOR = 0
 export const CAVITY_METALNESS_DIM_FACTOR = 0.35
 export const CAVITY_ROUGHNESS_BOOST = 0.25
 export const BRIGHT_ALBEDO_THRESHOLD = 0.7
 /** Fragment shader multiplier for interior cavity materials (onBeforeCompile). */
-export const CAVITY_SHADER_COLOR_MUL = 0.2
+export const CAVITY_SHADER_COLOR_MUL = 0.5
 
 /** Strong interior-only keywords — safe for dimming when not exterior. */
 const INTERIOR_KEYWORDS = [
@@ -278,17 +278,19 @@ function patchInteriorCavityShader(
 }
 
 function tagLightingZone(mesh: THREE.Mesh): void {
+  // Meshes must remain on default layer 0 — camera only enables layer 0.
+  // Interior layer is additive metadata for future selective filtering.
+  mesh.layers.enable(EXTERIOR_RENDER_LAYER)
+
   if (mesh.userData.lightingZone) {
     if (mesh.userData.lightingZone === 'interior') {
-      mesh.layers.set(INTERIOR_RENDER_LAYER)
-    } else if (mesh.userData.lightingZone === 'exterior') {
-      mesh.layers.set(EXTERIOR_RENDER_LAYER)
+      mesh.layers.enable(INTERIOR_RENDER_LAYER)
     }
     return
   }
   if (mesh.userData.interior || mesh.userData.isInterior || isLikelyInteriorMesh(mesh)) {
     mesh.userData.lightingZone = 'interior'
-    mesh.layers.set(INTERIOR_RENDER_LAYER)
+    mesh.layers.enable(INTERIOR_RENDER_LAYER)
   } else if (
     mesh.userData.exterior ||
     mesh.userData.isExterior ||
@@ -296,7 +298,6 @@ function tagLightingZone(mesh: THREE.Mesh): void {
     isLikelyExteriorBodyPanel(mesh)
   ) {
     mesh.userData.lightingZone = 'exterior'
-    mesh.layers.set(EXTERIOR_RENDER_LAYER)
   }
 }
 
@@ -412,11 +413,52 @@ export function ensureImportedMeshesVisible(scene: THREE.Object3D): number {
       obj.visible = true
       restored++
     }
+    // Fix stale layer masks from earlier builds that used layers.set(1) (invisible to camera)
+    if (!obj.layers.isEnabled(EXTERIOR_RENDER_LAYER)) {
+      obj.layers.enable(EXTERIOR_RENDER_LAYER)
+      restored++
+    }
+    const rawMaterial = obj.material
+    const materials = Array.isArray(rawMaterial) ? rawMaterial : rawMaterial ? [rawMaterial] : []
+    materials.forEach((mat) => {
+      if (mat.visible === false) {
+        mat.visible = true
+        mat.needsUpdate = true
+        restored++
+      }
+    })
     delete obj.userData.interiorHiddenByViewer
     delete obj.userData.preHideVisible
     delete obj.userData.wasInteriorHidden
   })
   return restored
+}
+
+/** Log any imported meshes still hidden after enhancement (should be none). */
+export function auditHiddenImportedMeshes(scene: THREE.Object3D): string[] {
+  const hidden: string[] = []
+  scene.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
+      return
+    }
+    if (!obj.visible) {
+      hidden.push(obj.name || '(unnamed)')
+      return
+    }
+    if (!obj.layers.isEnabled(EXTERIOR_RENDER_LAYER)) {
+      hidden.push(`${obj.name || '(unnamed)'} [off layer 0]`)
+    }
+  })
+  if (hidden.length > 0) {
+    console.warn(
+      `[enhanceInternalShadows] ${hidden.length} imported mesh(es) still not camera-visible:`,
+      hidden.slice(0, 40),
+      hidden.length > 40 ? { more: hidden.length - 40 } : undefined
+    )
+  } else {
+    console.log('[enhanceInternalShadows] Visibility audit: all imported meshes camera-visible')
+  }
+  return hidden
 }
 
 function restoreExteriorVisibility(scene: THREE.Object3D, result: InternalShadowEnhancementResult): void {
@@ -486,6 +528,10 @@ export function applyInteriorCavityDimming(scene: THREE.Object3D, darken: boolea
       }
 
       if (darken) {
+        const aggressive =
+          obj.userData.lightingZone === 'interior' ||
+          getMeshAverageAlbedo(obj) > BRIGHT_ALBEDO_THRESHOLD ||
+          !isLikelyInteriorMesh(obj)
         const before = mat.userData.cavityDimApplied
         applyCavityDimming(mat, {
           meshesEnhanced: 0,
@@ -495,7 +541,7 @@ export function applyInteriorCavityDimming(scene: THREE.Object3D, darken: boolea
           exteriorPanelsFrontSided: 0,
           fixesApplied: [],
           errors: []
-        }, false, true)
+        }, false, aggressive)
         if (!before) changed++
       } else if (restoreCavityDimming(mat)) {
         changed++
@@ -785,6 +831,8 @@ export function enhanceInternalShadows(
         dimmed: result.cavityMeshesDimmed
       })
     }
+
+    auditHiddenImportedMeshes(scene)
   } catch (error) {
     result.errors.push(`Enhancement failed: ${error}`)
     console.error('[enhanceInternalShadows] Error:', error)

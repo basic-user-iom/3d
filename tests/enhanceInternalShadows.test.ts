@@ -9,11 +9,14 @@ import {
   enhanceInternalShadows,
   applyInteriorCavityDimming,
   ensureImportedMeshesVisible,
+  auditHiddenImportedMeshes,
   CAVITY_ENV_MAP_DIM_FACTOR,
   CAVITY_COLOR_DIM_FACTOR,
   CAVITY_BRIGHT_COLOR_DIM_FACTOR,
+  CAVITY_SHADER_COLOR_MUL,
   BRIGHT_ALBEDO_THRESHOLD,
-  INTERIOR_RENDER_LAYER
+  INTERIOR_RENDER_LAYER,
+  EXTERIOR_RENDER_LAYER
 } from '../src/utils/enhanceInternalShadows'
 import {
   shouldAutoEnableCavityAo,
@@ -61,16 +64,17 @@ describe('enhanceInternalShadows', () => {
     expect(isLikelyInteriorMesh(mesh)).toBe(true)
   })
 
-  it('tags lightingZone and interior render layer', () => {
+  it('tags lightingZone and keeps default render layer for camera', () => {
     mesh.name = 'engine_block'
     const scene = new THREE.Scene()
     scene.add(mesh)
     enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(mesh.userData.lightingZone).toBe('interior')
-    expect(mesh.layers.mask).toBe(1 << INTERIOR_RENDER_LAYER)
+    expect(mesh.layers.isEnabled(EXTERIOR_RENDER_LAYER)).toBe(true)
+    expect(mesh.layers.isEnabled(INTERIOR_RENDER_LAYER)).toBe(true)
   })
 
-  it('dims envMapIntensity and color on interior meshes', () => {
+  it('dims envMapIntensity and color on interior meshes — visible dark grey not black', () => {
     mesh.name = 'engine_block'
     const mat = mesh.material as THREE.MeshStandardMaterial
     mat.envMapIntensity = 2.0
@@ -84,6 +88,8 @@ describe('enhanceInternalShadows', () => {
     expect(result.cavityMeshesDimmed).toBe(1)
     expect(mat.envMapIntensity).toBeCloseTo(2.0 * CAVITY_ENV_MAP_DIM_FACTOR)
     expect(mat.color.r).toBeCloseTo(0.5 * CAVITY_BRIGHT_COLOR_DIM_FACTOR)
+    // Combined material + shader dim should stay above near-black
+    expect(mat.color.r * CAVITY_SHADER_COLOR_MUL).toBeGreaterThan(0.05)
     expect(mat.emissiveIntensity).toBe(0)
     expect(mat.userData.cavityDimApplied).toBe(true)
     expect(mat.userData.cavityShaderPatched).toBe(true)
@@ -216,6 +222,28 @@ describe('enhanceInternalShadows', () => {
     scene.add(mesh)
     enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(mesh.visible).toBe(true)
+  })
+
+  it('restores stale layer-1-only masks from earlier builds', () => {
+    mesh.name = 'engine_block'
+    mesh.layers.set(INTERIOR_RENDER_LAYER)
+    expect(mesh.layers.isEnabled(EXTERIOR_RENDER_LAYER)).toBe(false)
+
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+
+    ensureImportedMeshesVisible(scene)
+    expect(mesh.layers.isEnabled(EXTERIOR_RENDER_LAYER)).toBe(true)
+    expect(mesh.visible).toBe(true)
+  })
+
+  it('auditHiddenImportedMeshes reports none after enhance', () => {
+    mesh.name = 'engine_block'
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+    enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
+    const hidden = auditHiddenImportedMeshes(scene)
+    expect(hidden).toHaveLength(0)
   })
 
   it('restores previously hidden interior meshes on enhance run', () => {
