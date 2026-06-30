@@ -2368,7 +2368,7 @@ export function useViewer() {
               shadowFixedCount++
             }
             // Ensure mesh is visible
-            if (!child.visible && !child.userData.interiorHiddenByViewer) {
+            if (!child.visible) {
               child.visible = true
             }
             
@@ -2851,7 +2851,7 @@ export function useViewer() {
         }
         
         // Ensure mesh is visible (shadows don't work on invisible objects)
-        if (!child.visible && !child.userData.interiorHiddenByViewer) {
+        if (!child.visible) {
           child.visible = true
         }
         
@@ -3357,7 +3357,7 @@ export function useViewer() {
               child.receiveShadow = true
               shadowFixedCount++
             }
-            if (!child.visible && !child.userData.interiorHiddenByViewer) {
+            if (!child.visible) {
               child.visible = true
             }
             if (child.castShadow) shadowCastingCount++
