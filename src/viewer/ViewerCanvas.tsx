@@ -5778,17 +5778,19 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
     }
     
-  const useHdrGroundShadowCatcher = shouldUseHdrGroundShadowCatcher({
-    hdrEnabled: store.hdrEnabled,
-    hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
-    shadowsEnabled,
-    showShadowPlane
-  })
-  const effectiveShowShadowPlane = effectiveShadowPlaneVisible(showShadowPlane, {
+  const hdrGroundShadowInput = {
     hdrEnabled: store.hdrEnabled,
     hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
     shadowsEnabled
-  })
+  }
+  const useHdrGroundShadowCatcher = shouldUseHdrGroundShadowCatcher(
+    hdrGroundShadowInput,
+    showShadowPlane
+  )
+  const effectiveShowShadowPlane = effectiveShadowPlaneVisible(
+    showShadowPlane,
+    hdrGroundShadowInput
+  )
 
     // Update shadow plane visibility
     scene.traverse((obj) => {

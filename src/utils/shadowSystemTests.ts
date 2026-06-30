@@ -248,20 +248,21 @@ export function runShadowSystemTests(
         : '❌ Shadow plane should not cast shadows'
     })
 
-    // Test shadow plane visibility (HDR shadow catcher auto-shows plane for ground projection or user toggle)
+    // Test shadow plane visibility (HDR + shadows auto-shows plane or user toggle)
     const store = useAppStore.getState()
     const shadowPlaneShouldBeVisible = effectiveShadowPlaneVisible(store.showShadowPlane, {
       hdrEnabled: store.hdrEnabled,
       hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
-      shadowsEnabled: store.shadowsEnabled,
-      showShadowPlane: store.showShadowPlane
+      shadowsEnabled: store.shadowsEnabled
     })
     let visibilityReason = ''
     if (shadowPlaneShouldBeVisible && store.hdrEnabled && store.shadowsEnabled) {
       if (store.hdrGroundProjectionEnabled) {
         visibilityReason = 'HDR ground projection uses shadow catcher overlay'
-      } else if (store.showShadowPlane) {
-        visibilityReason = 'standard HDR uses shadow catcher when shadow plane is on'
+      } else if (!store.showShadowPlane) {
+        visibilityReason = 'HDR + shadows auto-shows shadow catcher on default grid'
+      } else {
+        visibilityReason = 'user shadow plane toggle on under HDR'
       }
     }
 
