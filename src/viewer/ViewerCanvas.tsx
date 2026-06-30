@@ -86,6 +86,7 @@ import {
   applyHdrShadowContrastToMaterials,
   computeHdrAmbientIntensity
 } from '../utils/lightProbeUtils'
+import { wakeViewerRender } from './utils/wakeViewerRender'
 
 interface ViewerCanvasProps {
   onViewerReady?: (viewer: ViewerInstance) => void
@@ -5927,6 +5928,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         obj.material.needsUpdate = true
       }
     })
+
+    wakeViewerRender(viewerRef.current)
   }, [shadowsEnabled, shadowIntensity, shadowPlaneTransparent, shadowBias, showShadowPlane, shadowMapSize, useAdaptiveShadowSettings, hdrEnabled, hdrIntensity, hdrGroundProjectionEnabled])
   
   // Effect to update shadow map size and bias settings when they change
@@ -7827,11 +7830,30 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             light.visible = true
             light.intensity = sunIntensity
             light.color.set(sunColor)
-            light.castShadow = true
+            const storeForSun = useAppStore.getState()
+            const csmActiveForSun = viewerRef.current?.csmShadowSystem?.isEnabled() ?? false
+            const sunLightingMode = resolveLightingMode({
+              enableStandaloneWeather: storeForSun.enableStandaloneWeather,
+              streetsGLIframeOverlay: storeForSun.streetsGLIframeOverlay,
+              pathTracerActive: storeForSun.pathTracerActive,
+              hdrEnabled: storeForSun.hdrEnabled,
+              hdrGroundProjectionEnabled: storeForSun.hdrGroundProjectionEnabled,
+              csmEnabled: csmActiveForSun
+            })
+            light.castShadow = resolveDirectionalCastShadow({
+              mode: sunLightingMode,
+              csmEnabled: csmActiveForSun,
+              isSun: true,
+              enabled: true,
+              castShadowConfig: true,
+              shadowsEnabled: storeForSun.shadowsEnabled
+            })
           }
         })
       }
     }
+
+    wakeViewerRender(viewerRef.current)
 
     // ===== COMPREHENSIVE CONFLICT DETECTION & RESOLUTION =====
     const conflicts: string[] = []
@@ -8632,6 +8654,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         }
       }
     }
+
+    wakeViewerRender(viewerRef.current)
   }, [ambientIntensity, hdrEnabled, hdrIntensity, shadowsEnabled])
 
   // Effect to manage particle systems and water
@@ -9457,14 +9481,32 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         }
       })
       
-      // Re-enable standard Three.js sun light shadows
+      // Re-enable standard Three.js sun shadow maps when appropriate
       if (viewerRef.current.directionalLights) {
+        const storeAfterWeather = useAppStore.getState()
+        const sunLightingMode = resolveLightingMode({
+          enableStandaloneWeather: false,
+          streetsGLIframeOverlay: storeAfterWeather.streetsGLIframeOverlay,
+          pathTracerActive: storeAfterWeather.pathTracerActive,
+          hdrEnabled: storeAfterWeather.hdrEnabled,
+          hdrGroundProjectionEnabled: storeAfterWeather.hdrGroundProjectionEnabled,
+          csmEnabled: false
+        })
         viewerRef.current.directionalLights.forEach((light) => {
           if (light.userData.isSun && light instanceof THREE.DirectionalLight) {
-            light.castShadow = true // Restore standard shadows
+            light.castShadow = resolveDirectionalCastShadow({
+              mode: sunLightingMode,
+              csmEnabled: false,
+              isSun: true,
+              enabled: true,
+              castShadowConfig: true,
+              shadowsEnabled: storeAfterWeather.shadowsEnabled
+            })
           }
         })
       }
+
+      wakeViewerRender(viewerRef.current)
       
       console.log('[ViewerCanvas] ✅ Standalone weather system destroyed')
     }
