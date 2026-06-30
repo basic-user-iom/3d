@@ -6,8 +6,10 @@ import {
   applyAdaptiveDirectionalShadowBias,
   applyPhysicalDirectionalShadowDefaults,
   applyPhysicalOmnidirectionalShadowDefaults,
+  applyPhysicalSpotShadowDefaults,
   computeOmnidirectionalShadowFar,
   computePointLightShadowFar,
+  computeSpotLightShadowFar,
   applyPointLightShadowIntensity,
   computeTightShadowFrustum,
   PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
@@ -21,6 +23,93 @@ export interface ShadowManagerConfig {
   camera: THREE.Camera
   renderer: THREE.WebGLRenderer
   parent: THREE.Object3D
+}
+
+function shouldSkipShadowBoundsObject(obj: THREE.Object3D): boolean {
+  return !!(
+    obj.userData.isShadowPlane ||
+    obj.userData.isGridHelper ||
+    obj.userData.isAxesHelper ||
+    obj.userData.isLightGizmo ||
+    obj.userData.isLightHelper ||
+    obj.userData.isGroundedSkybox ||
+    obj.userData.isDynamicSky ||
+    obj.userData.isSun ||
+    obj.userData.isMoon
+  )
+}
+
+function meshContributesToShadowBounds(mesh: THREE.Mesh): boolean {
+  return !!(mesh.castShadow || mesh.userData.isImportedModel || mesh.userData.isModel)
+}
+
+/**
+ * Bounding box of imported / shadow-casting scene content (excludes helpers and HDR sky).
+ */
+export function collectSceneShadowBounds(scene: THREE.Scene): THREE.Box3 | null {
+  const box = new THREE.Box3()
+  let hasObjects = false
+
+  scene.traverse((obj) => {
+    if (shouldSkipShadowBoundsObject(obj)) return
+
+    let objBox: THREE.Box3 | null = null
+
+    if (obj instanceof THREE.Mesh) {
+      if (meshContributesToShadowBounds(obj)) {
+        objBox = new THREE.Box3().setFromObject(obj)
+      }
+    } else if (obj instanceof THREE.Group || obj instanceof THREE.Object3D) {
+      let groupHasMeshes = false
+      const groupBox = new THREE.Box3()
+
+      obj.traverse((child) => {
+        if (child instanceof THREE.Mesh && meshContributesToShadowBounds(child)) {
+          const childBox = new THREE.Box3().setFromObject(child)
+          if (!childBox.isEmpty()) {
+            if (!groupHasMeshes) {
+              groupBox.copy(childBox)
+              groupHasMeshes = true
+            } else {
+              groupBox.union(childBox)
+            }
+          }
+        }
+      })
+
+      if (groupHasMeshes && !groupBox.isEmpty()) {
+        objBox = groupBox
+      }
+    }
+
+    if (objBox && !objBox.isEmpty()) {
+      if (!hasObjects) {
+        box.copy(objBox)
+        hasObjects = true
+      } else {
+        box.union(objBox)
+      }
+    }
+  })
+
+  return hasObjects ? box : null
+}
+
+/** Center of shadow-relevant scene content, or null when the scene has no model. */
+export function getSceneShadowBoundsCenter(scene: THREE.Scene): THREE.Vector3 | null {
+  const box = collectSceneShadowBounds(scene)
+  return box ? box.getCenter(new THREE.Vector3()) : null
+}
+
+export function aimSpotLightAtSceneCenter(
+  spot: THREE.SpotLight,
+  scene: THREE.Scene
+): THREE.Vector3 | null {
+  const center = getSceneShadowBoundsCenter(scene)
+  if (!center) return null
+  spot.target.position.copy(center)
+  spot.target.updateMatrixWorld(true)
+  return center
 }
 
 /**
@@ -179,17 +268,7 @@ export function updateShadowCameraBounds(
 
   scene.traverse((obj) => {
     // Skip helpers, gizmos, and system objects
-    if (
-      obj.userData.isShadowPlane ||
-      obj.userData.isGridHelper ||
-      obj.userData.isAxesHelper ||
-      obj.userData.isLightGizmo ||
-      obj.userData.isLightHelper ||
-      obj.userData.isGroundedSkybox ||
-      obj.userData.isDynamicSky ||
-      obj.userData.isSun ||
-      obj.userData.isMoon
-    ) {
+    if (shouldSkipShadowBoundsObject(obj)) {
       return
     }
 
@@ -214,18 +293,14 @@ export function updateShadowCameraBounds(
       const groupBox = new THREE.Box3()
 
       obj.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          // Include ALL meshes in imported models (not just shadow-casting ones)
-          // This ensures shadow camera bounds cover entire model including interior
-          if (child.castShadow || child.userData.isImportedModel || child.userData.isModel) {
-            const childBox = new THREE.Box3().setFromObject(child)
-            if (!childBox.isEmpty()) {
-              if (!groupHasMeshes) {
-                groupBox.copy(childBox)
-                groupHasMeshes = true
-              } else {
-                groupBox.union(childBox)
-              }
+        if (child instanceof THREE.Mesh && meshContributesToShadowBounds(child)) {
+          const childBox = new THREE.Box3().setFromObject(child)
+          if (!childBox.isEmpty()) {
+            if (!groupHasMeshes) {
+              groupBox.copy(childBox)
+              groupHasMeshes = true
+            } else {
+              groupBox.union(childBox)
             }
           }
         }
@@ -296,20 +371,27 @@ export function updateShadowCameraBounds(
       light.shadow.camera.position.copy(shadowCameraPosition)
       light.shadow.camera.lookAt(center)
       light.shadow.camera.updateProjectionMatrix()
-    } else if (light instanceof THREE.SpotLight || light instanceof THREE.PointLight) {
-      const farPlane =
-        light instanceof THREE.PointLight
-          ? computePointLightShadowFar(light.position, targetBox)
-          : computeOmnidirectionalShadowFar(light.position, targetBox)
+    } else if (light instanceof THREE.SpotLight) {
+      aimSpotLightAtSceneCenter(light, scene)
+      const farPlane = computeSpotLightShadowFar(
+        light.position,
+        light.target.position,
+        targetBox
+      )
+      if (light.shadow.camera instanceof THREE.PerspectiveCamera) {
+        light.shadow.camera.near = Math.max(
+          light.position.distanceTo(light.target.position) * 0.01,
+          0.01
+        )
+        light.shadow.camera.far = farPlane
+        light.shadow.camera.updateProjectionMatrix()
+      }
+    } else if (light instanceof THREE.PointLight) {
+      const farPlane = computePointLightShadowFar(light.position, targetBox)
 
       if (light.shadow.camera instanceof THREE.PerspectiveCamera) {
         light.shadow.camera.far = farPlane
         light.shadow.camera.updateProjectionMatrix()
-      }
-
-      if (light instanceof THREE.SpotLight) {
-        light.target.position.copy(center)
-        light.target.updateMatrixWorld()
       }
     }
 
@@ -320,8 +402,10 @@ export function updateShadowCameraBounds(
       if (light instanceof THREE.DirectionalLight) {
         applyAdaptiveDirectionalShadowBias(light, maxDim, minDim)
         light.shadow.radius = PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
-      } else if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
+      } else if (light instanceof THREE.PointLight) {
         applyPhysicalOmnidirectionalShadowDefaults(light)
+      } else if (light instanceof THREE.SpotLight) {
+        applyPhysicalSpotShadowDefaults(light)
       }
     } else {
       // Use manual override values from store
@@ -360,8 +444,10 @@ export function updateShadowCameraBounds(
     if (useAdaptiveShadowSettings) {
       if (light instanceof THREE.DirectionalLight) {
         applyPhysicalDirectionalShadowDefaults(light)
-      } else if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
+      } else if (light instanceof THREE.PointLight) {
         applyPhysicalOmnidirectionalShadowDefaults(light)
+      } else if (light instanceof THREE.SpotLight) {
+        applyPhysicalSpotShadowDefaults(light)
       }
     } else {
       light.shadow.bias = useAppStore.getState().shadowBiasOverride

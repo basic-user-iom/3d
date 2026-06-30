@@ -6,8 +6,11 @@ import {
   PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS,
   PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
   PHYSICAL_OMNI_SHADOW_FAR_INITIAL,
-  applyPhysicalOmnidirectionalShadowDefaults
+  DEFAULT_SPOT_SHADOW_CONVERSION_ANGLE,
+  applyPhysicalOmnidirectionalShadowDefaults,
+  applyPhysicalSpotShadowDefaults
 } from './physicalShadowSettings'
+import { getSceneShadowBoundsCenter } from './shadowManager'
 
 /**
  * Converts time of day (0-24 hours) and north offset (degrees) to sun elevation and azimuth
@@ -264,25 +267,27 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
         new THREE.Color(color),
         intensity,
         config.distance ?? 100,
-        config.angle ?? Math.PI / 6, // 30 degrees default
+        config.angle ?? DEFAULT_SPOT_SHADOW_CONVERSION_ANGLE,
         config.penumbra ?? 0.2, // Soft edge
         config.decay ?? 2
       )
       spotLight.position.set(pos.x ?? 0, pos.y ?? 0, pos.z ?? 0)
 
-      // Set target if provided
       if (config.target) {
         spotLight.target.position.set(
           config.target.x ?? 0,
           config.target.y ?? 0,
           config.target.z ?? 0
         )
-        scene.add(spotLight.target)
       } else {
-        // Default target straight down
-        spotLight.target.position.set(pos.x ?? 0, (pos.y ?? 0) - 10, pos.z ?? 0)
-        scene.add(spotLight.target)
+        const sceneCenter = getSceneShadowBoundsCenter(scene)
+        if (sceneCenter) {
+          spotLight.target.position.copy(sceneCenter)
+        } else {
+          spotLight.target.position.set(pos.x ?? 0, (pos.y ?? 0) - 10, pos.z ?? 0)
+        }
       }
+      scene.add(spotLight.target)
 
       if (config.power !== undefined) {
         spotLight.power = config.power
@@ -412,8 +417,7 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
       } else if (light instanceof THREE.SpotLight) {
         light.shadow.camera.near = 0.001
         light.shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
-        light.shadow.camera.fov = (config.angle ?? Math.PI / 6) * (180 / Math.PI)
-        applyPhysicalOmnidirectionalShadowDefaults(light)
+        applyPhysicalSpotShadowDefaults(light)
       }
     }
   }

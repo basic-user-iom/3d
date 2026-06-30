@@ -33,6 +33,9 @@ export const PHYSICAL_OMNI_SHADOW_RADIUS = 0
 /** Initial far plane before scene bounds are known (decoupled from light attenuation distance). */
 export const PHYSICAL_OMNI_SHADOW_FAR_INITIAL = 5000
 
+/** Default spot cone half-angle when converting a point light for contact shadows (~45°). */
+export const DEFAULT_SPOT_SHADOW_CONVERSION_ANGLE = Math.PI / 4
+
 /**
  * CSM shader bias constants (scaled by cascade ortho extent in StreetsGLCSM).
  * Slightly tighter than legacy Streets GL values for sharper contact shadows.
@@ -240,13 +243,58 @@ export function applyPointLightShadowIntensity(
   light.shadow.intensity = computePointLightShadowIntensity(lightIntensity, diminishForHdrSun)
 }
 
-export function applyPhysicalOmnidirectionalShadowDefaults(
-  light: THREE.PointLight | THREE.SpotLight
-): void {
+export function applyPhysicalOmnidirectionalShadowDefaults(light: THREE.PointLight): void {
   if (!light.shadow) return
   light.shadow.bias = PHYSICAL_OMNI_SHADOW_BIAS
   light.shadow.normalBias = PHYSICAL_OMNI_SHADOW_NORMAL_BIAS
   light.shadow.radius = PHYSICAL_OMNI_SHADOW_RADIUS
+}
+
+/** Spot shadows benefit from slight directional-style bias for ground contact silhouettes. */
+export function applyPhysicalSpotShadowDefaults(light: THREE.SpotLight): void {
+  if (!light.shadow) return
+  light.shadow.bias = PHYSICAL_DIRECTIONAL_SHADOW_BIAS
+  light.shadow.normalBias = 0.005
+  light.shadow.radius = 0
+  light.shadow.focus = 1
+}
+
+/**
+ * Spot shadow far: reach past the scene bbox along the light→target axis.
+ * Unlike omnidirectional far, this stays tight so the depth map resolves the model.
+ */
+export function computeSpotLightShadowFar(
+  lightPosition: THREE.Vector3,
+  targetPosition: THREE.Vector3,
+  sceneBox: THREE.Box3,
+  margin = 0.15
+): number {
+  if (sceneBox.isEmpty()) return PHYSICAL_OMNI_SHADOW_FAR_INITIAL
+
+  const center = sceneBox.getCenter(new THREE.Vector3())
+  const size = sceneBox.getSize(new THREE.Vector3())
+  const maxDim = Math.max(size.x, size.y, size.z)
+  const halfDiag = size.length() * 0.5
+  const lightToTarget = Math.max(lightPosition.distanceTo(targetPosition), 0.01)
+
+  let maxDist = lightPosition.distanceTo(center) + halfDiag
+  for (const [sx, sy, sz] of BOX_CORNER_SIGNS) {
+    const corner = center.clone().add(
+      new THREE.Vector3(sx * size.x * 0.5, sy * size.y * 0.5, sz * size.z * 0.5)
+    )
+    maxDist = Math.max(maxDist, lightPosition.distanceTo(corner))
+  }
+
+  return Math.max(
+    maxDist * (1 + margin),
+    lightToTarget + maxDim * 0.75,
+    lightToTarget + 2,
+    5
+  )
+}
+
+export function spotShadowCameraFovDegrees(angleRadians: number, focus = 1): number {
+  return THREE.MathUtils.radToDeg(2 * angleRadians * focus)
 }
 
 export interface PhysicalLightingPresetValues {
