@@ -309,8 +309,8 @@ export function updateShadowCameraBounds(
     const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
 
     if (useAdaptiveShadowSettings) {
-      applyAdaptiveDirectionalShadowBias(light, maxDim, minDim)
       if (light instanceof THREE.DirectionalLight) {
+        applyAdaptiveDirectionalShadowBias(light, maxDim, minDim)
         light.shadow.radius = PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
       }
     } else {
@@ -343,7 +343,9 @@ export function updateShadowCameraBounds(
     // Use adaptive or manual shadow bias
     const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
     if (useAdaptiveShadowSettings) {
-      applyPhysicalDirectionalShadowDefaults(light)
+      if (light instanceof THREE.DirectionalLight) {
+        applyPhysicalDirectionalShadowDefaults(light)
+      }
     } else {
       light.shadow.bias = useAppStore.getState().shadowBiasOverride
       light.shadow.normalBias = useAppStore.getState().shadowNormalBiasOverride

@@ -23,10 +23,19 @@ weather presets, fog, and how they connect to CSM shadows. For shadow-specific t
 │   maps only  │    │                  │    │                     │
 └──────────────┘    └──────────────────┘    └─────────────────────┘
          │                    │                    │
+         │           ┌────────┴────────┐           │
+         │           ▼                 │           │
+         │    ┌──────────────┐         │           │
+         │    │ LightProbe   │         │           │
+         │    │ (HDR SH,     │         │           │
+         │    │  replaces    │         │           │
+         │    │  flat fill)  │         │           │
+         │    └──────────────┘         │           │
          └────────────────────┴────────────────────┘
                               ▼
                     MeshStandardMaterial / Physical
                     + interior cavity dimming
+                    + optional auto RectAreaLight fill
                     + optional SAO (cavityOcclusion)
 ```
 
@@ -109,17 +118,56 @@ The HDR panel lives on the right sidebar:
 - If you want HDR-only lighting, disable all directional lights but leave the
   ambient slider around 0.35–0.5 to keep interiors readable.
 
-### Exterior vs interior (without engine rewrite)
+## Exterior vs interior (without engine rewrite)
 
 | Technique | Status | Notes |
 |-----------|--------|-------|
-| HDR sun + reduced ambient | Implemented | Ambient ×0.15 when `scene.environment` set |
-| Cavity material dimming | Implemented | `enhanceInternalShadows` — envMap ×0.05 on interior meshes |
+| HDR sun + reduced ambient | Implemented | Ambient ×0.15–0.65 when `scene.environment` set |
+| HDR SH light probe (exterior) | **Implemented** | `IndirectLightingSystem` — `LightProbeGenerator.fromCubeRenderTarget` on HDR PMREM; further reduces flat ambient |
+| Cavity material dimming | Implemented | `enhanceInternalShadows` — envMap ×0.12 on interior meshes |
+| Auto interior RectAreaLight fill | **Implemented** | `interiorFillLight.ts` — soft fill when ≥2 interior-tagged meshes, no shadows |
 | `userData.lightingZone` tags | Implemented | `'interior'` / `'exterior'` + render layers 0/1 |
-| Per-zone reflection probes | Future | PMREM box per room (Godot/Witcher-style) |
+| Per-zone LightProbeGrid (Sponza) | Future | Requires three.js `LightProbeGridWebGL` (dev branch); see below |
 | Light portals | Path tracer only | Real-time portals need WebGPU or RT |
-| RectAreaLight interiors | Partial | Supported in Lighting panel; no shadows |
+| RectAreaLight interiors (manual) | Partial | Supported in Lighting panel; no shadows |
 | Selective sun via light layers | **Not in WebGL** | Use material dimming + CSM instead |
+
+### Sponza light probe volume vs our stack
+
+The official [webgl_lightprobes_sponza](https://threejs.org/examples/#webgl_lightprobes_sponza) example (three.js dev) differs from our viewer in several important ways:
+
+| Aspect | Sponza example | Our viewer (v3.18) |
+|--------|----------------|-------------------|
+| Indirect GI | `LightProbeGridWebGL` — 3D grid (~10×7×7 probes), GPU bake with bounce passes | Single global `LightProbe` from HDR equirect (SH diffuse) |
+| Zone blending | Trilinear interpolation between probes as camera moves | **Not available** in r181 — one scene probe only; interiors use cavity dimming + optional auto `RectAreaLight` |
+| Direct sun | `DirectionalLight` intensity ~100, PCF shadows, separate from GI | `isSun` directional + CSM cascades (shadow-only lights at intensity 0) |
+| Sky / env | `Sky` shader dome — no `scene.environment` IBL | HDR equirect on `scene.environment` for specular + split-sum diffuse |
+| Embedded lights | Stripped from GLTF before bake | User lights + sun preserved |
+| Interior darkness | Baked low irradiance in courtyard vs bright exterior probes | `enhanceInternalShadows` + `userData.lightingZone = 'interior'` |
+
+**PMREM env vs light probe:** `scene.environment` (PMREM/equirect) drives **specular** reflections and split-sum **diffuse** on `MeshStandardMaterial`. A `LightProbe` stores **low-frequency diffuse irradiance** (L2 spherical harmonics). Using both is intentional here: the probe replaces flat `AmbientLight` fill with directionally varying diffuse; `scene.environment` keeps glossy reflections. Avoid raising ambient slider when HDR + probe are active.
+
+**Physical lights reference:** Shadow defaults align with [webgl_lights_physical](https://threejs.org/examples/#webgl_lights_physical) via `physicalShadowSettings.ts` — map size 2048, bias −0.0001, normalBias 0.02, PCF radius 1 for legacy sun maps; CSM uses shader bias −0.0025 and radius 0 for crisp cascades. Use the Lighting panel **Physical lighting** preset to apply.
+
+### Gap analysis (port feasibility)
+
+| Technique | Sponza | Our impl | Can we port? |
+|-----------|--------|----------|--------------|
+| SH diffuse probes per room/zone | `LightProbeGrid` bake | Single HDR probe + interior dimming | **Partial** — full grid needs three.js dev / WebGPU bake |
+| Probe blending at boundaries | Grid trilinear interpolation | None (global probe) | **No** on r181 without custom shaders |
+| Direct sun + probe indirect | Yes — sun lights, grid provides GI | Yes — sun/CSM + HDR probe + cavity dim | **Yes** (current) |
+| PMREM env vs light probe | Grid replaces env diffuse; separate sky | Env for specular; probe for ambient replacement | **Yes** with tuned ambient reduction |
+
+### Future work: LightProbeGrid path
+
+When upgrading to three.js with `LightProbeGridWebGL`:
+
+1. After model load, compute model AABB and place a probe grid (similar to Sponza GUI defaults).
+2. Bake with `grid.bake(renderer, scene, { cubemapSize: 32, bounces: 1 })`.
+3. Remove or reduce `scene.environment` diffuse contribution to avoid double-counting.
+4. Expose grid resolution in an advanced Lighting panel section.
+
+Until then, tag interior meshes, enable **Darken interior cavities** (Weather panel), and rely on HDR probe + auto fill light.
 
 **Too bright interior:** tag mesh `userData.lightingZone = 'interior'`, reload model or call `reapplyInteriorCavityEnhancements`, enable SAO (medium+ weather + post-processing).
 
@@ -217,6 +265,10 @@ camera-relative direction-space raymarching (see weather-system guide).
 
 - `src/components/LightingPanel.tsx` – UI hooks for lights/shadows.
 - `src/viewer/utils/lightingContext.ts` – mode enum, conflict detection, shadow guards.
+- `src/viewer/utils/physicalShadowSettings.ts` – webgl_lights_physical shadow defaults.
+- `src/viewer/effects/IndirectLightingSystem.ts` – HDR-derived `LightProbe` (SH diffuse).
+- `src/utils/interiorFillLight.ts` – auto `RectAreaLight` for tagged interiors.
+- `src/utils/lightProbeUtils.ts` – SH scaling and ambient reduction helpers.
 - `src/viewer/effects/CSMShadowSystem.ts` – cascading shadow maps.
 - `src/viewer/effects/HDRSystem.ts` – HDR loading, PMREM generation, ground projection dome.
 - `src/components/PathTracerDemoPanel.tsx` & `src/viewer/pathTracer/PathTracerDemo.ts` – how HDR + lighting feed the progressive renderer.

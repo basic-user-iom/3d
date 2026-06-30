@@ -1569,6 +1569,16 @@ export function useViewer() {
           fixes: enhancementResult.fixesApplied
         })
       }
+
+      const { ensureInteriorFillLight } = await import('../utils/interiorFillLight')
+      const fill = ensureInteriorFillLight(scene, modelScene)
+      if (fill) {
+        console.log('[IndirectLighting] Auto interior RectAreaLight fill added', {
+          intensity: fill.intensity,
+          width: fill.width,
+          height: fill.height
+        })
+      }
     } catch (error) {
       console.warn('[ShadowEnhancement] Failed to enhance internal shadows:', error)
     }
