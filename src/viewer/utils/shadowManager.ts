@@ -5,8 +5,11 @@ import { CSMShadowSystem, CSMConfig } from '../effects/CSMShadowSystem'
 import {
   applyAdaptiveDirectionalShadowBias,
   applyPhysicalDirectionalShadowDefaults,
+  applyPhysicalOmnidirectionalShadowDefaults,
+  computeOmnidirectionalShadowFar,
   computeTightShadowFrustum,
-  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
+  PHYSICAL_OMNI_SHADOW_FAR_INITIAL
 } from './physicalShadowSettings'
 
 export type ShadowSystemType = 'standard' | 'csm' | 'streetsgl'
@@ -292,16 +295,16 @@ export function updateShadowCameraBounds(
       light.shadow.camera.lookAt(center)
       light.shadow.camera.updateProjectionMatrix()
     } else if (light instanceof THREE.SpotLight || light instanceof THREE.PointLight) {
-      // For spot and point lights, adjust far plane
-      const depthSize = size.y > size.z ? size.y : size.z
-      const shadowProjectionMargin = maxDim * 2
-      const farPlane = useVisibleBounds
-        ? Math.max(depthSize * 3 + shadowProjectionMargin, maxDim * 6, 2000)
-        : Math.max(depthSize * 5 + shadowProjectionMargin, maxDim * 10, 5000)
+      const farPlane = computeOmnidirectionalShadowFar(light.position, targetBox)
 
       if (light.shadow.camera instanceof THREE.PerspectiveCamera) {
         light.shadow.camera.far = farPlane
         light.shadow.camera.updateProjectionMatrix()
+      }
+
+      if (light instanceof THREE.SpotLight) {
+        light.target.position.copy(center)
+        light.target.updateMatrixWorld()
       }
     }
 
@@ -312,6 +315,8 @@ export function updateShadowCameraBounds(
       if (light instanceof THREE.DirectionalLight) {
         applyAdaptiveDirectionalShadowBias(light, maxDim, minDim)
         light.shadow.radius = PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+      } else if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
+        applyPhysicalOmnidirectionalShadowDefaults(light)
       }
     } else {
       // Use manual override values from store
@@ -338,6 +343,11 @@ export function updateShadowCameraBounds(
       light.shadow.camera.position.copy(fallbackPosition)
       light.shadow.camera.lookAt(0, 0, 0)
       light.shadow.camera.updateProjectionMatrix()
+    } else if (light instanceof THREE.SpotLight || light instanceof THREE.PointLight) {
+      if (light.shadow.camera instanceof THREE.PerspectiveCamera) {
+        light.shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
+        light.shadow.camera.updateProjectionMatrix()
+      }
     }
 
     // Use adaptive or manual shadow bias
@@ -345,6 +355,8 @@ export function updateShadowCameraBounds(
     if (useAdaptiveShadowSettings) {
       if (light instanceof THREE.DirectionalLight) {
         applyPhysicalDirectionalShadowDefaults(light)
+      } else if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
+        applyPhysicalOmnidirectionalShadowDefaults(light)
       }
     } else {
       light.shadow.bias = useAppStore.getState().shadowBiasOverride
