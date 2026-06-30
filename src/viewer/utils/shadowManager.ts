@@ -7,6 +7,8 @@ import {
   applyPhysicalDirectionalShadowDefaults,
   applyPhysicalOmnidirectionalShadowDefaults,
   computeOmnidirectionalShadowFar,
+  computePointLightShadowFar,
+  applyPointLightShadowIntensity,
   computeTightShadowFrustum,
   PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
   PHYSICAL_OMNI_SHADOW_FAR_INITIAL
@@ -295,7 +297,10 @@ export function updateShadowCameraBounds(
       light.shadow.camera.lookAt(center)
       light.shadow.camera.updateProjectionMatrix()
     } else if (light instanceof THREE.SpotLight || light instanceof THREE.PointLight) {
-      const farPlane = computeOmnidirectionalShadowFar(light.position, targetBox)
+      const farPlane =
+        light instanceof THREE.PointLight
+          ? computePointLightShadowFar(light.position, targetBox)
+          : computeOmnidirectionalShadowFar(light.position, targetBox)
 
       if (light.shadow.camera instanceof THREE.PerspectiveCamera) {
         light.shadow.camera.far = farPlane

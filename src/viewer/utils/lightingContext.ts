@@ -95,7 +95,11 @@ export function resolveDirectionalCastShadow(options: {
   if (!options.enabled) return false
 
   if (options.isSun) {
-    return shouldSunUseLegacyShadowMaps(options.mode, options.csmEnabled) && options.shadowsEnabled
+    return (
+      shouldSunUseLegacyShadowMaps(options.mode, options.csmEnabled) &&
+      options.shadowsEnabled &&
+      options.castShadowConfig
+    )
   }
 
   // Non-sun lights: respect per-light castShadow when CSM is not stealing the sun pass
@@ -104,6 +108,33 @@ export function resolveDirectionalCastShadow(options: {
   }
 
   return options.castShadowConfig && options.shadowsEnabled
+}
+
+/** True when sun/CSM already provides contact shadows and point-light cubes should stay subtle. */
+export function shouldDiminishPointLightShadows(input: {
+  hdrEnabled: boolean
+  shadowsEnabled: boolean
+  sunLightCastShadowConfig: boolean
+  mode: LightingMode
+  csmEnabled: boolean
+}): boolean {
+  if (!input.hdrEnabled || !input.shadowsEnabled || !input.sunLightCastShadowConfig) {
+    return false
+  }
+  if (input.mode === 'streets-gl' || input.mode === 'path-tracer') return false
+  if (input.mode === 'standalone-weather') return input.csmEnabled
+  return input.mode === 'standard'
+}
+
+export function resolvePointLightCastShadow(options: {
+  mode: LightingMode
+  enabled: boolean
+  castShadowConfig: boolean
+  shadowsEnabled: boolean
+}): boolean {
+  if (!options.enabled || !options.shadowsEnabled) return false
+  if (options.mode === 'streets-gl' || options.mode === 'path-tracer') return false
+  return options.castShadowConfig
 }
 
 export function detectLightingConflicts(input: LightingContextInput): LightingConflict[] {
@@ -157,6 +188,20 @@ export function detectLightingConflicts(input: LightingContextInput): LightingCo
       code: 'HDR_SHADOW_CONTRAST',
       message:
         'HDR on with shadows — sun/CSM shadow maps stay active; IBL ambient, probe, and envMapIntensity are reduced for contrast'
+    })
+  }
+
+  if (
+    input.hdrEnabled &&
+    input.shadowsEnabled &&
+    (input.nonSunShadowCastingCount ?? 0) > 0 &&
+    input.sunLightCastShadowConfig
+  ) {
+    conflicts.push({
+      severity: 'info',
+      code: 'HDR_POINT_SHADOW_DIMINISHED',
+      message:
+        'HDR + sun shadows — point-light cube shadows are softened so sun contact shadows stay visible on the ground'
     })
   }
 

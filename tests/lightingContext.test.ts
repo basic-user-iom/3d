@@ -4,7 +4,9 @@ import {
   getShadowAuthority,
   resolveDirectionalCastShadow,
   resolveLightingMode,
+  resolvePointLightCastShadow,
   resolveStreetsGLWeatherExclusion,
+  shouldDiminishPointLightShadows,
   shouldSunUseLegacyShadowMaps,
   shouldUseWeatherShadowMapTiers
 } from '../src/viewer/utils/lightingContext'
@@ -121,6 +123,19 @@ describe('lightingContext', () => {
       ).toBe(true)
     })
 
+    it('sun respects castShadow config in standard mode', () => {
+      expect(
+        resolveDirectionalCastShadow({
+          mode: 'standard',
+          csmEnabled: false,
+          isSun: true,
+          enabled: true,
+          castShadowConfig: false,
+          shadowsEnabled: true
+        })
+      ).toBe(false)
+    })
+
     it('HDR + weather uses CSM — sun legacy maps still suppressed', () => {
       expect(
         resolveDirectionalCastShadow({
@@ -172,6 +187,54 @@ describe('lightingContext', () => {
         shadowsEnabled: true
       })
       expect(conflicts.some((c) => c.code === 'HDR_SHADOW_CONTRAST')).toBe(true)
+    })
+
+    it('info when HDR point shadows are diminished for sun contact shadows', () => {
+      const conflicts = detectLightingConflicts({
+        ...base,
+        hdrEnabled: true,
+        shadowsEnabled: true,
+        sunLightCastShadowConfig: true,
+        nonSunShadowCastingCount: 1
+      })
+      expect(conflicts.some((c) => c.code === 'HDR_POINT_SHADOW_DIMINISHED')).toBe(true)
+    })
+  })
+
+  describe('point light shadow diminish', () => {
+    it('diminishes point shadows when HDR and sun shadows are active', () => {
+      expect(
+        shouldDiminishPointLightShadows({
+          hdrEnabled: true,
+          shadowsEnabled: true,
+          sunLightCastShadowConfig: true,
+          mode: 'standard',
+          csmEnabled: false
+        })
+      ).toBe(true)
+    })
+
+    it('does not diminish without sun shadows', () => {
+      expect(
+        shouldDiminishPointLightShadows({
+          hdrEnabled: true,
+          shadowsEnabled: true,
+          sunLightCastShadowConfig: false,
+          mode: 'standard',
+          csmEnabled: false
+        })
+      ).toBe(false)
+    })
+
+    it('allows point lights to cast when configured', () => {
+      expect(
+        resolvePointLightCastShadow({
+          mode: 'standard',
+          enabled: true,
+          castShadowConfig: true,
+          shadowsEnabled: true
+        })
+      ).toBe(true)
     })
   })
 

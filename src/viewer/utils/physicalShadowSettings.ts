@@ -159,6 +159,9 @@ const BOX_CORNER_SIGNS: ReadonlyArray<readonly [number, number, number]> = [
   [1, 1, 1]
 ]
 
+/** Default ground plane Y for HDR shadow catcher and racetrack scenes */
+export const SHADOW_GROUND_PLANE_Y = 0
+
 /**
  * Shadow range for point/spot lights: farthest scene corner from the light plus margin.
  * Must not use light.distance (attenuation) — that produces a spherical cutoff that reads
@@ -167,7 +170,8 @@ const BOX_CORNER_SIGNS: ReadonlyArray<readonly [number, number, number]> = [
 export function computeOmnidirectionalShadowFar(
   lightPosition: THREE.Vector3,
   sceneBox: THREE.Box3,
-  margin = 0.25
+  margin = 0.25,
+  groundY = SHADOW_GROUND_PLANE_Y
 ): number {
   if (sceneBox.isEmpty()) return PHYSICAL_OMNI_SHADOW_FAR_INITIAL
 
@@ -184,7 +188,73 @@ export function computeOmnidirectionalShadowFar(
     maxDist = Math.max(maxDist, lightPosition.distanceTo(corner))
   }
 
-  return Math.max(maxDist * (1 + margin), maxDim * 2, 50)
+  const cornerFar = Math.max(maxDist * (1 + margin), maxDim * 2, 50)
+
+  // Spherical shadow maps clip at camera.far — if far is shorter than the light-to-ground
+  // distance, flat receivers show a perfect circular cutoff (classic point-light artifact).
+  const heightAboveGround = Math.max(lightPosition.y - groundY, 0.01)
+  let maxHorizReach = 0
+  for (const sx of [-1, 1] as const) {
+    for (const sz of [-1, 1] as const) {
+      const cornerX = center.x + sx * halfSize.x
+      const cornerZ = center.z + sz * halfSize.z
+      maxHorizReach = Math.max(
+        maxHorizReach,
+        Math.hypot(cornerX - lightPosition.x, cornerZ - lightPosition.z)
+      )
+    }
+  }
+  const groundReachFar = Math.hypot(heightAboveGround, maxHorizReach) * (1 + margin)
+
+  return Math.max(cornerFar, groundReachFar)
+}
+
+/**
+ * Tighter shadow far for point lights above a subject — avoids huge racetrack bounds
+ * diluting cube-map resolution into a soft dark circle on HDR ground.
+ */
+export function computePointLightShadowFar(
+  lightPosition: THREE.Vector3,
+  sceneBox: THREE.Box3,
+  margin = 0.25,
+  groundY = SHADOW_GROUND_PLANE_Y
+): number {
+  if (sceneBox.isEmpty()) return PHYSICAL_OMNI_SHADOW_FAR_INITIAL
+
+  const size = sceneBox.getSize(new THREE.Vector3())
+  const maxDim = Math.max(size.x, size.y, size.z)
+  const fullFar = computeOmnidirectionalShadowFar(lightPosition, sceneBox, margin, groundY)
+  const heightAboveGround = Math.max(lightPosition.y - groundY, 0.01)
+
+  if (maxDim <= TIGHT_FRUSTUM_MAX_DIM) {
+    return fullFar
+  }
+
+  // Local contact radius: height-scaled footprint around the light, capped for large HDR scenes
+  const localHoriz = Math.min(
+    Math.max(maxDim * 0.35, heightAboveGround * 2.5, 8),
+    TIGHT_FRUSTUM_MAX_DIM * 1.5
+  )
+  const localFar = Math.hypot(heightAboveGround, localHoriz) * (1 + margin)
+  return Math.min(fullFar, Math.max(localFar, heightAboveGround * (1 + margin)))
+}
+
+/** Scale cube-map shadow strength so low-intensity fill lights do not dominate sun shadows. */
+export function computePointLightShadowIntensity(
+  lightIntensity: number,
+  diminishForHdrSun: boolean
+): number {
+  if (!diminishForHdrSun) return 1
+  return THREE.MathUtils.clamp(lightIntensity * 2.5, 0.08, 0.4)
+}
+
+export function applyPointLightShadowIntensity(
+  light: THREE.PointLight,
+  lightIntensity: number,
+  diminishForHdrSun: boolean
+): void {
+  if (!light.shadow) return
+  light.shadow.intensity = computePointLightShadowIntensity(lightIntensity, diminishForHdrSun)
 }
 
 export function applyPhysicalOmnidirectionalShadowDefaults(

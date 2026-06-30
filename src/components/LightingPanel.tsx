@@ -2000,6 +2000,14 @@ export default function LightingPanel() {
                     Point lights use omnidirectional cube-map shadows. On a flat ground they look
                     softer and more circular than sun or spot shadows — use the Sun (directional) or
                     a spot light aimed at the model for crisp contact shadows.
+                    {hdrEnabled &&
+                      directionalLights.some((l) => l.isSun && l.enabled && l.castShadow) && (
+                        <>
+                          {' '}
+                          With HDR + Sun shadows on, point-light shadow strength is auto-reduced so
+                          the sun silhouette stays visible on the ground.
+                        </>
+                      )}
                   </small>
                 )}
               </label>
