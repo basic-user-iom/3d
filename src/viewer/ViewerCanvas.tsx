@@ -17,9 +17,8 @@ import {
   PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
   PHYSICAL_OMNI_SHADOW_FAR_INITIAL,
   applyPhysicalOmnidirectionalShadowDefaults,
-  applyPointLightShadowIntensity,
-  computeOmnidirectionalShadowFar,
-  computePointLightShadowFar
+  applyPhysicalSpotShadowDefaults,
+  applyPointLightShadowIntensity
 } from './utils/physicalShadowSettings'
 import { SunMoonSystem } from './effects/SunMoonSystem'
 import { StandaloneWaterSystem } from './effects/StandaloneWaterSystem'
@@ -6387,11 +6386,6 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           // Update angle (cone angle in radians)
           if (config.angle !== undefined) {
             spotLight.angle = config.angle
-            // Update shadow camera FOV to match angle
-            if (spotLight.shadow) {
-              spotLight.shadow.camera.fov = config.angle * (180 / Math.PI)
-              spotLight.shadow.camera.updateProjectionMatrix()
-            }
           }
           
           // Update penumbra (soft edge of spotlight cone, 0-1)
@@ -6563,8 +6557,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           } else if ((light as any).isSpotLight) {
             shadow.camera.near = 0.01
             shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
-            shadow.camera.fov = (config.angle ?? Math.PI / 6) * (180 / Math.PI)
-            applyPhysicalOmnidirectionalShadowDefaults(light as THREE.SpotLight)
+            applyPhysicalSpotShadowDefaults(light as THREE.SpotLight)
           }
           
           // Shadow bounds will be updated at the end
@@ -6603,149 +6596,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
     })
     
-    // v1.7: Update shadow camera bounds for all shadow-casting lights after scene changes
-    // Calculate bounding box of all objects that cast shadows
-    // CRITICAL: Must traverse into groups (pivot wrappers, model groups) to find actual meshes
-    const box = new THREE.Box3()
-    let hasObjects = false
-    
-    scene.traverse((obj) => {
-      // Skip helpers, gizmos, and system objects
-      if (obj.userData.isShadowPlane || 
-          obj.userData.isGridHelper || 
-          obj.userData.isAxesHelper ||
-          obj.userData.isLightGizmo ||
-          obj.userData.isLightHelper ||
-          obj.userData.isTransformControls ||
-          obj.userData.isGroundedSkybox ||
-          obj.userData.isDynamicSky ||
-          obj.userData.isSun ||
-          obj.userData.isMoon) {
-        return
-      }
-      
-      // Check if this is a mesh that casts shadows
-      if (obj instanceof THREE.Mesh && obj.castShadow) {
-        const objBox = new THREE.Box3().setFromObject(obj)
-        if (!objBox.isEmpty()) {
-          if (!hasObjects) {
-            box.copy(objBox)
-            hasObjects = true
-          } else {
-            box.union(objBox)
-          }
-        }
-      } else if (obj instanceof THREE.Group || obj instanceof THREE.Object3D) {
-        // For groups (like pivot wrappers or model groups), check if any child meshes cast shadows
-        // This ensures models wrapped in groups are included in shadow calculations
-        let groupHasShadowCastingMeshes = false
-        const groupBox = new THREE.Box3()
-        
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.castShadow) {
-            const childBox = new THREE.Box3().setFromObject(child)
-            if (!childBox.isEmpty()) {
-              if (!groupHasShadowCastingMeshes) {
-                groupBox.copy(childBox)
-                groupHasShadowCastingMeshes = true
-              } else {
-                groupBox.union(childBox)
-              }
-            }
-          }
-        })
-        
-        if (groupHasShadowCastingMeshes && !groupBox.isEmpty()) {
-          if (!hasObjects) {
-            box.copy(groupBox)
-            hasObjects = true
-          } else {
-            box.union(groupBox)
-          }
-        }
-      }
-    })
-    
-    const boundsStore = useAppStore.getState()
-    const boundsCsmActive = viewerRef.current?.csmShadowSystem?.isEnabled() ?? false
-    const boundsLightingMode = resolveLightingMode({
-      enableStandaloneWeather: boundsStore.enableStandaloneWeather,
-      streetsGLIframeOverlay: boundsStore.streetsGLIframeOverlay,
-      pathTracerActive: boundsStore.pathTracerActive,
-      hdrEnabled: boundsStore.hdrEnabled,
-      hdrGroundProjectionEnabled: boundsStore.hdrGroundProjectionEnabled,
-      csmEnabled: boundsCsmActive
-    })
-    const diminishPointShadowsForBounds = shouldDiminishPointLightShadows({
-      hdrEnabled: boundsStore.hdrEnabled,
-      shadowsEnabled: shadowsEnabledForLights,
-      sunLightCastShadowConfig: boundsStore.directionalLights.some(
-        (l) => l.isSun && l.enabled && l.castShadow
-      ),
-      mode: boundsLightingMode,
-      csmEnabled: boundsCsmActive
-    })
-
-    lightsMap.forEach((light: THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight, lightId) => {
-      if (light.shadow && light.castShadow) {
-        if (hasObjects && !box.isEmpty()) {
-          const size = box.getSize(new THREE.Vector3())
-          const center = box.getCenter(new THREE.Vector3())
-          const maxDim = Math.max(size.x, size.y, size.z)
-          
-          // CRITICAL: Use a much smaller near plane to capture interior surfaces
-          // 0.01 allows the shadow camera to see very close surfaces (like inside a car)
-          light.shadow.camera.near = 0.01
-          
-          // Configure shadow camera based on light type
-          if (light instanceof THREE.DirectionalLight) {
-            // Directional lights use orthographic camera
-            const shadowSize = Math.max(maxDim * 5, 200)
-            light.shadow.camera.left = -shadowSize
-            light.shadow.camera.right = shadowSize
-            light.shadow.camera.top = shadowSize
-            light.shadow.camera.bottom = -shadowSize
-            light.shadow.camera.far = Math.max(size.y * 5, maxDim * 8, 2000)
-            light.shadow.camera.position.copy(light.position)
-            light.shadow.camera.lookAt(center)
-          } else if (light instanceof THREE.SpotLight) {
-            const farPlane = computeOmnidirectionalShadowFar(light.position, box)
-            light.shadow.camera.far = farPlane
-            if (light.target) {
-              light.target.position.copy(center)
-            }
-          } else if (light instanceof THREE.PointLight) {
-            light.shadow.camera.far = computePointLightShadowFar(light.position, box)
-            const pointConfig = directionalLightsConfig.find((l) => l.id === lightId)
-            applyPointLightShadowIntensity(
-              light,
-              pointConfig?.intensity ?? light.intensity,
-              diminishPointShadowsForBounds
-            )
-          }
-          
-          light.shadow.camera.updateProjectionMatrix()
-        } else {
-          // Fallback to very large bounds for infinite coverage
-          if (light instanceof THREE.DirectionalLight) {
-            light.shadow.camera.left = -2000
-            light.shadow.camera.right = 2000
-            light.shadow.camera.top = 2000
-            light.shadow.camera.bottom = -2000
-            light.shadow.camera.far = 5000
-            light.shadow.camera.lookAt(0, 0, 0)
-          } else if (light instanceof THREE.SpotLight || light instanceof THREE.PointLight) {
-            light.shadow.camera.far = 5000
-          }
-          light.shadow.camera.near = 0.01 // Also use smaller near plane in fallback
-          light.shadow.camera.updateProjectionMatrix()
-        }
-        light.shadow.needsUpdate = true
-      }
-    })
-    
-    // CRITICAL: Force shadow camera bounds update after light configuration changes
-    // This ensures new lights added from panel get proper shadow camera bounds
+    // Shadow camera bounds (directional tight frustum, spot aim + far, point far)
     if (viewerRef.current?.updateShadowCameraBounds) {
       viewerRef.current.updateShadowCameraBounds()
     }

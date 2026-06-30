@@ -7,7 +7,8 @@ import { usePanelStacking } from '../hooks/usePanelStacking'
 import { useViewer } from '../viewer/useViewer'
 import * as THREE from 'three'
 import FastHDRConverter from './FastHDRConverter'
-import { getPhysicalLightingPresetValues } from '../viewer/utils/physicalShadowSettings'
+import { getPhysicalLightingPresetValues, DEFAULT_SPOT_SHADOW_CONVERSION_ANGLE } from '../viewer/utils/physicalShadowSettings'
+import { getSceneShadowBoundsCenter } from '../viewer/utils/shadowManager'
 import './LightingPanel.css'
 
 const HDR_PRESETS = [
@@ -2017,12 +2018,18 @@ export default function LightingPanel() {
                     style={{ marginTop: '8px' }}
                     onClick={() => {
                       const pos = selectedLight.position ?? { x: 0, y: 5, z: 0 }
+                      const sceneCenter = viewer?.scene
+                        ? getSceneShadowBoundsCenter(viewer.scene)
+                        : null
+                      const target = sceneCenter
+                        ? { x: sceneCenter.x, y: sceneCenter.y, z: sceneCenter.z }
+                        : { x: pos.x, y: Math.max(pos.y - 10, 0), z: pos.z }
                       updateDirectionalLight(selectedLight.id, {
                         type: 'spot',
                         castShadow: true,
-                        angle: Math.PI / 4,
+                        angle: DEFAULT_SPOT_SHADOW_CONVERSION_ANGLE,
                         penumbra: 0.25,
-                        target: { x: 0, y: 0, z: 0 }
+                        target
                       })
                     }}
                   >
