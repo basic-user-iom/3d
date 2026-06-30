@@ -520,7 +520,7 @@ describe('Shadow System', () => {
       mesh.name = 'engine_block'
       scene.add(mesh)
 
-      enhanceInternalShadows(scene, [csmLight], { hideInteriorGeometry: false })
+      enhanceInternalShadows(scene, [csmLight], { darkenInteriorCavities: true })
 
       expect(csmLight.shadow.normalBias).toBe(0.02)
       expect(csmLight.shadow.bias).toBe(-0.0002)

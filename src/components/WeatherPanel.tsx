@@ -22,8 +22,8 @@ export default function WeatherPanel() {
     streetsGLIframeOverlay,
     enableStandaloneWeather,
     setEnableStandaloneWeather,
-    hideInteriorGeometry,
-    setHideInteriorGeometry,
+    darkenInteriorCavities,
+    setDarkenInteriorCavities,
     weatherPreset,
     setWeatherPreset,
     applyWeatherPreset,
@@ -218,14 +218,14 @@ export default function WeatherPanel() {
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
-                  checked={hideInteriorGeometry}
-                  onChange={(e) => setHideInteriorGeometry(e.target.checked)}
+                  checked={darkenInteriorCavities}
+                  onChange={(e) => setDarkenInteriorCavities(e.target.checked)}
                   style={{ cursor: 'pointer' }}
                 />
-                <span>Hide interior geometry (engine bay)</span>
+                <span>Darken engine bay (shadows + cavity)</span>
               </label>
               <small style={{ display: 'block', color: '#888', marginTop: '6px' }}>
-                Hides structural engine/exhaust parts visible through rear hood gaps. Turn off to inspect internals.
+                Keeps all geometry visible; body panels cast shadows and interior cavities appear dark. Turn off to inspect internals at full brightness.
               </small>
             </div>
           </div>

@@ -6,10 +6,9 @@ import {
   isSpatiallyInteriorMesh,
   isInteriorCandidate,
   getMeshAverageAlbedo,
-  shouldHideInteriorMesh,
   enhanceInternalShadows,
-  applyInteriorVisibility,
-  HIDE_ABORT_THRESHOLD,
+  applyInteriorCavityDimming,
+  ensureImportedMeshesVisible,
   CAVITY_ENV_MAP_DIM_FACTOR,
   CAVITY_COLOR_DIM_FACTOR,
   CAVITY_BRIGHT_COLOR_DIM_FACTOR,
@@ -42,7 +41,6 @@ describe('enhanceInternalShadows', () => {
     mesh.name = 'rear_diffuser_panel'
     expect(isLikelyExteriorBodyPanel(mesh)).toBe(true)
     expect(isLikelyInteriorMesh(mesh)).toBe(false)
-    expect(shouldHideInteriorMesh(mesh, new THREE.Box3())).toBe(false)
   })
 
   it('detects interior mechanical parts by name', () => {
@@ -67,9 +65,9 @@ describe('enhanceInternalShadows', () => {
     mesh.name = 'engine_block'
     const scene = new THREE.Scene()
     scene.add(mesh)
-    enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
+    enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(mesh.userData.lightingZone).toBe('interior')
-    expect(mesh.layers.mask).toBe(1 << 1) // INTERIOR_RENDER_LAYER
+    expect(mesh.layers.mask).toBe(1 << INTERIOR_RENDER_LAYER)
   })
 
   it('dims envMapIntensity and color on interior meshes', () => {
@@ -82,13 +80,14 @@ describe('enhanceInternalShadows', () => {
     const scene = new THREE.Scene()
     scene.add(mesh)
 
-    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
+    const result = enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(result.cavityMeshesDimmed).toBe(1)
     expect(mat.envMapIntensity).toBeCloseTo(2.0 * CAVITY_ENV_MAP_DIM_FACTOR)
     expect(mat.color.r).toBeCloseTo(0.5 * CAVITY_BRIGHT_COLOR_DIM_FACTOR)
     expect(mat.emissiveIntensity).toBe(0)
     expect(mat.userData.cavityDimApplied).toBe(true)
     expect(mat.userData.cavityShaderPatched).toBe(true)
+    expect(mesh.visible).toBe(true)
   })
 
   it('dims bright unnamed meshes inside inner bbox via albedo heuristic', () => {
@@ -103,11 +102,10 @@ describe('enhanceInternalShadows', () => {
 
     expect(getMeshAverageAlbedo(mesh)).toBeGreaterThan(BRIGHT_ALBEDO_THRESHOLD)
     expect(isInteriorCandidate(mesh, modelBBox)).toBe(true)
-    expect(shouldHideInteriorMesh(mesh, modelBBox)).toBe(false)
 
     const scene = new THREE.Scene()
     scene.add(mesh)
-    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
+    const result = enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(result.cavityMeshesDimmed).toBe(1)
     expect(mat.color.r).toBeCloseTo(0.9 * CAVITY_BRIGHT_COLOR_DIM_FACTOR)
     expect(mesh.visible).toBe(true)
@@ -115,7 +113,6 @@ describe('enhanceInternalShadows', () => {
 
   it('does not dim bright meshes outside inner bbox', () => {
     const scene = new THREE.Scene()
-    // Shell meshes define the outer bbox so inner-region test is meaningful
     for (const z of [-4, 4]) {
       const shell = new THREE.Mesh(
         new THREE.BoxGeometry(4, 2, 1),
@@ -136,7 +133,7 @@ describe('enhanceInternalShadows', () => {
     const modelBBox = new THREE.Box3().setFromObject(scene)
     expect(isInteriorCandidate(mesh, modelBBox)).toBe(false)
 
-    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
+    const result = enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(result.cavityMeshesDimmed).toBe(0)
     expect(mat.color.r).toBeCloseTo(0.9)
   })
@@ -156,7 +153,7 @@ describe('enhanceInternalShadows', () => {
     expect(mesh.visible).toBe(true)
   })
 
-  it('hides only explicit engine_block meshes when enabled', () => {
+  it('never hides engine_block — dims and keeps visible', () => {
     const scene = new THREE.Scene()
     for (let i = 0; i < 8; i++) {
       const panel = new THREE.Mesh(
@@ -177,11 +174,11 @@ describe('enhanceInternalShadows', () => {
     engine.userData.isImportedModel = true
     scene.add(engine)
 
-    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: true })
-    expect(result.interiorMeshesHidden).toBe(1)
-    expect(engine.visible).toBe(false)
+    const result = enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
+    expect(result.cavityMeshesDimmed).toBeGreaterThanOrEqual(1)
+    expect(engine.visible).toBe(true)
     scene.traverse((obj) => {
-      if (obj instanceof THREE.Mesh && obj.name.startsWith('body_panel')) {
+      if (obj instanceof THREE.Mesh) {
         expect(obj.visible).toBe(true)
       }
     })
@@ -199,16 +196,10 @@ describe('enhanceInternalShadows', () => {
     const scene = new THREE.Scene()
     scene.add(body)
 
-    const modelBBox = new THREE.Box3(
-      new THREE.Vector3(-2, 0, -4),
-      new THREE.Vector3(2, 2, 4)
-    )
-
-    expect(shouldHideInteriorMesh(body, modelBBox)).toBe(false)
-
-    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: true })
-    expect(result.interiorMeshesHidden).toBe(0)
+    const result = enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
     expect(body.visible).toBe(true)
+    // Generic Mesh_NNN may still be cavity-dimmed if spatially interior + bright albedo
+    expect(result.cavityMeshesDimmed).toBeGreaterThanOrEqual(0)
   })
 
   it('does not hide exhaust_pipe by spatial position alone', () => {
@@ -218,46 +209,29 @@ describe('enhanceInternalShadows', () => {
     )
     mesh.name = 'rear_exhaust_pipe'
     mesh.position.set(0, 0.8, -3)
-    expect(shouldHideInteriorMesh(mesh, modelBBox)).toBe(false)
     expect(isLikelyInteriorMesh(mesh)).toBe(true)
-  })
+    expect(isInteriorCandidate(mesh, modelBBox)).toBe(true)
 
-  it('hides meshes with userData.hideInterior', () => {
-    mesh.name = 'structural_part'
-    mesh.userData.hideInterior = true
-    expect(shouldHideInteriorMesh(mesh, new THREE.Box3())).toBe(true)
-  })
-
-  it('aborts hide when more than 30% of meshes would be hidden', () => {
     const scene = new THREE.Scene()
-    for (let i = 0; i < 3; i++) {
-      const m = new THREE.Mesh(
-        new THREE.BoxGeometry(1, 1, 1),
-        new THREE.MeshStandardMaterial()
-      )
-      m.name = 'engine_block'
-      m.userData.isImportedModel = true
-      scene.add(m)
-    }
-    const exterior = new THREE.Mesh(
-      new THREE.BoxGeometry(2, 1, 2),
-      new THREE.MeshStandardMaterial()
-    )
-    exterior.name = 'body_panel'
-    exterior.userData.isImportedModel = true
-    scene.add(exterior)
-
-    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: true })
-    expect(result.hideAborted).toBe(true)
-    expect(result.interiorMeshesHidden).toBe(0)
-    scene.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        expect(obj.visible).toBe(true)
-      }
-    })
+    scene.add(mesh)
+    enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
+    expect(mesh.visible).toBe(true)
   })
 
-  it('restores hidden meshes when applyInteriorVisibility(false)', () => {
+  it('restores previously hidden interior meshes on enhance run', () => {
+    mesh.name = 'engine_block'
+    mesh.visible = false
+    mesh.userData.interiorHiddenByViewer = true
+
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+
+    ensureImportedMeshesVisible(scene)
+    expect(mesh.visible).toBe(true)
+    expect(mesh.userData.interiorHiddenByViewer).toBeUndefined()
+  })
+
+  it('restores brightness when applyInteriorCavityDimming(false)', () => {
     const scene = new THREE.Scene()
     for (let i = 0; i < 8; i++) {
       const panel = new THREE.Mesh(
@@ -272,10 +246,41 @@ describe('enhanceInternalShadows', () => {
     mesh.position.set(0, 0, 0)
     scene.add(mesh)
 
-    enhanceInternalShadows(scene, [], { hideInteriorGeometry: true })
-    const restored = applyInteriorVisibility(scene, false)
+    enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    expect(mat.userData.cavityDimApplied).toBe(true)
+
+    const restored = applyInteriorCavityDimming(scene, false)
     expect(restored).toBeGreaterThanOrEqual(1)
+    expect(mat.userData.cavityDimApplied).toBeUndefined()
     expect(mesh.visible).toBe(true)
+  })
+
+  it('skips dimming when darkenInteriorCavities is false', () => {
+    mesh.name = 'engine_block'
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    mat.color.setRGB(0.5, 0.5, 0.5)
+
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+
+    const result = enhanceInternalShadows(scene, [], { darkenInteriorCavities: false })
+    expect(result.cavityMeshesDimmed).toBe(0)
+    expect(mat.color.r).toBeCloseTo(0.5)
+    expect(mesh.visible).toBe(true)
+  })
+
+  it('enables castShadow and receiveShadow on all imported meshes', () => {
+    mesh.name = 'engine_block'
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+
+    enhanceInternalShadows(scene, [], { darkenInteriorCavities: true })
+    expect(mesh.castShadow).toBe(true)
+    expect(mesh.receiveShadow).toBe(true)
   })
 
   it('detects spatially interior meshes', () => {
@@ -287,10 +292,6 @@ describe('enhanceInternalShadows', () => {
     expect(isSpatiallyInteriorMesh(mesh, modelBBox)).toBe(true)
     mesh.position.set(0, 1, 3.9)
     expect(isSpatiallyInteriorMesh(mesh, modelBBox)).toBe(false)
-  })
-
-  it('exports hide abort threshold', () => {
-    expect(HIDE_ABORT_THRESHOLD).toBe(0.3)
   })
 })
 

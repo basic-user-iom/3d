@@ -32,12 +32,6 @@ const INTERIOR_KEYWORDS = [
   'control_arm', 'rear_axle'
 ]
 
-/** Explicit names that may be hidden (never generic Mesh_NNN). */
-const EXPLICIT_HIDE_PATTERNS = [
-  'engine_block', 'engine_internal', 'engine_bay_internal', 'motor_block',
-  'internal_engine', 'engine_assembly_internal', 'engine_bay_structural'
-]
-
 const EXTERIOR_KEYWORDS = [
   'body', 'shell', 'panel', 'door', 'hood', 'bonnet', 'trunk', 'boot',
   'fender', 'bumper', 'spoiler', 'wing', 'mirror', 'glass', 'window',
@@ -48,9 +42,6 @@ const EXTERIOR_KEYWORDS = [
   'front', 'rear', 'diffuser', 'splitter', 'canard', 'aero', 'bodywork',
   'coachwork', 'fuselage', 'fairing', 'side', 'deck', 'lid', 'tail'
 ]
-
-/** Abort hide pass when this fraction of imported meshes would be hidden. */
-export const HIDE_ABORT_THRESHOLD = 0.3
 
 const _meshCenter = new THREE.Vector3()
 const _bboxSize = new THREE.Vector3()
@@ -65,16 +56,14 @@ export interface InternalShadowEnhancementResult {
   transparentMaterialsFixed: number
   cavityMeshesDimmed: number
   exteriorPanelsFrontSided: number
-  interiorMeshesHidden: number
   fixesApplied: string[]
   errors: string[]
   affectedMeshes?: string[]
-  hideAborted?: boolean
 }
 
 export interface InteriorEnhancementOptions {
-  /** Hide structural interior meshes (engine bay) not meant to be seen through gaps. Default true. */
-  hideInteriorGeometry?: boolean
+  /** Darken interior cavities via shadows + material dimming. Default true. Never hides geometry. */
+  darkenInteriorCavities?: boolean
   /** Log mesh names affected (useful for Pagani / auto-loaded models). */
   logAffectedMeshes?: boolean
   /** One-time sorted dump of all imported mesh names (Pagani dev helper). */
@@ -133,14 +122,6 @@ export function isLikelyInteriorMesh(mesh: THREE.Mesh): boolean {
 
 function getStructuralLabel(mesh: THREE.Mesh): string {
   return `${mesh.name || ''} ${mesh.parent?.name || ''}`.toLowerCase()
-}
-
-function hasExplicitHideName(mesh: THREE.Mesh): boolean {
-  if (mesh.userData.hideInterior === true) {
-    return true
-  }
-  const name = (mesh.name || '').toLowerCase().trim()
-  return EXPLICIT_HIDE_PATTERNS.some((pattern) => name.includes(pattern))
 }
 
 function isSystemMesh(obj: THREE.Mesh): boolean {
@@ -265,40 +246,6 @@ export function isInteriorCandidate(mesh: THREE.Mesh, modelBBox: THREE.Box3): bo
   return false
 }
 
-/** Only hide meshes with explicit interior tags or very specific interior names. */
-export function shouldHideInteriorMesh(mesh: THREE.Mesh, _modelBBox: THREE.Box3): boolean {
-  if (isLikelyExteriorBodyPanel(mesh) || meshHasTransparentMaterial(mesh)) {
-    return false
-  }
-  if (mesh.userData.neverHideInterior) {
-    return false
-  }
-  return hasExplicitHideName(mesh)
-}
-
-function collectHideCandidates(scene: THREE.Object3D, modelBBox: THREE.Box3): THREE.Mesh[] {
-  const candidates: THREE.Mesh[] = []
-  scene.traverse((obj) => {
-    if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
-      return
-    }
-    if (shouldHideInteriorMesh(obj, modelBBox)) {
-      candidates.push(obj)
-    }
-  })
-  return candidates
-}
-
-function countImportedMeshes(scene: THREE.Object3D): number {
-  let count = 0
-  scene.traverse((obj) => {
-    if (obj instanceof THREE.Mesh && isImportedMesh(obj) && !isSystemMesh(obj)) {
-      count++
-    }
-  })
-  return count
-}
-
 function patchInteriorCavityShader(
   mat: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial
 ): void {
@@ -408,6 +355,33 @@ function applyCavityDimming(
   result.cavityMeshesDimmed++
 }
 
+function restoreCavityDimming(
+  mat: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial
+): boolean {
+  if (!mat.userData.cavityDimApplied) return false
+
+  mat.envMapIntensity = (mat.userData.cavityBaseEnvIntensity as number) ?? 1.0
+  mat.color.copy(mat.userData.cavityBaseColor as THREE.Color)
+  mat.emissive.copy(mat.userData.cavityBaseEmissive as THREE.Color)
+  mat.emissiveIntensity = (mat.userData.cavityBaseEmissiveIntensity as number) ?? 0
+  mat.metalness = (mat.userData.cavityBaseMetalness as number) ?? 0
+  mat.roughness = (mat.userData.cavityBaseRoughness as number) ?? 0.5
+
+  const originalOnBeforeCompile = mat.userData.originalOnBeforeCompile as
+    | ((shader: THREE.WebGLProgramParametersWithUniforms, renderer: THREE.WebGLRenderer) => void)
+    | undefined
+  if (originalOnBeforeCompile) {
+    mat.onBeforeCompile = originalOnBeforeCompile
+  } else {
+    delete mat.onBeforeCompile
+  }
+  delete mat.userData.originalOnBeforeCompile
+  delete mat.userData.cavityShaderPatched
+  delete mat.userData.cavityDimApplied
+  mat.needsUpdate = true
+  return true
+}
+
 /** Dev helper: log all imported mesh names sorted (Pagani tagging). */
 export function logImportedMeshNames(scene: THREE.Object3D): string[] {
   const names: string[] = []
@@ -427,19 +401,22 @@ export function logImportedMeshNames(scene: THREE.Object3D): string[] {
   return names
 }
 
-function hideInteriorMesh(mesh: THREE.Mesh, result: InternalShadowEnhancementResult): void {
-  if (mesh.userData.interiorHiddenByViewer) return
-  mesh.userData.preHideVisible = mesh.visible
-  mesh.userData.interiorHiddenByViewer = true
-  mesh.visible = false
-  result.interiorMeshesHidden++
-}
-
-function showInteriorMesh(mesh: THREE.Mesh): void {
-  if (!mesh.userData.interiorHiddenByViewer) return
-  mesh.visible = mesh.userData.preHideVisible ?? true
-  delete mesh.userData.interiorHiddenByViewer
-  delete mesh.userData.preHideVisible
+/** Force all imported model meshes visible — interior geometry is never hidden. */
+export function ensureImportedMeshesVisible(scene: THREE.Object3D): number {
+  let restored = 0
+  scene.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
+      return
+    }
+    if (!obj.visible) {
+      obj.visible = true
+      restored++
+    }
+    delete obj.userData.interiorHiddenByViewer
+    delete obj.userData.preHideVisible
+    delete obj.userData.wasInteriorHidden
+  })
+  return restored
 }
 
 function restoreExteriorVisibility(scene: THREE.Object3D, result: InternalShadowEnhancementResult): void {
@@ -481,71 +458,51 @@ function restoreExteriorVisibility(scene: THREE.Object3D, result: InternalShadow
   }
 }
 
-/** Toggle visibility of hidden interior structural meshes. */
-export function applyInteriorVisibility(scene: THREE.Object3D, hide: boolean): number {
+/** Toggle cavity dimming on interior meshes. Never changes mesh visibility. */
+export function applyInteriorCavityDimming(scene: THREE.Object3D, darken: boolean): number {
   let changed = 0
+  const modelBBox = computeImportedModelBBox(scene)
+
+  ensureImportedMeshesVisible(scene)
+
   scene.traverse((obj) => {
-    if (!(obj instanceof THREE.Mesh) || !isImportedMesh(obj) || isSystemMesh(obj)) {
+    if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
       return
     }
-    if (hide) {
-      if (!obj.userData.interiorHiddenByViewer && obj.visible === false && obj.userData.wasInteriorHidden) {
-        obj.visible = true
-      }
-    } else if (obj.userData.interiorHiddenByViewer) {
-      showInteriorMesh(obj)
-      changed++
+
+    if (!isInteriorCandidate(obj, modelBBox)) {
+      return
     }
+
+    const rawMaterial = obj.material
+    const materials = Array.isArray(rawMaterial) ? rawMaterial : [rawMaterial]
+
+    materials.forEach((mat) => {
+      if (isTransparentMaterial(mat)) return
+      if (
+        !(mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial)
+      ) {
+        return
+      }
+
+      if (darken) {
+        const before = mat.userData.cavityDimApplied
+        applyCavityDimming(mat, {
+          meshesEnhanced: 0,
+          materialsMadeDoubleSided: 0,
+          transparentMaterialsFixed: 0,
+          cavityMeshesDimmed: 0,
+          exteriorPanelsFrontSided: 0,
+          fixesApplied: [],
+          errors: []
+        }, false, true)
+        if (!before) changed++
+      } else if (restoreCavityDimming(mat)) {
+        changed++
+      }
+    })
   })
 
-  if (!hide) return changed
-
-  const modelBBox = computeImportedModelBBox(scene)
-  const totalMeshes = countImportedMeshes(scene)
-  const candidates = collectHideCandidates(scene, modelBBox)
-  const hideRatio = totalMeshes > 0 ? candidates.length / totalMeshes : 0
-  const allowHide = hideRatio <= HIDE_ABORT_THRESHOLD
-
-  if (!allowHide) {
-    restoreExteriorVisibility(scene, {
-      meshesEnhanced: 0,
-      materialsMadeDoubleSided: 0,
-      transparentMaterialsFixed: 0,
-      cavityMeshesDimmed: 0,
-      exteriorPanelsFrontSided: 0,
-      interiorMeshesHidden: 0,
-      fixesApplied: [],
-      errors: []
-    })
-    return changed
-  }
-
-  for (const obj of candidates) {
-    const wasVisible = obj.visible
-    hideInteriorMesh(obj, {
-      meshesEnhanced: 0,
-      materialsMadeDoubleSided: 0,
-      transparentMaterialsFixed: 0,
-      cavityMeshesDimmed: 0,
-      exteriorPanelsFrontSided: 0,
-      interiorMeshesHidden: 0,
-      fixesApplied: [],
-      errors: []
-    })
-    if (wasVisible) changed++
-    obj.userData.wasInteriorHidden = true
-  }
-
-  restoreExteriorVisibility(scene, {
-    meshesEnhanced: 0,
-    materialsMadeDoubleSided: 0,
-    transparentMaterialsFixed: 0,
-    cavityMeshesDimmed: 0,
-    exteriorPanelsFrontSided: 0,
-    interiorMeshesHidden: 0,
-    fixesApplied: [],
-    errors: []
-  })
   return changed
 }
 
@@ -558,7 +515,7 @@ export function enhanceInternalShadows(
   directionalLights: THREE.DirectionalLight[] = [],
   options: InteriorEnhancementOptions = {}
 ): InternalShadowEnhancementResult {
-  const hideInteriorGeometry = options.hideInteriorGeometry !== false
+  const darkenInteriorCavities = options.darkenInteriorCavities !== false
   const refreshDimming = options.refreshDimming === true
   const affectedMeshes: string[] = []
 
@@ -568,7 +525,6 @@ export function enhanceInternalShadows(
     transparentMaterialsFixed: 0,
     cavityMeshesDimmed: 0,
     exteriorPanelsFrontSided: 0,
-    interiorMeshesHidden: 0,
     fixesApplied: [],
     errors: []
   }
@@ -580,6 +536,11 @@ export function enhanceInternalShadows(
   }
 
   try {
+    const visibilityRestored = ensureImportedMeshesVisible(scene)
+    if (visibilityRestored > 0) {
+      result.fixesApplied.push(`Restored visibility on ${visibilityRestored} previously hidden mesh(es)`)
+    }
+
     scene.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
         return
@@ -658,37 +619,8 @@ export function enhanceInternalShadows(
       )
     }
 
-    const totalMeshes = countImportedMeshes(scene)
-    const hideCandidates = hideInteriorGeometry ? collectHideCandidates(scene, modelBBox) : []
-    const hideRatio = totalMeshes > 0 ? hideCandidates.length / totalMeshes : 0
-    const allowHide = hideInteriorGeometry && hideRatio <= HIDE_ABORT_THRESHOLD
-
-    if (hideInteriorGeometry && !allowHide && hideCandidates.length > 0) {
-      result.hideAborted = true
-      result.fixesApplied.push(
-        `Aborted hiding ${hideCandidates.length}/${totalMeshes} meshes (${Math.round(hideRatio * 100)}% > ${Math.round(HIDE_ABORT_THRESHOLD * 100)}% threshold) — dim only`
-      )
-      console.warn(
-        '[enhanceInternalShadows] Hide aborted: too many meshes would be hidden',
-        { candidates: hideCandidates.length, total: totalMeshes, ratio: hideRatio }
-      )
-    }
-
-    if (allowHide) {
-      for (const obj of hideCandidates) {
-        hideInteriorMesh(obj, result)
-        if (options.logAffectedMeshes) {
-          affectedMeshes.push(`[hidden] ${obj.name || '(unnamed)'}`)
-        }
-      }
-    }
-
     scene.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
-        return
-      }
-
-      if (obj.userData.interiorHiddenByViewer) {
         return
       }
 
@@ -705,7 +637,7 @@ export function enhanceInternalShadows(
         getMeshAverageAlbedo(obj) > BRIGHT_ALBEDO_THRESHOLD ||
         !isLikelyInteriorMesh(obj)
 
-      if (options.logAffectedMeshes) {
+      if (darkenInteriorCavities && options.logAffectedMeshes) {
         affectedMeshes.push(
           `[dimmed${aggressive ? '/bright' : ''}] ${obj.name || '(unnamed)'}`
         )
@@ -737,7 +669,11 @@ export function enhanceInternalShadows(
             mat instanceof THREE.MeshStandardMaterial ||
             mat instanceof THREE.MeshPhysicalMaterial
           ) {
-            applyCavityDimming(mat, result, refreshDimming, aggressive)
+            if (darkenInteriorCavities) {
+              applyCavityDimming(mat, result, refreshDimming, aggressive)
+            } else {
+              restoreCavityDimming(mat)
+            }
           }
         }
       })
@@ -752,12 +688,6 @@ export function enhanceInternalShadows(
     if (result.cavityMeshesDimmed > 0) {
       result.fixesApplied.push(
         `Dimmed ambient/HDR fill on ${result.cavityMeshesDimmed} interior material(s) for cavity darkness`
-      )
-    }
-
-    if (result.interiorMeshesHidden > 0) {
-      result.fixesApplied.push(
-        `Hid ${result.interiorMeshesHidden} structural interior mesh(es) not meant to be visible`
       )
     }
 
@@ -852,7 +782,6 @@ export function enhanceInternalShadows(
       result.affectedMeshes = affectedMeshes
       console.log('[enhanceInternalShadows] Affected meshes:', affectedMeshes.slice(0, 80), {
         total: affectedMeshes.length,
-        hidden: result.interiorMeshesHidden,
         dimmed: result.cavityMeshesDimmed
       })
     }

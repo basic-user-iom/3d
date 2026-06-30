@@ -555,8 +555,8 @@ export interface AppState {
   sunSize: number
   moonSize: number
   weatherQuality: 'low' | 'medium' | 'high' | 'ultra' // Weather system quality preset
-  /** Hide engine-bay / structural interior meshes visible through body gaps. */
-  hideInteriorGeometry: boolean
+  /** Darken engine-bay cavities via shadows + material dimming (never hides geometry). */
+  darkenInteriorCavities: boolean
   // Water settings
   waterEnabled: boolean
   waterLevel: number
@@ -843,7 +843,7 @@ export interface AppState {
   setSunSize: (size: number) => void
   setMoonSize: (size: number) => void
   setWeatherQuality: (quality: 'low' | 'medium' | 'high' | 'ultra') => void
-  setHideInteriorGeometry: (hide: boolean) => void
+  setDarkenInteriorCavities: (darken: boolean) => void
   setRainParticleScale: (scale: number) => void
   setRainParticleSpeed: (speed: number) => void
   setRainCollisionEnabled: (enabled: boolean) => void
@@ -1176,7 +1176,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sunSize: 0.5, // Sun size multiplier (0.1 to 5.0)
   moonSize: 1.0, // Moon size multiplier (0.1 to 5.0)
   weatherQuality: 'high' as const, // Weather system quality preset
-  hideInteriorGeometry: true, // Hide engine-bay internals visible through body gaps
+  darkenInteriorCavities: true, // Darken engine-bay cavities via shadows + dimming
   
   // Water defaults
   waterEnabled: false, // Water disabled by default (can be enabled via lighting panel)
@@ -2443,7 +2443,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSunSize: (size) => set({ sunSize: Math.max(0.1, Math.min(5.0, size)) }),
   setMoonSize: (size) => set({ moonSize: Math.max(0.1, Math.min(5.0, size)) }),
   setWeatherQuality: (quality) => set({ weatherQuality: quality }),
-  setHideInteriorGeometry: (hide) => set({ hideInteriorGeometry: hide }),
+  setDarkenInteriorCavities: (darken) => set({ darkenInteriorCavities: darken }),
   setSnowIntensity: (intensity) => set({ snowIntensity: Math.max(0, Math.min(1, intensity)) }),
   setWindIntensity: (intensity) => set({ windIntensity: Math.max(0, Math.min(1, intensity)) }),
   setTimeOfDay: (time) => set({ timeOfDay: Math.max(0, Math.min(24, time)) }),

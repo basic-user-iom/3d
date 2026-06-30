@@ -1519,7 +1519,7 @@ export function useViewer() {
     try {
       const { enhanceInternalShadows } = await import('../utils/enhanceInternalShadows')
       const appStore = await import('../store/useAppStore')
-      const { hideInteriorGeometry } = appStore.useAppStore.getState()
+      const { darkenInteriorCavities } = appStore.useAppStore.getState()
 
       const directionalLights: THREE.DirectionalLight[] = []
       scene.traverse((obj) => {
@@ -1537,7 +1537,7 @@ export function useViewer() {
       }
 
       const enhancementResult = enhanceInternalShadows(modelScene, directionalLights, {
-        hideInteriorGeometry,
+        darkenInteriorCavities,
         logAffectedMeshes: modelScene.userData.isAutoLoaded === true,
         logAllMeshNames: modelScene.userData.isAutoLoaded === true
       })
@@ -1546,15 +1546,13 @@ export function useViewer() {
         enhancementResult.meshesEnhanced > 0 ||
         enhancementResult.materialsMadeDoubleSided > 0 ||
         enhancementResult.transparentMaterialsFixed > 0 ||
-        enhancementResult.cavityMeshesDimmed > 0 ||
-        enhancementResult.interiorMeshesHidden > 0
+        enhancementResult.cavityMeshesDimmed > 0
       ) {
         console.log('[ShadowEnhancement] Interior cavity enhancements:', {
           meshesEnhanced: enhancementResult.meshesEnhanced,
           materialsDoubleSided: enhancementResult.materialsMadeDoubleSided,
           transparentMaterialsFixed: enhancementResult.transparentMaterialsFixed,
           cavityMeshesDimmed: enhancementResult.cavityMeshesDimmed,
-          interiorMeshesHidden: enhancementResult.interiorMeshesHidden,
           exteriorPanelsFrontSided: enhancementResult.exteriorPanelsFrontSided,
           fixes: enhancementResult.fixesApplied
         })
