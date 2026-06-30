@@ -14,17 +14,18 @@ export function shouldAutoShowShadowPlaneForHdr(input: HdrGroundShadowInput): bo
 /**
  * HDR washes out MeshStandardMaterial ground planes via scene.environment IBL.
  * GroundedSkybox (ground projection) uses MeshBasicMaterial and cannot sample shadow maps.
- * Use a transparent ShadowMaterial catcher when HDR + shadows are on and either ground
- * projection is active or the plane is auto-shown (user toggle off).
+ * Always use a transparent ShadowMaterial catcher when HDR + shadows are on (toggle only
+ * controls visibility via effectiveShadowPlaneVisible).
  */
 export function shouldUseHdrGroundShadowCatcher(
   input: HdrGroundShadowInput,
-  showShadowPlane: boolean
+  _showShadowPlane?: boolean
 ): boolean {
-  if (!shouldAutoShowShadowPlaneForHdr(input)) return false
-  if (input.hdrGroundProjectionEnabled) return true
-  return !showShadowPlane
+  return shouldAutoShowShadowPlaneForHdr(input)
 }
+
+/** Slightly above y=0 so the catcher composites over GroundedSkybox without z-fighting. */
+export const HDR_SHADOW_CATCHER_PLANE_Y = 0.003
 
 /** Shadow plane is shown when user toggles it on OR HDR + shadows auto-show it. */
 export function effectiveShadowPlaneVisible(
@@ -52,7 +53,7 @@ export function applyHdrGroundShadowCatcherMaterial(
     const shadowMaterial = new THREE.ShadowMaterial({
       opacity,
       transparent: true,
-      depthWrite: true,
+      depthWrite: false,
       side: THREE.DoubleSide
     })
     plane.material = shadowMaterial
@@ -60,13 +61,14 @@ export function applyHdrGroundShadowCatcherMaterial(
     current.opacity = opacity
     current.transparent = true
     current.side = THREE.DoubleSide
-    if (current.depthWrite !== true) {
-      current.depthWrite = true
+    if (current.depthWrite !== false) {
+      current.depthWrite = false
     }
     current.needsUpdate = true
   }
 
   plane.receiveShadow = true
   plane.castShadow = false
+  plane.position.y = HDR_SHADOW_CATCHER_PLANE_Y
   plane.renderOrder = 100
 }

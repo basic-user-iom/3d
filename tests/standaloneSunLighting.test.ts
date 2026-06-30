@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import {
   clampStandaloneSunSkyDirection,
+  computeHdrSyncedSunSkyDirection,
   computeSunLightingFromElevation,
   isNightTimeOfDay,
   standaloneLightSunDirection,
@@ -118,5 +119,18 @@ describe('standalone sun lighting', () => {
       const highSun = computeSunLightingFromElevation(0.6)
       expect(lowSun.toneMappingExposure).toBeGreaterThan(highSun.toneMappingExposure)
     })
+  })
+
+  it('rotates sun direction with HDR azimuth to match environmentRotation', () => {
+    const { sunPosition } = timeOfDayToSkyAngles(12, 0)
+    const base = sunPosition.clone()
+    const synced = computeHdrSyncedSunSkyDirection(base, 90, 0)
+
+    const negated = base.clone().multiplyScalar(-1)
+    expect(synced.distanceTo(negated)).toBeLessThan(0.05)
+
+    const rotated = computeHdrSyncedSunSkyDirection(base, 45, 10)
+    expect(rotated.distanceTo(base)).toBeGreaterThan(0.05)
+    expect(rotated.length()).toBeCloseTo(1, 5)
   })
 })

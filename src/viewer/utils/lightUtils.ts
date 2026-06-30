@@ -108,6 +108,35 @@ export function normalizeSunSkyDirection(sunSkyDirection: THREE.Vector3): THREE.
   return sunSkyDirection.clone().normalize()
 }
 
+/** Base rotation applied to HDR environment maps to fix sky/ground inversion (matches HDRSystem). */
+export const HDR_ENV_BASE_ROTATION_X = Math.PI
+export const HDR_ENV_BASE_ROTATION_Y = Math.PI
+
+const _hdrSunRotationEuler = new THREE.Euler()
+
+/**
+ * Rotate sky sun direction with HDR azimuth/elevation so directional shadows align with IBL.
+ * Mirrors scene.environmentRotation in HDRSystem.applyRotationToScene.
+ */
+export function computeHdrSyncedSunSkyDirection(
+  baseSkySunDir: THREE.Vector3,
+  hdrRotationAzimuthDeg: number,
+  hdrRotationElevationDeg: number
+): THREE.Vector3 {
+  const normalizedAzimuth = ((hdrRotationAzimuthDeg % 360) + 360) % 360
+  const clampedElevation = THREE.MathUtils.clamp(hdrRotationElevationDeg, -90, 90)
+  const azimuthRad = THREE.MathUtils.degToRad(normalizedAzimuth)
+  const elevationRad = THREE.MathUtils.degToRad(clampedElevation)
+
+  _hdrSunRotationEuler.set(
+    elevationRad + HDR_ENV_BASE_ROTATION_X,
+    azimuthRad + HDR_ENV_BASE_ROTATION_Y,
+    0,
+    'YXZ'
+  )
+  return normalizeSunSkyDirection(baseSkySunDir).applyEuler(_hdrSunRotationEuler)
+}
+
 /**
  * Direction sunlight travels through the scene (opposite of sky sun direction).
  * Matches Three.js DirectionalLight: target - position when the light sits along sunSkyDirection.
