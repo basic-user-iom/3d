@@ -14,7 +14,10 @@ import { CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS } from './effects/StreetsGLCSM'
 import {
   PHYSICAL_CSM_SHADOW_RADIUS,
   PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS,
-  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
+  PHYSICAL_OMNI_SHADOW_FAR_INITIAL,
+  applyPhysicalOmnidirectionalShadowDefaults,
+  computeOmnidirectionalShadowFar
 } from './utils/physicalShadowSettings'
 import { SunMoonSystem } from './effects/SunMoonSystem'
 import { StandaloneWaterSystem } from './effects/StandaloneWaterSystem'
@@ -6447,8 +6450,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           // IMPROVED: Use initial normal bias - will be refined in updateShadowCameraBounds
           // Normal bias helps reduce shadow acne on surfaces with sharp angles
           shadow.normalBias = PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS
-          // Physical-reference subtle PCF softness (see physicalShadowSettings.ts)
-          shadow.radius = config.shadowRadius ?? PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+          if ((light as any).isDirectionalLight) {
+            shadow.radius = config.shadowRadius ?? PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+          }
           shadow.needsUpdate = true
           
           // Configure shadow camera based on light type
@@ -6463,14 +6467,14 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             shadow.camera.bottom = -2000
             // Shadow camera bounds will be updated at the end via updateAllShadowCameraBounds
           } else if ((light as any).isPointLight) {
-            // Use smaller near plane for point lights to capture interior shadows
             shadow.camera.near = 0.01
-            shadow.camera.far = config.distance ?? 100
+            shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
+            applyPhysicalOmnidirectionalShadowDefaults(light as THREE.PointLight)
           } else if ((light as any).isSpotLight) {
-            // Use smaller near plane for spot lights to capture interior shadows
             shadow.camera.near = 0.01
-            shadow.camera.far = config.distance ?? 100
+            shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
             shadow.camera.fov = (config.angle ?? Math.PI / 6) * (180 / Math.PI)
+            applyPhysicalOmnidirectionalShadowDefaults(light as THREE.SpotLight)
           }
           
           // Shadow bounds will be updated at the end
@@ -6595,21 +6599,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             light.shadow.camera.position.copy(light.position)
             light.shadow.camera.lookAt(center)
           } else if (light instanceof THREE.SpotLight) {
-            // Spot lights use perspective camera - fov is already set, just update far plane
-            // Calculate distance from light to center of objects
-            const lightToCenter = new THREE.Vector3().subVectors(center, light.position)
-            const distance = lightToCenter.length()
-            // Set far plane to cover objects plus some margin
-            light.shadow.camera.far = Math.max(distance + maxDim * 2, 200)
-            // Ensure spot light target is pointing at center of objects
+            const farPlane = computeOmnidirectionalShadowFar(light.position, box)
+            light.shadow.camera.far = farPlane
             if (light.target) {
               light.target.position.copy(center)
             }
           } else if (light instanceof THREE.PointLight) {
-            // Point lights use perspective camera - just update far plane
-            const lightToCenter = new THREE.Vector3().subVectors(center, light.position)
-            const distance = lightToCenter.length()
-            light.shadow.camera.far = Math.max(distance + maxDim * 2, 200)
+            light.shadow.camera.far = computeOmnidirectionalShadowFar(light.position, box)
           }
           
           light.shadow.camera.updateProjectionMatrix()

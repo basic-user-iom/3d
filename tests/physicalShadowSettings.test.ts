@@ -5,9 +5,12 @@ import {
   PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS,
   PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
   PHYSICAL_CSM_SHADOW_RADIUS,
+  PHYSICAL_OMNI_SHADOW_FAR_INITIAL,
   CSM_SHADER_BIAS_PHYSICAL,
+  computeOmnidirectionalShadowFar,
   computeTightShadowFrustum,
   applyAdaptiveDirectionalShadowBias,
+  applyPhysicalOmnidirectionalShadowDefaults,
   getPhysicalLightingPresetValues
 } from '../src/viewer/utils/physicalShadowSettings'
 
@@ -44,5 +47,30 @@ describe('physicalShadowSettings', () => {
     expect(preset.shadowMapSize).toBe(2048)
     expect(preset.useAdaptiveShadowSettings).toBe(true)
     expect(preset.shadowBiasOverride).toBe(PHYSICAL_DIRECTIONAL_SHADOW_BIAS)
+  })
+
+  it('computes omnidirectional shadow far from scene bounds, not attenuation distance', () => {
+    const lightPos = new THREE.Vector3(0, 10, 0)
+    const sceneBox = new THREE.Box3(
+      new THREE.Vector3(-5, 0, -5),
+      new THREE.Vector3(5, 3, 5)
+    )
+    const far = computeOmnidirectionalShadowFar(lightPos, sceneBox)
+    // Farthest corner from (0,10,0) is roughly (±5,0,±5) ≈ 11.2 + margin
+    expect(far).toBeGreaterThan(11)
+    // Must exceed a tight attenuation distance that would clip shadows into a circle
+    expect(far).toBeGreaterThan(15)
+    expect(computeOmnidirectionalShadowFar(lightPos, new THREE.Box3())).toBe(
+      PHYSICAL_OMNI_SHADOW_FAR_INITIAL
+    )
+  })
+
+  it('applies sharp omnidirectional shadow defaults for point lights', () => {
+    const light = new THREE.PointLight(0xffffff, 1)
+    light.castShadow = true
+    applyPhysicalOmnidirectionalShadowDefaults(light)
+    expect(light.shadow.radius).toBe(0)
+    expect(light.shadow.bias).toBe(0)
+    expect(light.shadow.normalBias).toBe(0)
   })
 })

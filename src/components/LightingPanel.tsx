@@ -1984,6 +1984,13 @@ export default function LightingPanel() {
                     Sun shadows come from CSM while standalone weather is on
                   </small>
                 )}
+                {selectedLight.type === 'point' && selectedLight.castShadow && (
+                  <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                    Point lights use omnidirectional cube-map shadows. On a flat ground they look
+                    softer and more circular than sun or spot shadows — use the Sun (directional) or
+                    a spot light aimed at the model for crisp contact shadows.
+                  </small>
+                )}
               </label>
 
               {(selectedLight.type === 'directional' || !selectedLight.type) && (

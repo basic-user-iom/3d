@@ -4,7 +4,9 @@ import type { DirectionalLightConfig, LightType } from '../../store/useAppStore'
 import {
   PHYSICAL_DIRECTIONAL_SHADOW_BIAS,
   PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS,
-  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
+  PHYSICAL_OMNI_SHADOW_FAR_INITIAL,
+  applyPhysicalOmnidirectionalShadowDefaults
 } from './physicalShadowSettings'
 
 /**
@@ -348,7 +350,9 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
       // CRITICAL: Use conservative initial bias to prevent shadows leaking through opaque objects
       light.shadow.bias = PHYSICAL_DIRECTIONAL_SHADOW_BIAS
       light.shadow.normalBias = PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS
-      light.shadow.radius = config.shadowRadius ?? PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+      if (light instanceof THREE.DirectionalLight) {
+        light.shadow.radius = config.shadowRadius ?? PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+      }
 
       // Configure shadow camera based on light type
       if (light instanceof THREE.DirectionalLight) {
@@ -363,14 +367,14 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
         light.shadow.camera.bottom = -2000
         // Shadow camera bounds will be updated at the end via updateAllShadowCameraBounds
       } else if (light instanceof THREE.PointLight) {
-        // Use very small near plane for point lights to capture interior shadows
         light.shadow.camera.near = 0.001
-        light.shadow.camera.far = config.distance ?? 100
+        light.shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
+        applyPhysicalOmnidirectionalShadowDefaults(light)
       } else if (light instanceof THREE.SpotLight) {
-        // Use very small near plane for spot lights to capture interior shadows
         light.shadow.camera.near = 0.001
-        light.shadow.camera.far = config.distance ?? 100
+        light.shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
         light.shadow.camera.fov = (config.angle ?? Math.PI / 6) * (180 / Math.PI)
+        applyPhysicalOmnidirectionalShadowDefaults(light)
       }
     }
   }

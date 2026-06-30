@@ -23,6 +23,17 @@ export const PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS = 0.02
 export const PHYSICAL_DIRECTIONAL_SHADOW_RADIUS = 1
 
 /**
+ * Point/spot cube-map shadows — three.js `webgl_lights_physical` uses defaults (sharp).
+ * Do not reuse directional PCF radius; it blurs omnidirectional shadows into circular blobs.
+ */
+export const PHYSICAL_OMNI_SHADOW_BIAS = 0
+export const PHYSICAL_OMNI_SHADOW_NORMAL_BIAS = 0
+export const PHYSICAL_OMNI_SHADOW_RADIUS = 0
+
+/** Initial far plane before scene bounds are known (decoupled from light attenuation distance). */
+export const PHYSICAL_OMNI_SHADOW_FAR_INITIAL = 5000
+
+/**
  * CSM shader bias constants (scaled by cascade ortho extent in StreetsGLCSM).
  * Slightly tighter than legacy Streets GL values for sharper contact shadows.
  */
@@ -135,6 +146,54 @@ export function applyPhysicalDirectionalShadowDefaults(light: THREE.DirectionalL
   light.shadow.bias = PHYSICAL_DIRECTIONAL_SHADOW_BIAS
   light.shadow.normalBias = PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS
   light.shadow.radius = PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+}
+
+const BOX_CORNER_SIGNS: ReadonlyArray<readonly [number, number, number]> = [
+  [-1, -1, -1],
+  [1, -1, -1],
+  [-1, 1, -1],
+  [1, 1, -1],
+  [-1, -1, 1],
+  [1, -1, 1],
+  [-1, 1, 1],
+  [1, 1, 1]
+]
+
+/**
+ * Shadow range for point/spot lights: farthest scene corner from the light plus margin.
+ * Must not use light.distance (attenuation) — that produces a spherical cutoff that reads
+ * as a hard circle on flat ground receivers.
+ */
+export function computeOmnidirectionalShadowFar(
+  lightPosition: THREE.Vector3,
+  sceneBox: THREE.Box3,
+  margin = 0.25
+): number {
+  if (sceneBox.isEmpty()) return PHYSICAL_OMNI_SHADOW_FAR_INITIAL
+
+  const center = sceneBox.getCenter(new THREE.Vector3())
+  const size = sceneBox.getSize(new THREE.Vector3())
+  const maxDim = Math.max(size.x, size.y, size.z)
+  const halfSize = size.clone().multiplyScalar(0.5)
+
+  let maxDist = lightPosition.distanceTo(center)
+  for (const [sx, sy, sz] of BOX_CORNER_SIGNS) {
+    const corner = center.clone().add(
+      new THREE.Vector3(sx * halfSize.x, sy * halfSize.y, sz * halfSize.z)
+    )
+    maxDist = Math.max(maxDist, lightPosition.distanceTo(corner))
+  }
+
+  return Math.max(maxDist * (1 + margin), maxDim * 2, 50)
+}
+
+export function applyPhysicalOmnidirectionalShadowDefaults(
+  light: THREE.PointLight | THREE.SpotLight
+): void {
+  if (!light.shadow) return
+  light.shadow.bias = PHYSICAL_OMNI_SHADOW_BIAS
+  light.shadow.normalBias = PHYSICAL_OMNI_SHADOW_NORMAL_BIAS
+  light.shadow.radius = PHYSICAL_OMNI_SHADOW_RADIUS
 }
 
 export interface PhysicalLightingPresetValues {
