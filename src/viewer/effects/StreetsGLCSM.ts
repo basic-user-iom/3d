@@ -26,6 +26,9 @@ export const CSM_SHADER_NORMAL_BIAS = 0.002
 export const CSM_LIGHT_SHADOW_BIAS = -0.0002
 export const CSM_LIGHT_SHADOW_NORMAL_BIAS = 0.02
 
+/** Cascade lights only render shadow depth maps; the user sun light provides direct illumination. */
+export const CSM_CASCADE_LIGHT_RENDER_INTENSITY = 0
+
 export interface StreetsGLCSMConfig {
   camera: THREE.PerspectiveCamera
   near: number
@@ -217,7 +220,7 @@ export class StreetsGLCSM {
     this.lights = []
 
     for (let i = 0; i < this.cascades; i++) {
-      const light = new THREE.DirectionalLight(0xffffff, this.intensity)
+      const light = new THREE.DirectionalLight(0xffffff, CSM_CASCADE_LIGHT_RENDER_INTENSITY)
       light.castShadow = true
       light.shadow.mapSize.width = this.resolution
       light.shadow.mapSize.height = this.resolution
@@ -892,8 +895,9 @@ export class StreetsGLCSM {
   public setIntensity(intensity: number): void {
     this.intensity = intensity
     this.lights.forEach((light) => {
-      light.intensity = intensity
+      light.intensity = CSM_CASCADE_LIGHT_RENDER_INTENSITY
     })
+    this.refreshUniformBuffers()
   }
 
   /**

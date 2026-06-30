@@ -1,9 +1,57 @@
 # Lighting & HDR Helpers
 
-This guide explains how to use the Lighting panel, multiple directional lights,
-and the HDR system (including ground projection). It ties together the key UI
-panels and the underlying helpers (`LightingPanel.tsx`, `HDRSystem.ts`, CSM
-shadows) so you know what to tweak for photorealistic scenes.
+This guide explains the unified lighting stack: sun/ambient lights, HDR/IBL, tone mapping,
+weather presets, fog, and how they connect to CSM shadows. For shadow-specific tuning see
+[`shadow-system.md`](shadow-system.md). For weather GPU tiers see
+[`weather-system.md`](weather-system.md).
+
+## Unified lighting architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Renderer (ViewerCanvas)                                        │
+│  outputColorSpace: SRGBColorSpace                               │
+│  toneMapping: ACESFilmicToneMapping                             │
+│  toneMappingExposure: weather + HDR + golden-hour (lightUtils)  │
+└─────────────────────────────────────────────────────────────────┘
+         │                    │                    │
+         ▼                    ▼                    ▼
+┌──────────────┐    ┌──────────────────┐    ┌─────────────────────┐
+│ Sun light    │    │ AmbientLight     │    │ scene.environment   │
+│ (isSun dir.) │    │ (fill, reduced   │    │ HDR equirect / PMREM│
+│ + CSM shadow │    │  when HDR on)    │    │ (IBL reflections)   │
+│   maps only  │    │                  │    │                     │
+└──────────────┘    └──────────────────┘    └─────────────────────┘
+         │                    │                    │
+         └────────────────────┴────────────────────┘
+                              ▼
+                    MeshStandardMaterial / Physical
+                    + interior cavity dimming
+                    + optional SAO (cavityOcclusion)
+```
+
+### Branch modes
+
+| Mode | Sun direct light | Shadows | Sky visual | Fog |
+|------|------------------|---------|------------|-----|
+| Standard (no weather) | `isSun` DirectionalLight | Per-light shadow maps | Optional HDR background | `sceneFog.ts` FogExp2 |
+| Standalone weather | `isSun` light (illumination) | CSM cascade lights (intensity 0, shadow-only) | DynamicSky iq raymarch | AtmosphericPerspective |
+| Streets GL overlay | Sun light hidden | Streets GL internal | DynamicSky box/LUT | Streets GL atmosphere |
+
+**Night split:** sky shader uses true below-horizon sun (`standaloneSkySunDirection`); scene
+lights and CSM use clamped direction (`standaloneLightSunDirection`) so shadows stay stable.
+See `lightUtils.ts`.
+
+### Best-practice alignment
+
+| Topic | Three.js guidance | Our implementation |
+|-------|-------------------|-------------------|
+| Key + fill | Directional sun + low Ambient/Hemisphere | Directional sun + AmbientLight; weather reduces ambient when HDR active |
+| IBL | `scene.environment` + PMREM for roughness | Equirect HDR on `scene.environment` (webexport parity); PMREM stored for ground projection |
+| Tone mapping | ACES + exposure for HDR→LDR | ACESFilmic; exposure from `computeSunLightingFromElevation` + weather + HDR boost |
+| Color output | `renderer.outputColorSpace = SRGBColorSpace` | Set at viewer init |
+| Fog + PBR | Match `scene.fog` color to horizon; enable `material.fog` | `sceneFog.ts`; sky meshes excluded via `userData` |
+| CSM lights | Shadow casters should not duplicate direct light | **Fixed:** cascade lights at intensity 0; sun light provides illumination |
 
 ## Lighting Panel Overview
 
@@ -48,8 +96,10 @@ The HDR panel lives on the right sidebar:
 
 - Set the HDR rotation so the sun in the environment matches the Sun
   directional light; otherwise shadows won’t line up.
+- When HDR is enabled, ambient fill is automatically reduced (~35–65% of weather
+  value) so IBL does not wash out shadows. Keep the ambient slider moderate.
 - If you want HDR-only lighting, disable all directional lights but leave the
-  ambient slider around 0.8–1.0 to keep interiors readable.
+  ambient slider around 0.35–0.5 to keep interiors readable.
 
 ## Standalone Weather (offline sky + clouds)
 

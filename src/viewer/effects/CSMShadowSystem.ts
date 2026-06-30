@@ -1,5 +1,11 @@
 import * as THREE from 'three'
-import { StreetsGLCSM, StreetsGLCSMConfig, CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS } from './StreetsGLCSM'
+import {
+  StreetsGLCSM,
+  StreetsGLCSMConfig,
+  CSM_SHADER_BIAS,
+  CSM_SHADER_NORMAL_BIAS,
+  CSM_CASCADE_LIGHT_RENDER_INTENSITY
+} from './StreetsGLCSM'
 import {
   getCsmCascadeCountForQuality,
   getCsmMaxFarForQuality,
@@ -132,7 +138,7 @@ export class CSMShadowSystem {
       // CRITICAL: Ensure CSM lights are visible and casting shadows
       light.visible = true
       light.castShadow = true
-      light.intensity = this.config.lightIntensity || 1.0
+      light.intensity = CSM_CASCADE_LIGHT_RENDER_INTENSITY
       // CRITICAL: Mark CSM lights so they don't get visible helpers
       // CSM lights are internal system lights and shouldn't be visible to users
       light.userData.isCSMLight = true
