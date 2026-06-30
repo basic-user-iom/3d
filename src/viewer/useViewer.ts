@@ -1781,11 +1781,13 @@ export function useViewer() {
         })
         
         const enhancementResult = enhanceInternalShadows(model.scene, directionalLights)
-        if (enhancementResult.meshesEnhanced > 0 || enhancementResult.materialsMadeDoubleSided > 0 || enhancementResult.transparentMaterialsFixed > 0) {
+        if (enhancementResult.meshesEnhanced > 0 || enhancementResult.materialsMadeDoubleSided > 0 || enhancementResult.transparentMaterialsFixed > 0 || enhancementResult.cavityMeshesDimmed > 0) {
           console.log(`[ShadowEnhancement] Enhanced shadows on internal surfaces:`, {
             meshesEnhanced: enhancementResult.meshesEnhanced,
             materialsDoubleSided: enhancementResult.materialsMadeDoubleSided,
             transparentMaterialsFixed: enhancementResult.transparentMaterialsFixed,
+            cavityMeshesDimmed: enhancementResult.cavityMeshesDimmed,
+            exteriorPanelsFrontSided: enhancementResult.exteriorPanelsFrontSided,
             fixes: enhancementResult.fixesApplied
           })
         }

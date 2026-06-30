@@ -28,6 +28,8 @@ import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvent
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
 import { getCsmShadowMapSizeForQuality, getCsmCascadeCountForQuality, getEffectiveMaxFps, getEffectivePixelRatio, prefersLowPowerGpu } from './utils/weatherGpuUtils'
+import { reapplyInteriorCavityEnhancements } from '../utils/enhanceInternalShadows'
+import { applyCavityAoIfEligible } from './utils/cavityOcclusion'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { revokeAllLoaderBlobUrls } from './loaders/blobUrlRegistry'
 import { ToneMappingType } from './postprocessing/ToneMappingShader'
@@ -260,6 +262,7 @@ export interface ViewerInstance {
   dynamicSky?: import('./effects/DynamicSky').DynamicSky // Dynamic sky with atmospheric scattering (for standalone weather)
   dynamicSkySavedCameraFar?: number
   postProcessingSystem?: import('./postprocessing/PostProcessingSystem').PostProcessingSystem
+  cavityOcclusionSession?: { applied: boolean; userDisabled: boolean }
   animationMixers?: THREE.AnimationMixer[]
   captureScreenshot?: () => string
   
@@ -273,6 +276,31 @@ export interface ViewerInstance {
   runShadowDiagnostics: () => import('../utils/shadowDiagnostics').ShadowDiagnosticReport
   /** Wake the hybrid render-on-demand loop (keyboard nav, external camera moves). */
   requestRender?: () => void
+}
+
+function ensureCavityOcclusionSession(viewer: ViewerInstance): { applied: boolean; userDisabled: boolean } {
+  if (!viewer.cavityOcclusionSession) {
+    viewer.cavityOcclusionSession = { applied: false, userDisabled: false }
+  }
+  return viewer.cavityOcclusionSession
+}
+
+function refreshInteriorCavityEnhancements(viewer: ViewerInstance, scene: THREE.Scene): void {
+  const lights = viewer.csmShadowSystem?.getDirectionalLights() ?? []
+  const result = reapplyInteriorCavityEnhancements(scene, lights)
+  if (
+    result.cavityMeshesDimmed > 0 ||
+    result.exteriorPanelsFrontSided > 0 ||
+    result.materialsMadeDoubleSided > 0
+  ) {
+    console.log('[CavityOcclusion] Interior shadow refresh:', {
+      cavityMeshesDimmed: result.cavityMeshesDimmed,
+      exteriorPanelsFrontSided: result.exteriorPanelsFrontSided,
+      materialsDoubleSided: result.materialsMadeDoubleSided,
+      fixes: result.fixesApplied
+    })
+  }
+  viewer.csmShadowSystem?.setupSceneMaterials()
 }
 
 // Temporary vectors and matrices for calculations (reused to avoid allocations)
@@ -7370,6 +7398,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         })
         csmShadowSystem.init()
         viewerRef.current.csmShadowSystem = csmShadowSystem
+        refreshInteriorCavityEnhancements(viewerRef.current, scene)
       }
       
       if (!viewerRef.current.sunMoonSystem) {
@@ -7493,6 +7522,17 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // Update CSM shadow system with sun direction
       if (viewerRef.current.csmShadowSystem) {
         viewerRef.current.csmShadowSystem.setLightDirection(sunLightTravelDir)
+      }
+
+      // Quality-gated cavity SAO (high/ultra only, requires post-processing)
+      if (viewerRef.current) {
+        const cavitySession = ensureCavityOcclusionSession(viewerRef.current)
+        applyCavityAoIfEligible(
+          true,
+          weatherQuality || 'high',
+          postProcessingEnabled,
+          cavitySession
+        )
       }
       
       // Update visible sun/moon mesh position based on time of day
@@ -8363,7 +8403,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // No warning needed as this is normal behavior during loading
       }
     }
-  }, [weatherPreset, cloudDensity, cloudThickness, cloudDetail, cloudScale, cloudStorminess, cloudShadowStrength, cloudColor, fogDensity, fogHeight, fogColor, rainIntensity, snowIntensity, windIntensity, timeOfDay, skyTurbidity, skyAtmosphereDensity, skyRayleigh, skyMieCoefficient, skyMieDirectionalG, skyExposure, skyElevation, skyAzimuth, hdrEnabled, hdrIntensity, sunSize, moonSize, northOffset, postProcessingEnabled, toneMappingType, enableStandaloneWeather, streetsGLIframeOverlay, streetsGLBridge, waterEnabled, waterLevel, waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity])
+  }, [weatherPreset, cloudDensity, cloudThickness, cloudDetail, cloudScale, cloudStorminess, cloudShadowStrength, cloudColor, fogDensity, fogHeight, fogColor, rainIntensity, snowIntensity, windIntensity, timeOfDay, skyTurbidity, skyAtmosphereDensity, skyRayleigh, skyMieCoefficient, skyMieDirectionalG, skyExposure, skyElevation, skyAzimuth, hdrEnabled, hdrIntensity, sunSize, moonSize, northOffset, postProcessingEnabled, toneMappingType, enableStandaloneWeather, streetsGLIframeOverlay, streetsGLBridge, waterEnabled, waterLevel, waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, weatherQuality])
 
   // Effect to update ambient light intensity from store (user slider)
   // This MUST run AFTER weather system to ensure user's slider value takes precedence
@@ -8950,6 +8990,7 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         
         // Store in viewer
         viewerRef.current.csmShadowSystem = csmShadowSystem
+        refreshInteriorCavityEnhancements(viewerRef.current, scene)
       }
       
       // CRITICAL: Ensure shadow plane receives CSM shadows (do this even if CSM already existed)

@@ -306,7 +306,8 @@ export class StreetsGLCSM {
         cascadeCamera.right = snappedHalfSize
         cascadeCamera.top = snappedHalfSize
         cascadeCamera.bottom = -snappedHalfSize
-        cascadeCamera.near = 0.1
+        // First cascade uses a tighter near plane for close detail (engine bays, exhaust gaps)
+        cascadeCamera.near = i === 0 ? 0.01 : 0.1
         // CRITICAL: Far plane must be large enough to capture objects both above and below the shadow plane
         // Calculate far plane based on bounding box depth plus offset for objects above ground
         // Increased far plane to cover larger models

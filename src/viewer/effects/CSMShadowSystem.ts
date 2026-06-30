@@ -682,6 +682,14 @@ export class CSMShadowSystem {
     return this.csm
   }
 
+  /** Directional lights used by CSM cascades (for interior shadow tuning). */
+  public getDirectionalLights(): THREE.DirectionalLight[] {
+    if (!this.csm) return []
+    return this.csm
+      .getLights()
+      .filter((light): light is THREE.DirectionalLight => light instanceof THREE.DirectionalLight)
+  }
+
   /**
    * Diagnostic: Check shadow map status for all CSM lights
    * Returns detailed information about shadow map creation
