@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as THREE from 'three'
 import { useAppStore } from '../src/store/useAppStore'
 import { CSMShadowSystem } from '../src/viewer/effects/CSMShadowSystem'
-import { StreetsGLCSM, CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS, CSM_LIGHT_SHADOW_NORMAL_BIAS } from '../src/viewer/effects/StreetsGLCSM'
+import { StreetsGLCSM, CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS, CSM_LIGHT_SHADOW_NORMAL_BIAS, CSM_CASCADE_LIGHT_RENDER_INTENSITY } from '../src/viewer/effects/StreetsGLCSM'
 import { enhanceInternalShadows } from '../src/utils/enhanceInternalShadows'
 
 describe('Shadow System', () => {
@@ -171,6 +171,22 @@ describe('Shadow System', () => {
       
       // Should not throw
       expect(() => csmSystem.setLightIntensity(0.5)).not.toThrow()
+    })
+
+    it('keeps CSM cascade lights at zero render intensity (shadow-only)', () => {
+      const csmSystem = new CSMShadowSystem(scene, {
+        camera,
+        parent: scene,
+        lightIntensity: 1.0
+      })
+      csmSystem.init()
+      csmSystem.setLightIntensity(2.5)
+
+      const lights = csmSystem.getDirectionalLights()
+      expect(lights.length).toBeGreaterThan(0)
+      for (const light of lights) {
+        expect(light.intensity).toBe(CSM_CASCADE_LIGHT_RENDER_INTENSITY)
+      }
     })
 
     it('should destroy CSM system', () => {

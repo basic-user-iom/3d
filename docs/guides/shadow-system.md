@@ -59,6 +59,9 @@ Low sun **color** (metallic PBR not crushed to black) is handled in `computeSunL
 ## Standalone weather interaction
 
 - CSM is created when `enableStandaloneWeather` is true and Streets GL iframe overlay is off.
+- **Illumination vs shadows:** the user `isSun` DirectionalLight provides direct lighting;
+  CSM cascade DirectionalLights use `intensity = 0` and only render shadow depth maps
+  (prevents N× sun overexposure). Logical sun intensity is stored in CSM shader uniforms.
 - Sun direction: `sunSkyDirectionToLightTravelDirection(standaloneLightSunDirection(...))` each lighting tick.
 - `applyWeatherQuality()` runs when `weatherQuality` changes; preserves sun direction/intensity/color across reinit.
 - Render loop calls `csmShadowSystem.update()` before `renderer.render()` (also on idle wake when camera moves).
@@ -82,6 +85,8 @@ Path tracer uses separate `ShadowCatcherMaterial` — not CSM. CSM is raster/sta
 
 ## References
 
+- [Lighting & HDR architecture](./lighting-hdr.md) — sun, ambient, HDR, tone mapping, weather
+- [Weather GPU tiers](./weather-system.md) — quality presets aligned with CSM
 - [Three.js LightShadow](https://threejs.org/docs/pages/LightShadow.html) — bias, normalBias, mapSize
 - [Three.js CSM addon](https://threejs.org/docs/pages/CSM.html) — practical splits, `update()` / `updateFrustums()`
 - [GPU Gems 3 Ch. 10](https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html) — cascade split schemes
