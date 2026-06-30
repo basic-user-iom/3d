@@ -50,9 +50,8 @@ Aligned with [weather-system.md](./weather-system.md):
 ## Interior / cavity handling
 
 - **Shadow flags** — Imported meshes get `castShadow` / `receiveShadow`; interior candidates are double-sided.
-- **Cavity dimming** — Reduces `envMapIntensity`, albedo, emissive on named/spatial interior meshes (engine bay, exhaust, etc.).
+- **Cavity dimming** — Reduces `envMapIntensity`, albedo, emissive on named/spatial interior meshes (engine bay, exhaust, etc.). Geometry is never hidden.
 - **SAO** — Auto-enabled on medium+ standalone weather when post-processing is on (`cavityOcclusion.ts`).
-- **Hide pass** — Only explicit interior structural names; aborted if >30% of meshes would hide.
 
 Low sun **color** (metallic PBR not crushed to black) is handled in `computeSunLightingFromElevation()` (`lightUtils.ts`), not the shadow map.
 
