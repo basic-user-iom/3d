@@ -5,6 +5,7 @@
 
 import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
+import { effectiveShadowPlaneVisible } from '../viewer/utils/hdrGroundShadowCatcher'
 
 export interface ShadowTestResult {
   name: string
@@ -247,25 +248,24 @@ export function runShadowSystemTests(
         : '❌ Shadow plane should not cast shadows'
     })
 
-    // Test shadow plane visibility
-    // With HDR ground projection, a transparent shadow catcher plane is auto-shown for contact shadows
-    let shadowPlaneShouldBeVisible = true
+    // Test shadow plane visibility (HDR shadow catcher auto-shows plane for ground projection or user toggle)
+    const store = useAppStore.getState()
+    const shadowPlaneShouldBeVisible = effectiveShadowPlaneVisible(store.showShadowPlane, {
+      hdrEnabled: store.hdrEnabled,
+      hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+      shadowsEnabled: store.shadowsEnabled,
+      showShadowPlane: store.showShadowPlane
+    })
     let visibilityReason = ''
-    
-    if (viewer && viewer.hdrSystem && (viewer.hdrSystem as any).config) {
-      const hdrConfig = (viewer.hdrSystem as any).config
-      const groundProjectionEnabled = hdrConfig.groundProjection?.enabled === true
-      const shadowsOn = useAppStore.getState().shadowsEnabled
-      
-      if (groundProjectionEnabled && shadowsOn) {
-        shadowPlaneShouldBeVisible = true
+    if (shadowPlaneShouldBeVisible && store.hdrEnabled && store.shadowsEnabled) {
+      if (store.hdrGroundProjectionEnabled) {
         visibilityReason = 'HDR ground projection uses shadow catcher overlay'
+      } else if (store.showShadowPlane) {
+        visibilityReason = 'standard HDR uses shadow catcher when shadow plane is on'
       }
     }
-    
-    const visibilityTestPasses = shadowPlaneShouldBeVisible 
-      ? shadowPlane.visible === true
-      : shadowPlane.visible === false // If ground projection is enabled, plane should be hidden
+
+    const visibilityTestPasses = shadowPlane.visible === shadowPlaneShouldBeVisible
     
     results.shadowPlane.push({
       name: 'Shadow plane is visible',

@@ -4,22 +4,31 @@ export interface HdrGroundShadowInput {
   hdrEnabled: boolean
   hdrGroundProjectionEnabled: boolean
   shadowsEnabled: boolean
+  /** When true, user has the shadow plane toggled on (standard 360 HDR ground). */
+  showShadowPlane?: boolean
 }
 
 /**
- * HDR ground projection uses MeshBasicMaterial (GroundedSkybox) which cannot sample shadow maps.
- * Layer a transparent ShadowMaterial plane on top when both ground projection and shadows are on.
+ * HDR washes out MeshStandardMaterial ground planes via scene.environment IBL.
+ * GroundedSkybox (ground projection) uses MeshBasicMaterial and cannot sample shadow maps.
+ * Use a transparent ShadowMaterial catcher whenever HDR + shadows are on and either
+ * ground projection or the user shadow-plane toggle is active.
  */
 export function shouldUseHdrGroundShadowCatcher(input: HdrGroundShadowInput): boolean {
-  return input.hdrEnabled && input.hdrGroundProjectionEnabled && input.shadowsEnabled
+  const showPlane = input.showShadowPlane ?? false
+  return (
+    input.hdrEnabled &&
+    input.shadowsEnabled &&
+    (input.hdrGroundProjectionEnabled || showPlane)
+  )
 }
 
-/** Shadow plane is shown when user toggles it on OR HDR ground shadow catcher is active. */
+/** Shadow plane is shown when user toggles it on OR HDR shadow catcher is active. */
 export function effectiveShadowPlaneVisible(
   showShadowPlane: boolean,
   input: HdrGroundShadowInput
 ): boolean {
-  return shouldUseHdrGroundShadowCatcher(input) || showShadowPlane
+  return shouldUseHdrGroundShadowCatcher({ ...input, showShadowPlane }) || showShadowPlane
 }
 
 export function shadowCatcherOpacity(shadowIntensity: number): number {

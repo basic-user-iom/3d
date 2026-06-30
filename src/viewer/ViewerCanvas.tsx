@@ -5781,7 +5781,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const useHdrGroundShadowCatcher = shouldUseHdrGroundShadowCatcher({
     hdrEnabled: store.hdrEnabled,
     hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
-    shadowsEnabled
+    shadowsEnabled,
+    showShadowPlane
   })
   const effectiveShowShadowPlane = effectiveShadowPlaneVisible(showShadowPlane, {
     hdrEnabled: store.hdrEnabled,
