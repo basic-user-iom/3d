@@ -76,3 +76,5 @@ Presets use the same `cloudDensity` field: Clear 0, Foggy 0.35, Overcast 0.75, S
 4. Disable standalone weather when using Streets GL iframe overlay (two WebGL contexts when both are active in City/Hybrid mode).
 5. Leave the camera idle after framing — the render loop pauses automatically when wind and effects are off.
 6. Switch render mode to **Product** when Streets GL map is not needed — the iframe WebGL context stays unloaded.
+
+See also [shadow-system.md](./shadow-system.md) for CSM architecture, bias tuning, and interior cavity troubleshooting.

@@ -18,6 +18,14 @@ import * as THREE from 'three'
 const ShadowCameraTopOffset = 5000
 const FadeOffsetFactor = 250
 
+/** Streets GL CSM shader bias (scaled by cascade ortho size in getUniforms). */
+export const CSM_SHADER_BIAS = -0.003
+export const CSM_SHADER_NORMAL_BIAS = 0.002
+
+/** Three.js shadow-map pass bias (unscaled; applied during depth render). */
+export const CSM_LIGHT_SHADOW_BIAS = -0.0002
+export const CSM_LIGHT_SHADOW_NORMAL_BIAS = 0.02
+
 export interface StreetsGLCSMConfig {
   camera: THREE.PerspectiveCamera
   near: number
@@ -49,6 +57,16 @@ export class StreetsGLCSM {
   private fadeOffsets: number[] = []
   private shadowMaps: THREE.WebGLRenderTarget[] = []
   private lights: THREE.DirectionalLight[] = []
+  /** Mutable uniform buffers — materials hold references; refreshed each update(). */
+  private uniformBuffers: {
+    CSMLightDirectionAndIntensity: THREE.Vector4
+    CSMSplits: Float32Array
+    CSMResolution: Float32Array
+    CSMSize: Float32Array
+    CSMBias: Float32Array
+    CSMMatrixWorldInverse: Float32Array
+    CSMFadeOffset: Float32Array
+  } | null = null
 
   constructor(config: StreetsGLCSMConfig) {
     this.camera = config.camera
@@ -74,6 +92,73 @@ export class StreetsGLCSM {
     this.updateBreaks()
     this.createShadowMaps()
     this.createLights()
+    this.initUniformBuffers()
+  }
+
+  private initUniformBuffers(): void {
+    const n = this.cascades
+    this.uniformBuffers = {
+      CSMLightDirectionAndIntensity: new THREE.Vector4(),
+      CSMSplits: new Float32Array(n * 4),
+      CSMResolution: new Float32Array(n * 4),
+      CSMSize: new Float32Array(n * 4),
+      CSMBias: new Float32Array(n * 4),
+      CSMMatrixWorldInverse: new Float32Array(n * 16),
+      CSMFadeOffset: new Float32Array(n * 4)
+    }
+  }
+
+  private refreshUniformBuffers(): void {
+    if (!this.uniformBuffers) {
+      this.initUniformBuffers()
+    }
+    const u = this.uniformBuffers!
+    u.CSMLightDirectionAndIntensity.set(
+      this.direction.x,
+      this.direction.y,
+      this.direction.z,
+      this.intensity
+    )
+
+    for (let i = 0; i < this.cascades; i++) {
+      const splitBase = i * 4
+      u.CSMSplits[splitBase] = this.breaks[i][0] * (this.far - this.near)
+      u.CSMSplits[splitBase + 1] = this.breaks[i][1] * (this.far - this.near)
+      u.CSMSplits[splitBase + 2] = 0
+      u.CSMSplits[splitBase + 3] = 0
+
+      const resBase = i * 4
+      u.CSMResolution[resBase] = this.resolution
+      u.CSMResolution[resBase + 1] = 0
+      u.CSMResolution[resBase + 2] = 0
+      u.CSMResolution[resBase + 3] = 0
+
+      const sizeBase = i * 4
+      u.CSMSize[sizeBase] = this.cascadeCameras[i].top
+      u.CSMSize[sizeBase + 1] = 0
+      u.CSMSize[sizeBase + 2] = 0
+      u.CSMSize[sizeBase + 3] = 0
+
+      const bias = this.shadowBias * this.cascadeCameras[i].top * this.biasScale
+      const normalBias = this.shadowNormalBias * this.cascadeCameras[i].top * this.biasScale
+      const biasBase = i * 4
+      u.CSMBias[biasBase] = bias
+      u.CSMBias[biasBase + 1] = normalBias
+      u.CSMBias[biasBase + 2] = 0
+      u.CSMBias[biasBase + 3] = 0
+
+      const matrix = this.cascadeCameras[i].matrixWorldInverse
+      const matBase = i * 16
+      for (let j = 0; j < 16; j++) {
+        u.CSMMatrixWorldInverse[matBase + j] = matrix.elements[j]
+      }
+
+      const fadeBase = i * 4
+      u.CSMFadeOffset[fadeBase] = this.fadeOffsets[i]
+      u.CSMFadeOffset[fadeBase + 1] = 0
+      u.CSMFadeOffset[fadeBase + 2] = 0
+      u.CSMFadeOffset[fadeBase + 3] = 0
+    }
   }
 
   /**
@@ -138,8 +223,9 @@ export class StreetsGLCSM {
       light.shadow.mapSize.height = this.resolution
       light.shadow.camera.near = 0.1
       light.shadow.camera.far = 10000
-      light.shadow.bias = this.shadowBias * this.biasScale
-      light.shadow.normalBias = this.shadowNormalBias * this.biasScale
+      // Three.js shadow depth pass — use standard unscaled bias (separate from CSM shader CSMBias)
+      light.shadow.bias = CSM_LIGHT_SHADOW_BIAS
+      light.shadow.normalBias = CSM_LIGHT_SHADOW_NORMAL_BIAS
       light.shadow.radius = this.shadowRadius // Configurable shadow blur radius
       this.lights.push(light)
     }
@@ -213,7 +299,20 @@ export class StreetsGLCSM {
    * Update CSM (call every frame)
    * Updates cascade camera positions and orientations based on main camera frustum
    */
+  private checkForCameraChanges(): void {
+    if (
+      this.camera.fov !== (this.camera as THREE.PerspectiveCamera & { _lastCsmFov?: number })._lastCsmFov ||
+      this.camera.aspect !== (this.camera as THREE.PerspectiveCamera & { _lastCsmAspect?: number })._lastCsmAspect
+    ) {
+      ;(this.camera as THREE.PerspectiveCamera & { _lastCsmFov?: number })._lastCsmFov = this.camera.fov
+      ;(this.camera as THREE.PerspectiveCamera & { _lastCsmAspect?: number })._lastCsmAspect = this.camera.aspect
+      this.near = this.camera.near
+      this.updateBreaks()
+    }
+  }
+
   public update(): void {
+    this.checkForCameraChanges()
     this.fixDirection()
 
     // Get camera frustum
@@ -331,6 +430,8 @@ export class StreetsGLCSM {
         console.warn(`[StreetsGLCSM] Empty bounding box for cascade ${i}, skipping update`)
       }
     }
+
+    this.refreshUniformBuffers()
   }
 
   /**
@@ -388,56 +489,16 @@ export class StreetsGLCSM {
     CSMFadeOffset: Float32Array
     CSMShadowRadius: number
   } {
-    const CSMSplits: number[] = []
-    const CSMResolution: number[] = []
-    const CSMSize: number[] = []
-    const CSMBias: number[] = []
-    const CSMMatrixWorldInverse: number[] = []
-    const CSMFadeOffset: number[] = []
-
-    for (let i = 0; i < this.cascades; i++) {
-      // Splits (in world space)
-      CSMSplits.push(this.breaks[i][0] * (this.far - this.near))
-      CSMSplits.push(this.breaks[i][1] * (this.far - this.near))
-      CSMSplits.push(0, 0)
-
-      // Resolution
-      CSMResolution.push(this.resolution, 0, 0, 0)
-
-      // Size (cascade camera top)
-      CSMSize.push(this.cascadeCameras[i].top, 0, 0, 0)
-
-      // Bias
-      const bias = this.shadowBias * this.cascadeCameras[i].top * this.biasScale
-      const normalBias = this.shadowNormalBias * this.cascadeCameras[i].top * this.biasScale
-      CSMBias.push(bias, normalBias, 0, 0)
-
-      // Matrix world inverse
-      const matrix = this.cascadeCameras[i].matrixWorldInverse
-      CSMMatrixWorldInverse.push(
-        matrix.elements[0], matrix.elements[1], matrix.elements[2], matrix.elements[3],
-        matrix.elements[4], matrix.elements[5], matrix.elements[6], matrix.elements[7],
-        matrix.elements[8], matrix.elements[9], matrix.elements[10], matrix.elements[11],
-        matrix.elements[12], matrix.elements[13], matrix.elements[14], matrix.elements[15]
-      )
-
-      // Fade offset
-      CSMFadeOffset.push(this.fadeOffsets[i], 0, 0, 0)
-    }
-
+    this.refreshUniformBuffers()
+    const u = this.uniformBuffers!
     return {
-      CSMLightDirectionAndIntensity: new THREE.Vector4(
-        this.direction.x,
-        this.direction.y,
-        this.direction.z,
-        this.intensity
-      ),
-      CSMSplits: new Float32Array(CSMSplits),
-      CSMResolution: new Float32Array(CSMResolution),
-      CSMSize: new Float32Array(CSMSize),
-      CSMBias: new Float32Array(CSMBias),
-      CSMMatrixWorldInverse: new Float32Array(CSMMatrixWorldInverse),
-      CSMFadeOffset: new Float32Array(CSMFadeOffset),
+      CSMLightDirectionAndIntensity: u.CSMLightDirectionAndIntensity,
+      CSMSplits: u.CSMSplits,
+      CSMResolution: u.CSMResolution,
+      CSMSize: u.CSMSize,
+      CSMBias: u.CSMBias,
+      CSMMatrixWorldInverse: u.CSMMatrixWorldInverse,
+      CSMFadeOffset: u.CSMFadeOffset,
       CSMShadowRadius: this.shadowRadius
     }
   }
@@ -808,6 +869,14 @@ export class StreetsGLCSM {
 
     // Mark material as updated
     material.needsUpdate = true
+  }
+
+  public setShaderBias(bias: number): void {
+    this.shadowBias = bias
+  }
+
+  public setShaderNormalBias(normalBias: number): void {
+    this.shadowNormalBias = normalBias
   }
 
   /**
