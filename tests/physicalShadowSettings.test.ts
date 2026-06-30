@@ -8,6 +8,9 @@ import {
   PHYSICAL_OMNI_SHADOW_FAR_INITIAL,
   CSM_SHADER_BIAS_PHYSICAL,
   computeOmnidirectionalShadowFar,
+  computePointLightShadowFar,
+  computePointLightShadowIntensity,
+  applyPointLightShadowIntensity,
   computeTightShadowFrustum,
   applyAdaptiveDirectionalShadowBias,
   applyPhysicalOmnidirectionalShadowDefaults,
@@ -63,6 +66,41 @@ describe('physicalShadowSettings', () => {
     expect(computeOmnidirectionalShadowFar(lightPos, new THREE.Box3())).toBe(
       PHYSICAL_OMNI_SHADOW_FAR_INITIAL
     )
+  })
+
+  it('extends omnidirectional far to reach the ground plane under the light', () => {
+    const lightPos = new THREE.Vector3(0, 80, 0)
+    const tinyScene = new THREE.Box3(
+      new THREE.Vector3(-2, 0, -2),
+      new THREE.Vector3(2, 2, 2)
+    )
+    const far = computeOmnidirectionalShadowFar(lightPos, tinyScene)
+    expect(far).toBeGreaterThanOrEqual(80)
+  })
+
+  it('tightens point-light shadow far for large HDR scenes', () => {
+    const lightPos = new THREE.Vector3(0, 12, 0)
+    const racetrackBox = new THREE.Box3(
+      new THREE.Vector3(-200, 0, -200),
+      new THREE.Vector3(200, 5, 200)
+    )
+    const fullFar = computeOmnidirectionalShadowFar(lightPos, racetrackBox)
+    const pointFar = computePointLightShadowFar(lightPos, racetrackBox)
+    expect(pointFar).toBeLessThan(fullFar)
+    expect(pointFar).toBeGreaterThan(12)
+  })
+
+  it('scales point-light shadow intensity down for HDR sun fill lights', () => {
+    expect(computePointLightShadowIntensity(0.15, true)).toBeCloseTo(0.375, 2)
+    expect(computePointLightShadowIntensity(1.0, true)).toBe(0.4)
+    expect(computePointLightShadowIntensity(0.1, false)).toBe(1)
+  })
+
+  it('applies diminished shadow intensity on point lights', () => {
+    const light = new THREE.PointLight(0xffffff, 0.2)
+    light.castShadow = true
+    applyPointLightShadowIntensity(light, 0.2, true)
+    expect(light.shadow.intensity).toBeLessThan(0.5)
   })
 
   it('applies sharp omnidirectional shadow defaults for point lights', () => {

@@ -17,7 +17,9 @@ import {
   PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
   PHYSICAL_OMNI_SHADOW_FAR_INITIAL,
   applyPhysicalOmnidirectionalShadowDefaults,
-  computeOmnidirectionalShadowFar
+  applyPointLightShadowIntensity,
+  computeOmnidirectionalShadowFar,
+  computePointLightShadowFar
 } from './utils/physicalShadowSettings'
 import { SunMoonSystem } from './effects/SunMoonSystem'
 import { StandaloneWaterSystem } from './effects/StandaloneWaterSystem'
@@ -79,6 +81,8 @@ import {
   detectLightingConflicts,
   resolveDirectionalCastShadow,
   resolveLightingMode,
+  resolvePointLightCastShadow,
+  shouldDiminishPointLightShadows,
   shouldUseWeatherShadowMapTiers
 } from './utils/lightingContext'
 import {
@@ -6428,14 +6432,32 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
         csmEnabled: csmActive
       })
-      const shouldCastShadow = resolveDirectionalCastShadow({
+      const sunLightCastShadowConfig = store.directionalLights.some(
+        (l) => l.isSun && l.enabled && l.castShadow
+      )
+      const diminishPointShadows = shouldDiminishPointLightShadows({
+        hdrEnabled: store.hdrEnabled,
+        shadowsEnabled: shadowsEnabledForLights,
+        sunLightCastShadowConfig,
         mode: lightingMode,
-        csmEnabled: csmActive,
-        isSun: !!config.isSun,
-        enabled: config.enabled,
-        castShadowConfig: !!config.castShadow,
-        shadowsEnabled: shadowsEnabledForLights
+        csmEnabled: csmActive
       })
+      const isPointLight = (light as any).isPointLight
+      const shouldCastShadow = isPointLight
+        ? resolvePointLightCastShadow({
+            mode: lightingMode,
+            enabled: config.enabled,
+            castShadowConfig: !!config.castShadow,
+            shadowsEnabled: shadowsEnabledForLights
+          })
+        : resolveDirectionalCastShadow({
+            mode: lightingMode,
+            csmEnabled: csmActive,
+            isSun: !!config.isSun,
+            enabled: config.enabled,
+            castShadowConfig: !!config.castShadow,
+            shadowsEnabled: shadowsEnabledForLights
+          })
       
       // Configure shadow if needed
       if (shouldCastShadow && ((light as any).isDirectionalLight || (light as any).isPointLight || (light as any).isSpotLight)) {
@@ -6472,6 +6494,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             shadow.camera.near = 0.01
             shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
             applyPhysicalOmnidirectionalShadowDefaults(light as THREE.PointLight)
+            applyPointLightShadowIntensity(
+              light as THREE.PointLight,
+              config.intensity ?? 1,
+              diminishPointShadows
+            )
           } else if ((light as any).isSpotLight) {
             shadow.camera.near = 0.01
             shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
@@ -6578,7 +6605,27 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
     })
     
-    lightsMap.forEach((light: THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight) => {
+    const boundsStore = useAppStore.getState()
+    const boundsCsmActive = viewerRef.current?.csmShadowSystem?.isEnabled() ?? false
+    const boundsLightingMode = resolveLightingMode({
+      enableStandaloneWeather: boundsStore.enableStandaloneWeather,
+      streetsGLIframeOverlay: boundsStore.streetsGLIframeOverlay,
+      pathTracerActive: boundsStore.pathTracerActive,
+      hdrEnabled: boundsStore.hdrEnabled,
+      hdrGroundProjectionEnabled: boundsStore.hdrGroundProjectionEnabled,
+      csmEnabled: boundsCsmActive
+    })
+    const diminishPointShadowsForBounds = shouldDiminishPointLightShadows({
+      hdrEnabled: boundsStore.hdrEnabled,
+      shadowsEnabled: shadowsEnabledForLights,
+      sunLightCastShadowConfig: boundsStore.directionalLights.some(
+        (l) => l.isSun && l.enabled && l.castShadow
+      ),
+      mode: boundsLightingMode,
+      csmEnabled: boundsCsmActive
+    })
+
+    lightsMap.forEach((light: THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight, lightId) => {
       if (light.shadow && light.castShadow) {
         if (hasObjects && !box.isEmpty()) {
           const size = box.getSize(new THREE.Vector3())
@@ -6607,7 +6654,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               light.target.position.copy(center)
             }
           } else if (light instanceof THREE.PointLight) {
-            light.shadow.camera.far = computeOmnidirectionalShadowFar(light.position, box)
+            light.shadow.camera.far = computePointLightShadowFar(light.position, box)
+            const pointConfig = directionalLightsConfig.find((l) => l.id === lightId)
+            applyPointLightShadowIntensity(
+              light,
+              pointConfig?.intensity ?? light.intensity,
+              diminishPointShadowsForBounds
+            )
           }
           
           light.shadow.camera.updateProjectionMatrix()
@@ -7864,12 +7917,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               hdrGroundProjectionEnabled: storeForSun.hdrGroundProjectionEnabled,
               csmEnabled: csmActiveForSun
             })
+            const sunConfig = storeForSun.directionalLights.find((l) => l.isSun)
             light.castShadow = resolveDirectionalCastShadow({
               mode: sunLightingMode,
               csmEnabled: csmActiveForSun,
               isSun: true,
-              enabled: true,
-              castShadowConfig: true,
+              enabled: sunConfig?.enabled ?? true,
+              castShadowConfig: sunConfig?.castShadow ?? true,
               shadowsEnabled: storeForSun.shadowsEnabled
             })
           }
