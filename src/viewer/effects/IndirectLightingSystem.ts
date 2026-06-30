@@ -5,8 +5,10 @@ import {
   INTERIOR_PROBE_SH_SCALE,
   PROBE_CUBEMAP_SIZE,
   createScaledLightProbe,
-  getAmbientMultiplierWithProbe
+  getAmbientMultiplierWithProbe,
+  getProbeIntensityScaleForShadows
 } from '../../utils/lightProbeUtils'
+import { useAppStore } from '../../store/useAppStore'
 
 /**
  * HDR-derived diffuse irradiance via a single scene LightProbe.
@@ -62,10 +64,12 @@ export class IndirectLightingSystem {
     try {
       const baseProbe = LightProbeGenerator.fromCubeRenderTarget(this.renderer, rt)
       this.hdrIntensity = hdrIntensity
+      const shadowsEnabled = useAppStore.getState().shadowsEnabled
+      const probeShadowScale = getProbeIntensityScaleForShadows(shadowsEnabled)
 
       this.exteriorProbe = createScaledLightProbe(
         baseProbe,
-        EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity
+        EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity * probeShadowScale
       )
       this.exteriorProbe.name = 'HDR Exterior Light Probe'
       this.exteriorProbe.userData.isIndirectLightingProbe = true
@@ -94,9 +98,19 @@ export class IndirectLightingSystem {
   updateIntensity(hdrIntensity: number): void {
     if (!this.exteriorProbe || !this.interiorProbeHeuristic) return
     this.hdrIntensity = hdrIntensity
-    const scale = EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity
+    const probeShadowScale = getProbeIntensityScaleForShadows(
+      useAppStore.getState().shadowsEnabled
+    )
+    const scale = EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity * probeShadowScale
     this.exteriorProbe.intensity = scale
     this.interiorProbeHeuristic.intensity = scale * 0.5
+  }
+
+  /** Re-apply probe intensity when global shadow toggle changes under HDR. */
+  refreshShadowContrast(): void {
+    if (this.exteriorProbe) {
+      this.updateIntensity(this.hdrIntensity)
+    }
   }
 
   remove(): void {

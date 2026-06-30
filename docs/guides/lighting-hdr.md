@@ -113,10 +113,34 @@ The HDR panel lives on the right sidebar:
 
 - Set the HDR rotation so the sun in the environment matches the Sun
   directional light; otherwise shadows won’t line up.
-- When HDR is enabled, ambient fill is automatically reduced (~35–65% of weather
-  value) so IBL does not wash out shadows. Keep the ambient slider moderate.
+- When HDR is enabled, ambient fill is automatically reduced so IBL does not
+  wash out shadows. With **Shadows** enabled in the Lighting panel, flat ambient,
+  HDR light probe, and `envMapIntensity` are scaled down further for contrast.
 - If you want HDR-only lighting, disable all directional lights but leave the
   ambient slider around 0.35–0.5 to keep interiors readable.
+
+### HDR + shadows (standard vs weather)
+
+| Combo | Shadow authority | What you should see |
+|-------|------------------|---------------------|
+| HDR only (no standalone weather) | Sun `DirectionalLight.castShadow` + `renderer.shadowMap.enabled` | Contact shadows on car/ground; enable **Show shadow plane** in Lighting |
+| HDR + standalone weather | CSM cascade lights (intensity 0); sun illuminates only | CSM sun shadows; legacy sun `castShadow` is intentionally off |
+| HDR + ground projection | Same as HDR-only or weather row above | Grounded skybox receives shadows; shadow plane stays visible |
+
+**HDR never disables shadow maps.** If shadows look missing, the usual cause is
+IBL fill ( `scene.environment` + light probe + ambient ) washing out contrast —
+not `castShadow` being cleared. Open the browser console and filter for
+`[LightingDebug]` or `[ShadowDebug]` to confirm `shadowsEnabled: true` and
+`HDR_SHADOW_CONTRAST` info.
+
+**Verify (car model, HDR on, sun shadows visible):**
+
+1. Load a car GLB.
+2. Enable **HDR**, load an environment map, leave **Standalone Weather** off.
+3. In **Lighting**: **Shadows** on, sun light enabled with **Cast shadow**, **Show shadow plane** on.
+4. Set time of day to ~10:00–14:00; orbit low near wheels — dark contact shadow on the plane.
+5. Toggle HDR off — shadow should remain; re-enable HDR — shadow should stay visible (slightly softer fill is OK).
+6. Optional: enable **Standalone Weather** with HDR — CSM shadows replace legacy sun maps; console shows `Sun legacy shadow maps suppressed`.
 
 ## Exterior vs interior (without engine rewrite)
 
@@ -254,6 +278,7 @@ camera-relative direction-space raymarching (see weather-system guide).
 | Symptom | Fix |
 | ------- | --- |
 | Shadows missing after toggling panels | Reopen Lighting panel and reapply “Shadow Quality” or click “Run Diagnostics” to reinitialize CSM. |
+| Shadows invisible with HDR on | Confirm **Shadows** enabled in Lighting; check console `[LightingDebug]` for `shadowsEnabled: true`. Lower HDR intensity or ambient slider; shadows are contrast-tuned via probe/ambient/envMapIntensity reduction. |
 | Double shadows on terrain | SSS + CSM — lower SSS intensity in Rendering panel | 
 | Interior too bright with HDR on | Tag `userData.lightingZone = 'interior'`; enable standalone weather SAO |
 | Shadow map size slider dead | Standalone weather on — use Weather quality preset |

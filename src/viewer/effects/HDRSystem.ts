@@ -5,6 +5,7 @@ import { setupGroundProjectedEnv, GroundProjectionResult } from './ground-projec
 import { useAppStore } from '../../store/useAppStore'
 import { materialUpdateQueue } from '../utils/MaterialUpdateQueue'
 import { calculateMaterialIntensity, shouldApplyHDR } from '../utils/materialIntensityHelper'
+import { applyHdrShadowContrastToMaterials } from '../../utils/lightProbeUtils'
 
 export interface GroundProjectionConfig {
   enabled: boolean
@@ -1078,6 +1079,18 @@ export class HDRSystem {
         if (shadowUpdateCount > 0) {
           console.log(`[HDRSystem] ✅ Triggered shadow map update for ${shadowUpdateCount} light(s) after HDR application`)
         }
+
+        const shadowsEnabled = useAppStore.getState().shadowsEnabled
+        const contrastCount = applyHdrShadowContrastToMaterials(
+          this.scene,
+          this.config.intensity,
+          shadowsEnabled
+        )
+        if (contrastCount > 0) {
+          console.log(
+            `[HDRSystem] ✅ Reduced envMapIntensity on ${contrastCount} material(s) for shadow contrast (shadows ${shadowsEnabled ? 'on' : 'off'})`
+          )
+        }
         
         // Apply ground projection if enabled
         if (this.config.groundProjection?.enabled) {
@@ -1647,6 +1660,12 @@ export class HDRSystem {
       } else {
         console.warn(`[HDRSystem] ⚠️ No materials found with envMap matching HDR environment - materials may not be receiving HDR lighting`)
       }
+
+      applyHdrShadowContrastToMaterials(
+        this.scene,
+        intensity,
+        useAppStore.getState().shadowsEnabled
+      )
     }
   }
 
