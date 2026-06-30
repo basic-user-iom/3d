@@ -6,32 +6,42 @@ export const CAVITY_COLOR_DIM_FACTOR = 0.3
 export const CAVITY_EMISSIVE_DIM_FACTOR = 0.2
 export const CAVITY_METALNESS_DIM_FACTOR = 0.45
 
+/** Strong interior-only keywords — safe for dimming when not exterior. */
 const INTERIOR_KEYWORDS = [
   'engine', 'motor', 'pipe', 'tube', 'piping', 'harness', 'loom', 'wiring',
   'exhaust', 'exhaust_inner', 'manifold', 'tailpipe', 'muffler', 'catalyst',
-  'interior', 'under', 'underbody', 'undertray', 'floorpan', 'underneath',
-  'chassis', 'subframe', 'crossmember', 'rail', 'suspension', 'wishbone',
-  'bracket', 'frame', 'structural', 'brace', 'mount', 'bushing', 'linkage',
-  'diffuser', 'intake', 'radiator', 'coolant', 'turbo', 'supercharger',
-  'axle', 'driveshaft', 'halfshaft', 'propeller', 'gearbox', 'transmission',
-  'cylinder', 'piston', 'valve', 'hose', 'wire', 'cable', 'mechanical',
-  'internal', 'cavity', 'hidden', 'shaft', 'bearing', 'spring', 'damper',
-  'strut', 'arm', 'knuckle', 'hub', 'block', 'crank', 'cam', 'timing',
-  'plenum', 'throttle', 'injector', 'fuel', 'tank', 'reservoir', 'canister',
-  'airbox', 'intercooler', 'oil', 'sump', 'compressor', 'head', 'induction',
-  'filter', 'clamp', 'fitting', 'connector', 'ecu', 'module', 'hardware',
-  'machinery', 'diff', 'differential', 'clutch', 'stabilizer', 'sway',
-  'control_arm', 'rear_axle', 'machined', 'casting', 'forged', 'billet'
+  'interior', 'underbody', 'undertray', 'floorpan', 'underneath',
+  'subframe', 'crossmember', 'suspension', 'wishbone',
+  'intake', 'radiator', 'coolant', 'turbo', 'supercharger',
+  'axle', 'driveshaft', 'halfshaft', 'gearbox', 'transmission',
+  'cylinder', 'piston', 'valve', 'hose', 'mechanical',
+  'internal', 'cavity', 'bearing', 'spring', 'damper',
+  'strut', 'knuckle', 'hub', 'crank', 'cam', 'timing',
+  'plenum', 'throttle', 'injector', 'fuel', 'reservoir', 'canister',
+  'airbox', 'intercooler', 'oil', 'sump', 'compressor', 'induction',
+  'ecu', 'module', 'differential', 'clutch', 'stabilizer', 'sway',
+  'control_arm', 'rear_axle'
+]
+
+/** Explicit names that may be hidden (never generic Mesh_NNN). */
+const EXPLICIT_HIDE_PATTERNS = [
+  'engine_block', 'engine_internal', 'engine_bay_internal', 'motor_block',
+  'internal_engine', 'engine_assembly_internal', 'engine_bay_structural'
 ]
 
 const EXTERIOR_KEYWORDS = [
   'body', 'shell', 'panel', 'door', 'hood', 'bonnet', 'trunk', 'boot',
   'fender', 'bumper', 'spoiler', 'wing', 'mirror', 'glass', 'window',
   'windshield', 'exterior', 'paint', 'carbon', 'roof', 'quarter', 'grille',
-  'headlight', 'taillight', 'skin', 'outer', 'cover', 'cladding', 'lip',
+  'headlight', 'taillight', 'skin', 'outer', 'cladding', 'lip',
   'skirt', 'badge', 'trim', 'handle', 'pillar', 'fascia', 'lamp', 'light',
-  'reflector', 'emblem', 'logo', 'nameplate', 'license', 'plate'
+  'reflector', 'emblem', 'logo', 'nameplate', 'license', 'plate',
+  'front', 'rear', 'diffuser', 'splitter', 'canard', 'aero', 'bodywork',
+  'coachwork', 'fuselage', 'fairing', 'side', 'deck', 'lid', 'tail'
 ]
+
+/** Abort hide pass when this fraction of imported meshes would be hidden. */
+export const HIDE_ABORT_THRESHOLD = 0.3
 
 const _meshCenter = new THREE.Vector3()
 const _bboxSize = new THREE.Vector3()
@@ -50,6 +60,7 @@ export interface InternalShadowEnhancementResult {
   fixesApplied: string[]
   errors: string[]
   affectedMeshes?: string[]
+  hideAborted?: boolean
 }
 
 export interface InteriorEnhancementOptions {
@@ -80,12 +91,16 @@ function getMeshLabel(mesh: THREE.Mesh): string {
   return `${getStructuralLabel(mesh)} ${materialNames}`.toLowerCase()
 }
 
-/** Meshes tagged or named like exterior body panels — keep single-sided. */
+/** Meshes tagged or named like exterior body panels — keep single-sided and always visible. */
 export function isLikelyExteriorBodyPanel(mesh: THREE.Mesh): boolean {
   if (mesh.userData.exterior || mesh.userData.isExterior || mesh.userData.isBodyPanel) {
     return true
   }
   const structural = getStructuralLabel(mesh)
+  // Interior mechanical names win over positional hints like rear/front in the label
+  if (labelMatchesAnyKeyword(structural, INTERIOR_KEYWORDS)) {
+    return false
+  }
   return labelMatchesAnyKeyword(structural, EXTERIOR_KEYWORDS)
 }
 
@@ -94,12 +109,12 @@ export function isLikelyInteriorMesh(mesh: THREE.Mesh): boolean {
   if (mesh.userData.interior || mesh.userData.isInterior) {
     return true
   }
-  if (isLikelyExteriorBodyPanel(mesh)) {
-    return false
-  }
   const structural = getStructuralLabel(mesh)
   if (labelMatchesAnyKeyword(structural, INTERIOR_KEYWORDS)) {
     return true
+  }
+  if (isLikelyExteriorBodyPanel(mesh)) {
+    return false
   }
   const label = getMeshLabel(mesh)
   return labelMatchesAnyKeyword(label, INTERIOR_KEYWORDS)
@@ -107,6 +122,14 @@ export function isLikelyInteriorMesh(mesh: THREE.Mesh): boolean {
 
 function getStructuralLabel(mesh: THREE.Mesh): string {
   return `${mesh.name || ''} ${mesh.parent?.name || ''}`.toLowerCase()
+}
+
+function hasExplicitHideName(mesh: THREE.Mesh): boolean {
+  if (mesh.userData.hideInterior === true) {
+    return true
+  }
+  const name = (mesh.name || '').toLowerCase().trim()
+  return EXPLICIT_HIDE_PATTERNS.some((pattern) => name.includes(pattern))
 }
 
 function isSystemMesh(obj: THREE.Mesh): boolean {
@@ -166,13 +189,6 @@ function computeImportedModelBBox(scene: THREE.Object3D): THREE.Box3 {
   return box
 }
 
-function getCarLengthAxis(modelBBox: THREE.Box3): 'x' | 'y' | 'z' {
-  modelBBox.getSize(_bboxSize)
-  if (_bboxSize.x >= _bboxSize.y && _bboxSize.x >= _bboxSize.z) return 'x'
-  if (_bboxSize.y >= _bboxSize.x && _bboxSize.y >= _bboxSize.z) return 'y'
-  return 'z'
-}
-
 /** Centroid inside the inner ~70% of the model bounding volume. */
 export function isSpatiallyInteriorMesh(mesh: THREE.Mesh, modelBBox: THREE.Box3): boolean {
   if (modelBBox.isEmpty()) return false
@@ -207,71 +223,46 @@ export function isSpatiallyInteriorMesh(mesh: THREE.Mesh, modelBBox: THREE.Box3)
   )
 }
 
-function isInRearEngineBayRegion(mesh: THREE.Mesh, modelBBox: THREE.Box3): boolean {
-  if (modelBBox.isEmpty()) return false
-
-  const axis = getCarLengthAxis(modelBBox)
-  _tempBox.setFromObject(mesh)
-  _tempBox.getCenter(_meshCenter)
-
-  const min = modelBBox.min[axis]
-  const max = modelBBox.max[axis]
-  const length = max - min
-  if (length <= 0) return false
-
-  const rearCutoff = min + length * 0.55
-  const frontCutoff = max - length * 0.55
-  const pos = _meshCenter[axis]
-  const inEndCap = pos < rearCutoff || pos > frontCutoff
-
-  const height = modelBBox.max.y - modelBBox.min.y
-  const aboveFloor = _meshCenter.y > modelBBox.min.y + height * 0.12
-
-  return inEndCap && aboveFloor && isSpatiallyInteriorMesh(mesh, modelBBox)
-}
-
-/** Interior by name/tag, spatial enclosure, or rear-engine-bay heuristics. */
-export function isInteriorCandidate(mesh: THREE.Mesh, modelBBox: THREE.Box3): boolean {
+/** Name-based interior candidate for dimming only — no spatial heuristics. */
+export function isInteriorCandidate(mesh: THREE.Mesh, _modelBBox: THREE.Box3): boolean {
   if (isLikelyExteriorBodyPanel(mesh) || meshHasTransparentMaterial(mesh)) {
     return false
   }
-  if (isLikelyInteriorMesh(mesh)) {
-    return true
-  }
-  if (!isSpatiallyInteriorMesh(mesh, modelBBox)) {
-    return false
-  }
-  const label = getMeshLabel(mesh)
-  if (labelMatchesAnyKeyword(label, EXTERIOR_KEYWORDS)) {
-    return false
-  }
-  return isInRearEngineBayRegion(mesh, modelBBox) || isSpatiallyInteriorMesh(mesh, modelBBox)
+  return isLikelyInteriorMesh(mesh)
 }
 
-/** Structural internals that should not be visible through body gaps. */
-export function shouldHideInteriorMesh(mesh: THREE.Mesh, modelBBox: THREE.Box3): boolean {
+/** Only hide meshes with explicit interior tags or very specific interior names. */
+export function shouldHideInteriorMesh(mesh: THREE.Mesh, _modelBBox: THREE.Box3): boolean {
   if (isLikelyExteriorBodyPanel(mesh) || meshHasTransparentMaterial(mesh)) {
     return false
   }
   if (mesh.userData.neverHideInterior) {
     return false
   }
+  return hasExplicitHideName(mesh)
+}
 
-  if (isLikelyInteriorMesh(mesh)) {
-    return isSpatiallyInteriorMesh(mesh, modelBBox) || isInRearEngineBayRegion(mesh, modelBBox)
-  }
-
-  if (isInRearEngineBayRegion(mesh, modelBBox)) {
-    const label = getMeshLabel(mesh)
-    const genericName = /^(mesh|object|node|part|geo|shape|element)[_\s.-]*\d*$/i.test(
-      (mesh.name || '').trim()
-    )
-    if (genericName || label.length < 4) {
-      return true
+function collectHideCandidates(scene: THREE.Object3D, modelBBox: THREE.Box3): THREE.Mesh[] {
+  const candidates: THREE.Mesh[] = []
+  scene.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
+      return
     }
-  }
+    if (shouldHideInteriorMesh(obj, modelBBox)) {
+      candidates.push(obj)
+    }
+  })
+  return candidates
+}
 
-  return false
+function countImportedMeshes(scene: THREE.Object3D): number {
+  let count = 0
+  scene.traverse((obj) => {
+    if (obj instanceof THREE.Mesh && isImportedMesh(obj) && !isSystemMesh(obj)) {
+      count++
+    }
+  })
+  return count
 }
 
 function applyCavityDimming(
@@ -327,6 +318,45 @@ function showInteriorMesh(mesh: THREE.Mesh): void {
   delete mesh.userData.preHideVisible
 }
 
+function restoreExteriorVisibility(scene: THREE.Object3D, result: InternalShadowEnhancementResult): void {
+  let restored = 0
+  scene.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
+      return
+    }
+    if (!isLikelyExteriorBodyPanel(obj)) {
+      return
+    }
+
+    if (!obj.visible) {
+      obj.visible = true
+      restored++
+    }
+
+    const rawMaterial = obj.material
+    const materials = Array.isArray(rawMaterial) ? rawMaterial : rawMaterial ? [rawMaterial] : []
+    materials.forEach((mat) => {
+      if (isTransparentMaterial(mat)) return
+      if (
+        mat instanceof THREE.MeshStandardMaterial ||
+        mat instanceof THREE.MeshPhysicalMaterial ||
+        mat instanceof THREE.MeshPhongMaterial ||
+        mat instanceof THREE.MeshLambertMaterial
+      ) {
+        if (mat.side !== THREE.FrontSide) {
+          mat.side = THREE.FrontSide
+          mat.needsUpdate = true
+          result.exteriorPanelsFrontSided++
+        }
+      }
+    })
+  })
+
+  if (restored > 0) {
+    result.fixesApplied.push(`Restored visibility on ${restored} exterior panel(s)`)
+  }
+}
+
 /** Toggle visibility of hidden interior structural meshes. */
 export function applyInteriorVisibility(scene: THREE.Object3D, hide: boolean): number {
   let changed = 0
@@ -347,25 +377,50 @@ export function applyInteriorVisibility(scene: THREE.Object3D, hide: boolean): n
   if (!hide) return changed
 
   const modelBBox = computeImportedModelBBox(scene)
-  scene.traverse((obj) => {
-    if (!(obj instanceof THREE.Mesh) || !isImportedMesh(obj) || isSystemMesh(obj)) {
-      return
-    }
-    if (shouldHideInteriorMesh(obj, modelBBox)) {
-      const wasVisible = obj.visible
-      hideInteriorMesh(obj, {
-        meshesEnhanced: 0,
-        materialsMadeDoubleSided: 0,
-        transparentMaterialsFixed: 0,
-        cavityMeshesDimmed: 0,
-        exteriorPanelsFrontSided: 0,
-        interiorMeshesHidden: 0,
-        fixesApplied: [],
-        errors: []
-      })
-      if (wasVisible) changed++
-      obj.userData.wasInteriorHidden = true
-    }
+  const totalMeshes = countImportedMeshes(scene)
+  const candidates = collectHideCandidates(scene, modelBBox)
+  const hideRatio = totalMeshes > 0 ? candidates.length / totalMeshes : 0
+  const allowHide = hideRatio <= HIDE_ABORT_THRESHOLD
+
+  if (!allowHide) {
+    restoreExteriorVisibility(scene, {
+      meshesEnhanced: 0,
+      materialsMadeDoubleSided: 0,
+      transparentMaterialsFixed: 0,
+      cavityMeshesDimmed: 0,
+      exteriorPanelsFrontSided: 0,
+      interiorMeshesHidden: 0,
+      fixesApplied: [],
+      errors: []
+    })
+    return changed
+  }
+
+  for (const obj of candidates) {
+    const wasVisible = obj.visible
+    hideInteriorMesh(obj, {
+      meshesEnhanced: 0,
+      materialsMadeDoubleSided: 0,
+      transparentMaterialsFixed: 0,
+      cavityMeshesDimmed: 0,
+      exteriorPanelsFrontSided: 0,
+      interiorMeshesHidden: 0,
+      fixesApplied: [],
+      errors: []
+    })
+    if (wasVisible) changed++
+    obj.userData.wasInteriorHidden = true
+  }
+
+  restoreExteriorVisibility(scene, {
+    meshesEnhanced: 0,
+    materialsMadeDoubleSided: 0,
+    transparentMaterialsFixed: 0,
+    cavityMeshesDimmed: 0,
+    exteriorPanelsFrontSided: 0,
+    interiorMeshesHidden: 0,
+    fixesApplied: [],
+    errors: []
   })
   return changed
 }
@@ -451,6 +506,10 @@ export function enhanceInternalShadows(
           }
         }
       })
+
+      if (!obj.visible) {
+        obj.visible = true
+      }
     })
 
     if (result.exteriorPanelsFrontSided > 0) {
@@ -459,20 +518,41 @@ export function enhanceInternalShadows(
       )
     }
 
+    const totalMeshes = countImportedMeshes(scene)
+    const hideCandidates = hideInteriorGeometry ? collectHideCandidates(scene, modelBBox) : []
+    const hideRatio = totalMeshes > 0 ? hideCandidates.length / totalMeshes : 0
+    const allowHide = hideInteriorGeometry && hideRatio <= HIDE_ABORT_THRESHOLD
+
+    if (hideInteriorGeometry && !allowHide && hideCandidates.length > 0) {
+      result.hideAborted = true
+      result.fixesApplied.push(
+        `Aborted hiding ${hideCandidates.length}/${totalMeshes} meshes (${Math.round(hideRatio * 100)}% > ${Math.round(HIDE_ABORT_THRESHOLD * 100)}% threshold) — dim only`
+      )
+      console.warn(
+        '[enhanceInternalShadows] Hide aborted: too many meshes would be hidden',
+        { candidates: hideCandidates.length, total: totalMeshes, ratio: hideRatio }
+      )
+    }
+
+    if (allowHide) {
+      for (const obj of hideCandidates) {
+        hideInteriorMesh(obj, result)
+        if (options.logAffectedMeshes) {
+          affectedMeshes.push(`[hidden] ${obj.name || '(unnamed)'}`)
+        }
+      }
+    }
+
     scene.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
         return
       }
 
-      const isInterior = isInteriorCandidate(obj, modelBBox)
-
-      if (hideInteriorGeometry && shouldHideInteriorMesh(obj, modelBBox)) {
-        hideInteriorMesh(obj, result)
-        if (options.logAffectedMeshes) {
-          affectedMeshes.push(`[hidden] ${obj.name || '(unnamed)'}`)
-        }
+      if (obj.userData.interiorHiddenByViewer) {
         return
       }
+
+      const isInterior = isInteriorCandidate(obj, modelBBox)
 
       if (!isInterior) {
         return
@@ -531,6 +611,8 @@ export function enhanceInternalShadows(
         `Hid ${result.interiorMeshesHidden} structural interior mesh(es) not meant to be visible`
       )
     }
+
+    restoreExteriorVisibility(scene, result)
 
     scene.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
