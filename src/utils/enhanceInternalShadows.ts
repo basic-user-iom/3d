@@ -1,10 +1,15 @@
 import * as THREE from 'three'
 
 /** Reduce HDR/ambient fill on recessed interior geometry visible through body gaps. */
-export const CAVITY_ENV_MAP_DIM_FACTOR = 0.12
-export const CAVITY_COLOR_DIM_FACTOR = 0.3
-export const CAVITY_EMISSIVE_DIM_FACTOR = 0.2
-export const CAVITY_METALNESS_DIM_FACTOR = 0.45
+export const CAVITY_ENV_MAP_DIM_FACTOR = 0.05
+export const CAVITY_COLOR_DIM_FACTOR = 0.2
+export const CAVITY_BRIGHT_COLOR_DIM_FACTOR = 0.15
+export const CAVITY_EMISSIVE_DIM_FACTOR = 0
+export const CAVITY_METALNESS_DIM_FACTOR = 0.35
+export const CAVITY_ROUGHNESS_BOOST = 0.25
+export const BRIGHT_ALBEDO_THRESHOLD = 0.7
+/** Fragment shader multiplier for interior cavity materials (onBeforeCompile). */
+export const CAVITY_SHADER_COLOR_MUL = 0.2
 
 /** Strong interior-only keywords — safe for dimming when not exterior. */
 const INTERIOR_KEYWORDS = [
@@ -68,6 +73,8 @@ export interface InteriorEnhancementOptions {
   hideInteriorGeometry?: boolean
   /** Log mesh names affected (useful for Pagani / auto-loaded models). */
   logAffectedMeshes?: boolean
+  /** One-time sorted dump of all imported mesh names (Pagani dev helper). */
+  logAllMeshNames?: boolean
   /** Re-sync cavity dimming after HDR/envMap intensity changes. */
   refreshDimming?: boolean
 }
@@ -223,12 +230,35 @@ export function isSpatiallyInteriorMesh(mesh: THREE.Mesh, modelBBox: THREE.Box3)
   )
 }
 
-/** Name-based interior candidate for dimming only — no spatial heuristics. */
-export function isInteriorCandidate(mesh: THREE.Mesh, _modelBBox: THREE.Box3): boolean {
+/** Average linear albedo from the first opaque PBR material on a mesh. */
+export function getMeshAverageAlbedo(mesh: THREE.Mesh): number {
+  const rawMaterial = mesh.material
+  const materials = Array.isArray(rawMaterial) ? rawMaterial : rawMaterial ? [rawMaterial] : []
+  for (const mat of materials) {
+    if (isTransparentMaterial(mat)) continue
+    if (
+      mat instanceof THREE.MeshStandardMaterial ||
+      mat instanceof THREE.MeshPhysicalMaterial
+    ) {
+      return (mat.color.r + mat.color.g + mat.color.b) / 3
+    }
+  }
+  return 0
+}
+
+/** Name-based interior candidate for dimming — plus bright meshes inside inner bbox. */
+export function isInteriorCandidate(mesh: THREE.Mesh, modelBBox: THREE.Box3): boolean {
   if (isLikelyExteriorBodyPanel(mesh) || meshHasTransparentMaterial(mesh)) {
     return false
   }
-  return isLikelyInteriorMesh(mesh)
+  if (isLikelyInteriorMesh(mesh)) {
+    return true
+  }
+  // Brightness heuristic: white/light-grey pipes inside inner volume without name match
+  if (!modelBBox.isEmpty() && isSpatiallyInteriorMesh(mesh, modelBBox)) {
+    return getMeshAverageAlbedo(mesh) > BRIGHT_ALBEDO_THRESHOLD
+  }
+  return false
 }
 
 /** Only hide meshes with explicit interior tags or very specific interior names. */
@@ -265,42 +295,109 @@ function countImportedMeshes(scene: THREE.Object3D): number {
   return count
 }
 
+function patchInteriorCavityShader(
+  mat: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial
+): void {
+  if (mat.userData.cavityShaderPatched) return
+
+  const originalOnBeforeCompile = mat.onBeforeCompile?.bind(mat)
+  const cavityMul = CAVITY_SHADER_COLOR_MUL
+
+  mat.onBeforeCompile = (shader, renderer) => {
+    if (originalOnBeforeCompile) {
+      originalOnBeforeCompile(shader, renderer)
+    }
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <output_fragment>',
+      `
+      diffuseColor.rgb *= ${cavityMul.toFixed(4)};
+      #include <output_fragment>
+      `
+    )
+  }
+
+  const originalCacheKey = mat.customProgramCacheKey?.bind(mat)
+  mat.customProgramCacheKey = () => {
+    const base = originalCacheKey ? originalCacheKey() : ''
+    return `${base}_cavity_dim_${cavityMul}`
+  }
+
+  mat.userData.cavityShaderPatched = true
+  mat.userData.originalOnBeforeCompile = originalOnBeforeCompile
+}
+
 function applyCavityDimming(
   mat: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial,
   result: InternalShadowEnhancementResult,
-  refreshDimming: boolean
+  refreshDimming: boolean,
+  aggressive: boolean
 ): void {
   if (!mat.userData.cavityDimApplied) {
     mat.userData.cavityBaseEnvIntensity = mat.envMapIntensity ?? 1.0
     mat.userData.cavityBaseColor = mat.color.clone()
+    mat.userData.cavityBaseEmissive = mat.emissive.clone()
     mat.userData.cavityBaseEmissiveIntensity = mat.emissiveIntensity ?? 0
     mat.userData.cavityBaseMetalness = mat.metalness ?? 0
     mat.userData.cavityBaseRoughness = mat.roughness ?? 0.5
     mat.userData.cavityDimApplied = true
   } else if (refreshDimming) {
+    // HDR / weather may have raised envMapIntensity — treat current value as new base
     const expectedEnv =
       (mat.userData.cavityBaseEnvIntensity as number) * CAVITY_ENV_MAP_DIM_FACTOR
     if (Math.abs((mat.envMapIntensity ?? 1) - expectedEnv) > 0.02) {
       mat.userData.cavityBaseEnvIntensity = mat.envMapIntensity ?? 1.0
     }
+    // Re-capture color if HDR or material panel changed it
+    const baseColor = mat.userData.cavityBaseColor as THREE.Color
+    const colorDim = aggressive ? CAVITY_BRIGHT_COLOR_DIM_FACTOR : CAVITY_COLOR_DIM_FACTOR
+    const expectedR = baseColor.r * colorDim
+    if (Math.abs(mat.color.r - expectedR) > 0.05) {
+      mat.userData.cavityBaseColor = mat.color.clone()
+    }
   }
+
+  const colorDim = aggressive ? CAVITY_BRIGHT_COLOR_DIM_FACTOR : CAVITY_COLOR_DIM_FACTOR
 
   mat.envMapIntensity = (mat.userData.cavityBaseEnvIntensity as number) * CAVITY_ENV_MAP_DIM_FACTOR
-  mat.color.copy(mat.userData.cavityBaseColor as THREE.Color).multiplyScalar(CAVITY_COLOR_DIM_FACTOR)
+  mat.color.copy(mat.userData.cavityBaseColor as THREE.Color).multiplyScalar(colorDim)
 
-  if ((mat.userData.cavityBaseEmissiveIntensity as number) > 0) {
-    mat.emissiveIntensity =
-      (mat.userData.cavityBaseEmissiveIntensity as number) * CAVITY_EMISSIVE_DIM_FACTOR
-  }
+  mat.emissive.copy(mat.userData.cavityBaseEmissive as THREE.Color).multiplyScalar(
+    CAVITY_EMISSIVE_DIM_FACTOR
+  )
+  mat.emissiveIntensity = (mat.userData.cavityBaseEmissiveIntensity as number) * CAVITY_EMISSIVE_DIM_FACTOR
 
   mat.metalness = (mat.userData.cavityBaseMetalness as number) * CAVITY_METALNESS_DIM_FACTOR
   mat.roughness = Math.min(
     1,
-    (mat.userData.cavityBaseRoughness as number) + 0.12
+    (mat.userData.cavityBaseRoughness as number) + CAVITY_ROUGHNESS_BOOST
   )
+
+  if (refreshDimming && mat.userData.cavityShaderPatched) {
+    delete mat.userData.cavityShaderPatched
+  }
+  patchInteriorCavityShader(mat)
 
   mat.needsUpdate = true
   result.cavityMeshesDimmed++
+}
+
+/** Dev helper: log all imported mesh names sorted (Pagani tagging). */
+export function logImportedMeshNames(scene: THREE.Object3D): string[] {
+  const names: string[] = []
+  scene.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
+      return
+    }
+    const label = obj.name || '(unnamed)'
+    const albedo = getMeshAverageAlbedo(obj).toFixed(2)
+    names.push(`${label} [albedo=${albedo}]`)
+  })
+  names.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  console.log(
+    `[enhanceInternalShadows] Imported mesh names (${names.length}, sorted):`,
+    names
+  )
+  return names
 }
 
 function hideInteriorMesh(mesh: THREE.Mesh, result: InternalShadowEnhancementResult): void {
@@ -451,6 +548,10 @@ export function enhanceInternalShadows(
 
   const modelBBox = computeImportedModelBBox(scene)
 
+  if (options.logAllMeshNames) {
+    logImportedMeshNames(scene)
+  }
+
   try {
     scene.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
@@ -472,6 +573,16 @@ export function enhanceInternalShadows(
       const isTransparent = materials.some(isTransparentMaterial)
       if (!isTransparent && !obj.castShadow) {
         obj.castShadow = true
+      }
+
+      // Interior cavities: ensure they both cast and receive directional shadows
+      if (obj.userData.isInteriorCavity || isInteriorCandidate(obj, modelBBox)) {
+        if (!obj.castShadow) {
+          obj.castShadow = true
+        }
+        if (!obj.receiveShadow) {
+          obj.receiveShadow = true
+        }
       }
     })
 
@@ -558,8 +669,16 @@ export function enhanceInternalShadows(
         return
       }
 
+      obj.userData.isInteriorCavity = true
+
+      const aggressive =
+        getMeshAverageAlbedo(obj) > BRIGHT_ALBEDO_THRESHOLD ||
+        !isLikelyInteriorMesh(obj)
+
       if (options.logAffectedMeshes) {
-        affectedMeshes.push(`[dimmed] ${obj.name || '(unnamed)'}`)
+        affectedMeshes.push(
+          `[dimmed${aggressive ? '/bright' : ''}] ${obj.name || '(unnamed)'}`
+        )
       }
 
       const rawMaterial = obj.material
@@ -588,7 +707,7 @@ export function enhanceInternalShadows(
             mat instanceof THREE.MeshStandardMaterial ||
             mat instanceof THREE.MeshPhysicalMaterial
           ) {
-            applyCavityDimming(mat, result, refreshDimming)
+            applyCavityDimming(mat, result, refreshDimming, aggressive)
           }
         }
       })

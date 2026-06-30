@@ -4,9 +4,9 @@ import type { WeatherQuality } from './weatherGpuUtils'
 /** Stronger SAO for recessed areas (engine bay, exhaust gaps). */
 export const CAVITY_AO_SETTINGS = {
   aoEnabled: true,
-  aoIntensity: 0.038,
+  aoIntensity: 0.048,
   aoScale: 0.92,
-  aoKernelRadius: 12,
+  aoKernelRadius: 14,
   aoBias: 0.55,
   aoBlur: true,
   aoBlurRadius: 8,

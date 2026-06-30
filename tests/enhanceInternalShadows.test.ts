@@ -4,12 +4,16 @@ import {
   isLikelyExteriorBodyPanel,
   isLikelyInteriorMesh,
   isSpatiallyInteriorMesh,
+  isInteriorCandidate,
+  getMeshAverageAlbedo,
   shouldHideInteriorMesh,
   enhanceInternalShadows,
   applyInteriorVisibility,
   HIDE_ABORT_THRESHOLD,
   CAVITY_ENV_MAP_DIM_FACTOR,
-  CAVITY_COLOR_DIM_FACTOR
+  CAVITY_COLOR_DIM_FACTOR,
+  CAVITY_BRIGHT_COLOR_DIM_FACTOR,
+  BRIGHT_ALBEDO_THRESHOLD
 } from '../src/utils/enhanceInternalShadows'
 import {
   shouldAutoEnableCavityAo,
@@ -62,7 +66,8 @@ describe('enhanceInternalShadows', () => {
     mesh.name = 'engine_block'
     const mat = mesh.material as THREE.MeshStandardMaterial
     mat.envMapIntensity = 2.0
-    mat.color.setRGB(1, 1, 1)
+    mat.color.setRGB(0.5, 0.5, 0.5)
+    mat.emissiveIntensity = 0.5
 
     const scene = new THREE.Scene()
     scene.add(mesh)
@@ -70,8 +75,60 @@ describe('enhanceInternalShadows', () => {
     const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
     expect(result.cavityMeshesDimmed).toBe(1)
     expect(mat.envMapIntensity).toBeCloseTo(2.0 * CAVITY_ENV_MAP_DIM_FACTOR)
-    expect(mat.color.r).toBeCloseTo(CAVITY_COLOR_DIM_FACTOR)
+    expect(mat.color.r).toBeCloseTo(0.5 * CAVITY_COLOR_DIM_FACTOR)
+    expect(mat.emissiveIntensity).toBe(0)
     expect(mat.userData.cavityDimApplied).toBe(true)
+    expect(mat.userData.cavityShaderPatched).toBe(true)
+  })
+
+  it('dims bright unnamed meshes inside inner bbox via albedo heuristic', () => {
+    const modelBBox = new THREE.Box3(
+      new THREE.Vector3(-2, 0, -4),
+      new THREE.Vector3(2, 2, 4)
+    )
+    mesh.name = 'Mesh_128'
+    mesh.position.set(0, 1, 0)
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    mat.color.setRGB(0.9, 0.9, 0.9)
+
+    expect(getMeshAverageAlbedo(mesh)).toBeGreaterThan(BRIGHT_ALBEDO_THRESHOLD)
+    expect(isInteriorCandidate(mesh, modelBBox)).toBe(true)
+    expect(shouldHideInteriorMesh(mesh, modelBBox)).toBe(false)
+
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
+    expect(result.cavityMeshesDimmed).toBe(1)
+    expect(mat.color.r).toBeCloseTo(0.9 * CAVITY_BRIGHT_COLOR_DIM_FACTOR)
+    expect(mesh.visible).toBe(true)
+  })
+
+  it('does not dim bright meshes outside inner bbox', () => {
+    const scene = new THREE.Scene()
+    // Shell meshes define the outer bbox so inner-region test is meaningful
+    for (const z of [-4, 4]) {
+      const shell = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 2, 1),
+        new THREE.MeshStandardMaterial()
+      )
+      shell.name = `body_shell_${z}`
+      shell.position.set(0, 1, z)
+      shell.userData.isImportedModel = true
+      scene.add(shell)
+    }
+
+    mesh.name = 'Mesh_200'
+    mesh.position.set(0, 1, 3.9)
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    mat.color.setRGB(0.9, 0.9, 0.9)
+    scene.add(mesh)
+
+    const modelBBox = new THREE.Box3().setFromObject(scene)
+    expect(isInteriorCandidate(mesh, modelBBox)).toBe(false)
+
+    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
+    expect(result.cavityMeshesDimmed).toBe(0)
+    expect(mat.color.r).toBeCloseTo(0.9)
   })
 
   it('keeps exterior panels front-sided and visible', () => {
@@ -237,8 +294,9 @@ describe('cavityOcclusion', () => {
   })
 
   it('uses stronger but safe AO intensity', () => {
-    expect(CAVITY_AO_SETTINGS.aoIntensity).toBeGreaterThan(0.02)
+    expect(CAVITY_AO_SETTINGS.aoIntensity).toBeGreaterThan(0.04)
     expect(CAVITY_AO_SETTINGS.aoIntensity).toBeLessThan(0.06)
-    expect(CAVITY_AO_SETTINGS.aoKernelRadius).toBeLessThanOrEqual(14)
+    expect(CAVITY_AO_SETTINGS.aoKernelRadius).toBeGreaterThanOrEqual(12)
+    expect(CAVITY_AO_SETTINGS.aoKernelRadius).toBeLessThanOrEqual(16)
   })
 })
