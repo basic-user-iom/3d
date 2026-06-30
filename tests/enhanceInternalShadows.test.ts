@@ -3,8 +3,12 @@ import * as THREE from 'three'
 import {
   isLikelyExteriorBodyPanel,
   isLikelyInteriorMesh,
+  isSpatiallyInteriorMesh,
+  shouldHideInteriorMesh,
   enhanceInternalShadows,
-  CAVITY_ENV_MAP_DIM_FACTOR
+  applyInteriorVisibility,
+  CAVITY_ENV_MAP_DIM_FACTOR,
+  CAVITY_COLOR_DIM_FACTOR
 } from '../src/utils/enhanceInternalShadows'
 import {
   shouldAutoEnableCavityAo,
@@ -35,23 +39,30 @@ describe('enhanceInternalShadows', () => {
     expect(isLikelyExteriorBodyPanel(mesh)).toBe(false)
   })
 
+  it('detects expanded interior keywords', () => {
+    mesh.name = 'underbody_subframe_mount'
+    expect(isLikelyInteriorMesh(mesh)).toBe(true)
+  })
+
   it('respects userData.interior tag', () => {
     mesh.name = 'part_042'
     mesh.userData.interior = true
     expect(isLikelyInteriorMesh(mesh)).toBe(true)
   })
 
-  it('dims envMapIntensity on interior meshes', () => {
+  it('dims envMapIntensity and color on interior meshes', () => {
     mesh.name = 'engine_block'
     const mat = mesh.material as THREE.MeshStandardMaterial
     mat.envMapIntensity = 2.0
+    mat.color.setRGB(1, 1, 1)
 
     const scene = new THREE.Scene()
     scene.add(mesh)
 
-    const result = enhanceInternalShadows(scene)
+    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: false })
     expect(result.cavityMeshesDimmed).toBe(1)
     expect(mat.envMapIntensity).toBeCloseTo(2.0 * CAVITY_ENV_MAP_DIM_FACTOR)
+    expect(mat.color.r).toBeCloseTo(CAVITY_COLOR_DIM_FACTOR)
     expect(mat.userData.cavityDimApplied).toBe(true)
   })
 
@@ -67,19 +78,79 @@ describe('enhanceInternalShadows', () => {
     expect(result.exteriorPanelsFrontSided).toBe(1)
     expect(mat.side).toBe(THREE.FrontSide)
   })
+
+  it('hides interior meshes inside model bbox when enabled', () => {
+    const exterior = new THREE.Mesh(
+      new THREE.BoxGeometry(4, 1.2, 8),
+      new THREE.MeshStandardMaterial()
+    )
+    exterior.name = 'rear_bumper_panel'
+    exterior.position.set(0, 0.5, -3.5)
+    exterior.userData.isImportedModel = true
+
+    const engine = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 1, 2),
+      new THREE.MeshStandardMaterial()
+    )
+    engine.name = 'exhaust_pipe_assembly'
+    engine.position.set(0, 0.6, -2.8)
+    engine.userData.isImportedModel = true
+
+    const scene = new THREE.Scene()
+    scene.add(exterior, engine)
+
+    const result = enhanceInternalShadows(scene, [], { hideInteriorGeometry: true })
+    expect(result.interiorMeshesHidden).toBeGreaterThanOrEqual(1)
+    expect(engine.visible).toBe(false)
+    expect(exterior.visible).toBe(true)
+  })
+
+  it('restores hidden meshes when applyInteriorVisibility(false)', () => {
+    mesh.name = 'engine_block'
+    mesh.position.set(0, 0, 0)
+
+    const scene = new THREE.Scene()
+    scene.add(mesh)
+
+    enhanceInternalShadows(scene, [], { hideInteriorGeometry: true })
+    const restored = applyInteriorVisibility(scene, false)
+    expect(restored).toBeGreaterThanOrEqual(0)
+  })
+
+  it('detects spatially interior meshes', () => {
+    const modelBBox = new THREE.Box3(
+      new THREE.Vector3(-2, 0, -4),
+      new THREE.Vector3(2, 2, 4)
+    )
+    mesh.position.set(0, 1, 0)
+    expect(isSpatiallyInteriorMesh(mesh, modelBBox)).toBe(true)
+    mesh.position.set(0, 1, 3.9)
+    expect(isSpatiallyInteriorMesh(mesh, modelBBox)).toBe(false)
+  })
+
+  it('shouldHideInteriorMesh for named exhaust inside bbox', () => {
+    const modelBBox = new THREE.Box3(
+      new THREE.Vector3(-2, 0, -4),
+      new THREE.Vector3(2, 2, 4)
+    )
+    mesh.name = 'rear_exhaust_pipe'
+    mesh.position.set(0, 0.8, -3)
+    expect(shouldHideInteriorMesh(mesh, modelBBox)).toBe(true)
+  })
 })
 
 describe('cavityOcclusion', () => {
-  it('only auto-enables SAO for high/ultra weather with post-processing', () => {
+  it('auto-enables SAO for medium+ weather with post-processing', () => {
     expect(shouldAutoEnableCavityAo(true, 'low', true)).toBe(false)
-    expect(shouldAutoEnableCavityAo(true, 'medium', true)).toBe(false)
+    expect(shouldAutoEnableCavityAo(true, 'medium', true)).toBe(true)
     expect(shouldAutoEnableCavityAo(true, 'high', false)).toBe(false)
     expect(shouldAutoEnableCavityAo(true, 'high', true)).toBe(true)
     expect(shouldAutoEnableCavityAo(true, 'ultra', true)).toBe(true)
   })
 
-  it('uses conservative AO intensity', () => {
-    expect(CAVITY_AO_SETTINGS.aoIntensity).toBeLessThan(0.05)
-    expect(CAVITY_AO_SETTINGS.aoKernelRadius).toBeLessThanOrEqual(12)
+  it('uses stronger but safe AO intensity', () => {
+    expect(CAVITY_AO_SETTINGS.aoIntensity).toBeGreaterThan(0.02)
+    expect(CAVITY_AO_SETTINGS.aoIntensity).toBeLessThan(0.06)
+    expect(CAVITY_AO_SETTINGS.aoKernelRadius).toBeLessThanOrEqual(14)
   })
 })

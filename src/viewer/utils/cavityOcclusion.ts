@@ -1,22 +1,22 @@
 import { useAppStore } from '../../store/useAppStore'
 import type { WeatherQuality } from './weatherGpuUtils'
 
-/** Conservative SAO settings for recessed areas (engine bay, exhaust gaps). */
+/** Stronger SAO for recessed areas (engine bay, exhaust gaps). */
 export const CAVITY_AO_SETTINGS = {
   aoEnabled: true,
-  aoIntensity: 0.018,
-  aoScale: 0.85,
-  aoKernelRadius: 10,
-  aoBias: 0.5,
+  aoIntensity: 0.038,
+  aoScale: 0.92,
+  aoKernelRadius: 12,
+  aoBias: 0.55,
   aoBlur: true,
-  aoBlurRadius: 6,
-  aoBlurStdDev: 3,
-  aoBlurDepthCutoff: 0.01
+  aoBlurRadius: 8,
+  aoBlurStdDev: 3.5,
+  aoBlurDepthCutoff: 0.008
 } as const
 
 /**
- * SAO is only auto-enabled for high/ultra weather quality when post-processing is on.
- * Low/medium tiers skip it to limit GPU load.
+ * SAO auto-enabled when standalone weather + post-processing are on.
+ * Medium+ quality — stronger defaults help hide engine bay through rear gaps.
  */
 export function shouldAutoEnableCavityAo(
   standaloneWeather: boolean,
@@ -24,7 +24,7 @@ export function shouldAutoEnableCavityAo(
   postProcessingEnabled: boolean
 ): boolean {
   if (!standaloneWeather || !postProcessingEnabled) return false
-  return weatherQuality === 'high' || weatherQuality === 'ultra'
+  return weatherQuality === 'medium' || weatherQuality === 'high' || weatherQuality === 'ultra'
 }
 
 /**
