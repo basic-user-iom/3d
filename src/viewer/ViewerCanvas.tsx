@@ -79,6 +79,7 @@ import {
 } from './utils/lightingContext'
 import {
   applyHdrGroundShadowCatcherMaterial,
+  effectiveShadowPlaneVisible,
   shouldUseHdrGroundShadowCatcher
 } from './utils/hdrGroundShadowCatcher'
 import {
@@ -5782,13 +5783,17 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
     shadowsEnabled
   })
+  const effectiveShowShadowPlane = effectiveShadowPlaneVisible(showShadowPlane, {
+    hdrEnabled: store.hdrEnabled,
+    hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+    shadowsEnabled
+  })
 
     // Update shadow plane visibility
     scene.traverse((obj) => {
       if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
         const hiddenForPathTracer = Boolean(obj.userData.__hiddenForPathTracer)
-        const shouldShowPlane = useHdrGroundShadowCatcher || showShadowPlane
-        obj.visible = hiddenForPathTracer ? false : shouldShowPlane
+        obj.visible = hiddenForPathTracer ? false : effectiveShowShadowPlane
         obj.receiveShadow = true
 
         if (useHdrGroundShadowCatcher) {
