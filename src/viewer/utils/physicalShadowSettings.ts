@@ -210,8 +210,8 @@ export function computeOmnidirectionalShadowFar(
 }
 
 /**
- * Tighter shadow far for point lights above a subject — avoids huge racetrack bounds
- * diluting cube-map resolution into a soft dark circle on HDR ground.
+ * Point-light shadow far — always reach the ground plane.
+ * Tightening far below ground reach creates a visible circular cutoff on flat receivers.
  */
 export function computePointLightShadowFar(
   lightPosition: THREE.Vector3,
@@ -219,33 +219,16 @@ export function computePointLightShadowFar(
   margin = 0.25,
   groundY = SHADOW_GROUND_PLANE_Y
 ): number {
-  if (sceneBox.isEmpty()) return PHYSICAL_OMNI_SHADOW_FAR_INITIAL
-
-  const size = sceneBox.getSize(new THREE.Vector3())
-  const maxDim = Math.max(size.x, size.y, size.z)
-  const fullFar = computeOmnidirectionalShadowFar(lightPosition, sceneBox, margin, groundY)
-  const heightAboveGround = Math.max(lightPosition.y - groundY, 0.01)
-
-  if (maxDim <= TIGHT_FRUSTUM_MAX_DIM) {
-    return fullFar
-  }
-
-  // Local contact radius: height-scaled footprint around the light, capped for large HDR scenes
-  const localHoriz = Math.min(
-    Math.max(maxDim * 0.35, heightAboveGround * 2.5, 8),
-    TIGHT_FRUSTUM_MAX_DIM * 1.5
-  )
-  const localFar = Math.hypot(heightAboveGround, localHoriz) * (1 + margin)
-  return Math.min(fullFar, Math.max(localFar, heightAboveGround * (1 + margin)))
+  return computeOmnidirectionalShadowFar(lightPosition, sceneBox, margin, groundY)
 }
 
-/** Scale cube-map shadow strength so low-intensity fill lights do not dominate sun shadows. */
+/** Scale cube-map shadow strength so fill lights do not dominate sun shadows. */
 export function computePointLightShadowIntensity(
   lightIntensity: number,
   diminishForHdrSun: boolean
 ): number {
   if (!diminishForHdrSun) return 1
-  return THREE.MathUtils.clamp(lightIntensity * 2.5, 0.08, 0.4)
+  return THREE.MathUtils.clamp(lightIntensity / 10, 0.04, 0.15)
 }
 
 export function applyPointLightShadowIntensity(

@@ -55,6 +55,7 @@ import { shadowOpacityModifierRegistry } from './materials/ShadowOpacityModifier
 import {
   timeOfDayToSkyAngles,
   createLight,
+  getRuntimeLightType,
   computeLightDirection as computeLightDirectionUtil,
   computeSunLightingFromElevation,
   isNightTimeOfDay,
@@ -5752,18 +5753,38 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     const lightsMap = viewerRef.current.directionalLights
     const lightsConfig = store.directionalLights
 
+    const sunLightCastShadowConfig = lightsConfig.some(
+      (l) => l.isSun && l.enabled && l.castShadow
+    )
+    const diminishPointShadows = shouldDiminishPointLightShadows({
+      hdrEnabled: store.hdrEnabled,
+      shadowsEnabled,
+      sunLightCastShadowConfig,
+      mode: lightingMode,
+      csmEnabled: csmActive
+    })
+
     lightsMap.forEach((light, lightId) => {
       const lightConfig = lightsConfig.find((l) => l.id === lightId)
       if (!lightConfig) return
 
-      const shouldCastShadow = resolveDirectionalCastShadow({
-        mode: lightingMode,
-        csmEnabled: csmActive,
-        isSun: !!lightConfig.isSun,
-        enabled: lightConfig.enabled,
-        castShadowConfig: !!lightConfig.castShadow,
-        shadowsEnabled
-      })
+      const isPointLight = (light as THREE.PointLight).isPointLight
+      const shouldCastShadow = isPointLight
+        ? resolvePointLightCastShadow({
+            mode: lightingMode,
+            enabled: lightConfig.enabled,
+            castShadowConfig: !!lightConfig.castShadow,
+            shadowsEnabled,
+            diminishForHdrSun: diminishPointShadows
+          })
+        : resolveDirectionalCastShadow({
+            mode: lightingMode,
+            csmEnabled: csmActive,
+            isSun: !!lightConfig.isSun,
+            enabled: lightConfig.enabled,
+            castShadowConfig: !!lightConfig.castShadow,
+            shadowsEnabled
+          })
 
       light.castShadow = shouldCastShadow
       if (shouldCastShadow && light.shadow) {
@@ -6149,6 +6170,45 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       
       let light = lightsMap.get(config.id)
 
+      const expectedType = config.type || 'directional'
+      if (light && getRuntimeLightType(light) !== expectedType) {
+        if (viewerRef.current?.transformControls) {
+          const transformControls = viewerRef.current.transformControls
+          const gizmo = gizmosMap?.get(config.id)
+          const currentAttached = (transformControls as any).object
+          if (currentAttached === light || currentAttached === gizmo) {
+            transformControls.detach()
+          }
+        }
+        if (startingObjectsGroup) {
+          startingObjectsGroup.remove(light)
+        } else {
+          scene.remove(light)
+        }
+        const helpersMap = viewerRef.current?.lightHelpers || new Map()
+        const helper = helpersMap.get(config.id)
+        if (helper) {
+          scene.remove(helper)
+          helper.dispose()
+          helpersMap.delete(config.id)
+        }
+        if (viewerRef.current?.shadowMapViewers) {
+          viewerRef.current.shadowMapViewers.delete(config.id)
+        }
+        if (gizmosMap && lightToGizmoMap && gizmoToLightMap) {
+          removeLightGizmo(
+            scene,
+            config.id,
+            gizmosMap as Map<string, THREE.Object3D>,
+            lightToGizmoMap as WeakMap<THREE.Light, THREE.Object3D>,
+            gizmoToLightMap as WeakMap<THREE.Object3D, THREE.Light>
+          )
+        }
+        light.dispose()
+        lightsMap.delete(config.id)
+        light = undefined
+      }
+
       if (!light) {
         // Create new light using unified createLight function
         light = createLight(config, scene) as THREE.DirectionalLight
@@ -6448,7 +6508,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             mode: lightingMode,
             enabled: config.enabled,
             castShadowConfig: !!config.castShadow,
-            shadowsEnabled: shadowsEnabledForLights
+            shadowsEnabled: shadowsEnabledForLights,
+            diminishForHdrSun: diminishPointShadows
           })
         : resolveDirectionalCastShadow({
             mode: lightingMode,
