@@ -78,6 +78,10 @@ import {
   shouldUseWeatherShadowMapTiers
 } from './utils/lightingContext'
 import {
+  applyHdrGroundShadowCatcherMaterial,
+  shouldUseHdrGroundShadowCatcher
+} from './utils/hdrGroundShadowCatcher'
+import {
   applyHdrShadowContrastToMaterials,
   computeHdrAmbientIntensity
 } from '../utils/lightProbeUtils'
@@ -5707,6 +5711,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const gridSize = useAppStore((state) => state.gridSize)
   const hdrEnabled = useAppStore((state) => state.hdrEnabled)
   const hdrIntensity = useAppStore((state) => state.hdrIntensity)
+  const hdrGroundProjectionEnabled = useAppStore((state) => state.hdrGroundProjectionEnabled)
 
   useEffect(() => {
     if (!viewerRef.current) return
@@ -5772,12 +5777,23 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
     }
     
+  const useHdrGroundShadowCatcher = shouldUseHdrGroundShadowCatcher({
+    hdrEnabled: store.hdrEnabled,
+    hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+    shadowsEnabled
+  })
+
     // Update shadow plane visibility
     scene.traverse((obj) => {
       if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
         const hiddenForPathTracer = Boolean(obj.userData.__hiddenForPathTracer)
-        obj.visible = hiddenForPathTracer ? false : showShadowPlane
+        const shouldShowPlane = useHdrGroundShadowCatcher || showShadowPlane
+        obj.visible = hiddenForPathTracer ? false : shouldShowPlane
         obj.receiveShadow = true
+
+        if (useHdrGroundShadowCatcher) {
+          applyHdrGroundShadowCatcherMaterial(obj, shadowIntensity)
+        }
       }
     })
     
@@ -5829,6 +5845,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // v1.7: Update shadow plane material based on transparent option and intensity
     scene.traverse((obj) => {
       if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
+        if (useHdrGroundShadowCatcher) {
+          applyHdrGroundShadowCatcherMaterial(obj, shadowIntensity)
+          return
+        }
+
         const currentMaterial = obj.material
         if (shadowPlaneTransparent) {
           // Use ShadowMaterial for transparent shadows
@@ -5898,7 +5919,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         obj.material.needsUpdate = true
       }
     })
-  }, [shadowsEnabled, shadowIntensity, shadowPlaneTransparent, shadowBias, showShadowPlane, shadowMapSize, useAdaptiveShadowSettings, hdrEnabled, hdrIntensity])
+  }, [shadowsEnabled, shadowIntensity, shadowPlaneTransparent, shadowBias, showShadowPlane, shadowMapSize, useAdaptiveShadowSettings, hdrEnabled, hdrIntensity, hdrGroundProjectionEnabled])
   
   // Effect to update shadow map size and bias settings when they change
   useEffect(() => {
@@ -6663,7 +6684,6 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   // Effect to handle HDR environment map - COMPLETE REWRITE using HDRSystem
   const hdrUrl = useAppStore((state) => state.hdrUrl)
   const hdrFile = useAppStore((state) => state.hdrFile)
-  const hdrGroundProjectionEnabled = useAppStore((state) => state.hdrGroundProjectionEnabled)
   const hdrGroundProjectionHeight = useAppStore((state) => state.hdrGroundProjectionHeight)
   const hdrGroundProjectionRadius = useAppStore((state) => state.hdrGroundProjectionRadius)
   const hdrRotationAzimuth = useAppStore((state) => state.hdrRotationAzimuth)

@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three'
+import { useAppStore } from '../store/useAppStore'
 
 export interface ShadowTestResult {
   name: string
@@ -247,17 +248,18 @@ export function runShadowSystemTests(
     })
 
     // Test shadow plane visibility
-    // CRITICAL: Shadow plane may be hidden if HDR ground projection is enabled
+    // With HDR ground projection, a transparent shadow catcher plane is auto-shown for contact shadows
     let shadowPlaneShouldBeVisible = true
     let visibilityReason = ''
     
     if (viewer && viewer.hdrSystem && (viewer.hdrSystem as any).config) {
       const hdrConfig = (viewer.hdrSystem as any).config
       const groundProjectionEnabled = hdrConfig.groundProjection?.enabled === true
+      const shadowsOn = useAppStore.getState().shadowsEnabled
       
-      if (groundProjectionEnabled) {
-        shadowPlaneShouldBeVisible = false
-        visibilityReason = 'HDR ground projection enabled (replaces shadow plane)'
+      if (groundProjectionEnabled && shadowsOn) {
+        shadowPlaneShouldBeVisible = true
+        visibilityReason = 'HDR ground projection uses shadow catcher overlay'
       }
     }
     

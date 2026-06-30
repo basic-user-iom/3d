@@ -92,9 +92,8 @@ export function setupGroundProjectedEnv(
   ;(skybox as any).isGroundedSkybox = true
   skybox.userData.isGroundedSkybox = true
   
-  // Helper function to apply shadow support to GroundedSkybox material
-  // NOTE: GroundedSkybox uses MeshBasicMaterial which doesn't support shadows
-  // We cannot inject shadow support without breaking the shader, so we skip it
+ * GroundedSkybox uses MeshBasicMaterial (no shadow map sampling). Contact shadows on the
+ * projected ground are composited via a transparent ShadowMaterial plane — see hdrGroundShadowCatcher.ts.
   const applyShadowSupportToMaterial = (skyboxMesh: GroundedSkybox) => {
     const material = skyboxMesh.material as THREE.Material
     
