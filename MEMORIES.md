@@ -4,7 +4,7 @@ Persistent record of investigated bugs, fixes, and open PRs. **Do not re-investi
 
 ## Open PRs
 
-_Update after PR is created._
+- [#1 — Fix idle render pause blocking weather/lighting slider updates](https://github.com/basic-user-iom/3d/pull/1)
 
 ## Investigated Bugs
 
@@ -14,7 +14,7 @@ _Update after PR is created._
 - **Trigger:** Standalone weather active, camera static (idle pause engaged). Move time-of-day, cloud, HDR intensity, or shadow sliders — scene lighting/sky does not repaint until camera nudge.
 - **Root cause:** `cc498c9` stopped continuous redraw when CSM/sky were static, but React lighting effects mutate the scene without calling `viewer.requestRender()`.
 - **Fix:** `wakeViewerRender()` helper; call from weather, shadow, and ambient effects; restore sun `castShadow` via `resolveDirectionalCastShadow` when exiting weather.
-- **Status:** Fixed (PR pending)
+- **Status:** Fixed in PR #1
 
 ### 2026-06-25 — Camera-view export concurrent WebGL render (mutex incomplete)
 
