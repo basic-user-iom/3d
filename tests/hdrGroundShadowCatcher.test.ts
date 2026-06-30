@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import {
   applyHdrGroundShadowCatcherMaterial,
+  effectiveShadowPlaneVisible,
   shadowCatcherOpacity,
   shouldUseHdrGroundShadowCatcher
 } from '../src/viewer/utils/hdrGroundShadowCatcher'
@@ -33,6 +34,24 @@ describe('hdrGroundShadowCatcher', () => {
     ).toBe(false)
   })
 
+  it('shows shadow plane when HDR ground catcher is active even if toggle is off', () => {
+    expect(
+      effectiveShadowPlaneVisible(false, {
+        hdrEnabled: true,
+        hdrGroundProjectionEnabled: true,
+        shadowsEnabled: true
+      })
+    ).toBe(true)
+
+    expect(
+      effectiveShadowPlaneVisible(false, {
+        hdrEnabled: true,
+        hdrGroundProjectionEnabled: true,
+        shadowsEnabled: false
+      })
+    ).toBe(false)
+  })
+
   it('applies ShadowMaterial to the shadow plane', () => {
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 10),
@@ -41,9 +60,15 @@ describe('hdrGroundShadowCatcher', () => {
 
     applyHdrGroundShadowCatcherMaterial(plane, 1.0)
 
-    expect(plane.material).toBeInstanceOf(THREE.ShadowMaterial)
-    expect((plane.material as THREE.ShadowMaterial).depthWrite).toBe(true)
-    expect((plane.material as THREE.ShadowMaterial).opacity).toBe(shadowCatcherOpacity(1.0))
+    const material = plane.material
+    expect(material).toBeInstanceOf(THREE.ShadowMaterial)
+    if (!(material instanceof THREE.ShadowMaterial)) {
+      throw new Error('expected ShadowMaterial')
+    }
+    expect(material.depthWrite).toBe(true)
+    expect(material.transparent).toBe(true)
+    expect(material.side).toBe(THREE.DoubleSide)
+    expect(material.opacity).toBe(shadowCatcherOpacity(1.0))
     expect(plane.receiveShadow).toBe(true)
     expect(plane.castShadow).toBe(false)
     expect(plane.renderOrder).toBe(100)

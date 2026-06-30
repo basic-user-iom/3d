@@ -14,6 +14,14 @@ export function shouldUseHdrGroundShadowCatcher(input: HdrGroundShadowInput): bo
   return input.hdrEnabled && input.hdrGroundProjectionEnabled && input.shadowsEnabled
 }
 
+/** Shadow plane is shown when user toggles it on OR HDR ground shadow catcher is active. */
+export function effectiveShadowPlaneVisible(
+  showShadowPlane: boolean,
+  input: HdrGroundShadowInput
+): boolean {
+  return shouldUseHdrGroundShadowCatcher(input) || showShadowPlane
+}
+
 export function shadowCatcherOpacity(shadowIntensity: number): number {
   return Math.min(1.0, 0.1 + (shadowIntensity / 2.0) * 0.9)
 }
@@ -29,11 +37,17 @@ export function applyHdrGroundShadowCatcherMaterial(
     if (current instanceof THREE.Material) {
       current.dispose()
     }
-    const shadowMaterial = new THREE.ShadowMaterial({ opacity })
-    shadowMaterial.depthWrite = true
+    const shadowMaterial = new THREE.ShadowMaterial({
+      opacity,
+      transparent: true,
+      depthWrite: true,
+      side: THREE.DoubleSide
+    })
     plane.material = shadowMaterial
   } else {
     current.opacity = opacity
+    current.transparent = true
+    current.side = THREE.DoubleSide
     if (current.depthWrite !== true) {
       current.depthWrite = true
     }
