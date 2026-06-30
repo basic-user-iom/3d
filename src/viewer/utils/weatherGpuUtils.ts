@@ -21,7 +21,13 @@ export function getCsmShadowMapSizeForQuality(quality: WeatherQuality): number {
   return 2048
 }
 
-/** CSM cascade count per weather quality preset. */
+/** Max CSM shadow distance per weather quality preset. */
+export function getCsmMaxFarForQuality(quality: WeatherQuality): number {
+  if (quality === 'low') return 3000
+  if (quality === 'medium') return 4000
+  return 5000
+}
+
 export function getCsmCascadeCountForQuality(quality: WeatherQuality): number {
   if (quality === 'low') return 1
   if (quality === 'medium') return 2

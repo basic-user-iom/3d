@@ -9,6 +9,7 @@ import { WaterSystem } from './effects/WaterSystem'
 // Streets GL only - Three.js Sky removed
 // Streets GL only - Three.js weather systems removed
 import { CSMShadowSystem } from './effects/CSMShadowSystem'
+import { CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS } from './effects/StreetsGLCSM'
 import { SunMoonSystem } from './effects/SunMoonSystem'
 import { StandaloneWaterSystem } from './effects/StandaloneWaterSystem'
 import { AtmosphericPerspective } from './effects/AtmosphericPerspective'
@@ -7418,8 +7419,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           maxFar: 5000,
           shadowMapSize: getCsmShadowMapSizeForQuality(weatherQuality || 'high'),
           lightDirection: sunLightTravelDir,
-          shadowBias: -0.0002,
-          shadowNormalBias: 0.01
+          shadowBias: CSM_SHADER_BIAS,
+          shadowNormalBias: CSM_SHADER_NORMAL_BIAS
         })
         csmShadowSystem.init()
         viewerRef.current.csmShadowSystem = csmShadowSystem
@@ -8997,8 +8998,8 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           maxFar: 5000,
           shadowMapSize: getCsmShadowMapSizeForQuality(store.weatherQuality || 'high'),
           lightDirection: new THREE.Vector3(-1, -1, -1), // Will be updated by time of day
-          shadowBias: -0.0002,
-          shadowNormalBias: 0.01
+          shadowBias: CSM_SHADER_BIAS,
+          shadowNormalBias: CSM_SHADER_NORMAL_BIAS
         })
         
         // Initialize CSM

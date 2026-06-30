@@ -788,6 +788,8 @@ export function enhanceInternalShadows(
 
     directionalLights.forEach((light) => {
       if (!light.shadow || !light.castShadow) return
+      // CSM cascade lights manage their own bias via CSMBias shader uniforms
+      if (light.userData?.isCSMLight) return
 
       const currentNear = light.shadow.camera.near
       const optimizedNear = Math.min(currentNear, 0.001)

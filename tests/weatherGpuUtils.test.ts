@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   getAdaptiveIqRaymarchSteps,
   getCsmCascadeCountForQuality,
+  getCsmMaxFarForQuality,
   getCsmShadowMapSizeForQuality,
   getEffectiveMaxFps,
   getEffectivePixelRatio,
@@ -15,6 +16,15 @@ describe('weatherGpuUtils', () => {
       expect(getCsmShadowMapSizeForQuality('medium')).toBe(1024)
       expect(getCsmShadowMapSizeForQuality('high')).toBe(2048)
       expect(getCsmShadowMapSizeForQuality('ultra')).toBe(2048)
+    })
+  })
+
+  describe('getCsmMaxFarForQuality', () => {
+    it('scales shadow far plane per tier', () => {
+      expect(getCsmMaxFarForQuality('low')).toBe(3000)
+      expect(getCsmMaxFarForQuality('medium')).toBe(4000)
+      expect(getCsmMaxFarForQuality('high')).toBe(5000)
+      expect(getCsmMaxFarForQuality('ultra')).toBe(5000)
     })
   })
 

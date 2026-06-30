@@ -1,7 +1,8 @@
 import * as THREE from 'three'
-import { StreetsGLCSM, StreetsGLCSMConfig } from './StreetsGLCSM'
+import { StreetsGLCSM, StreetsGLCSMConfig, CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS } from './StreetsGLCSM'
 import {
   getCsmCascadeCountForQuality,
+  getCsmMaxFarForQuality,
   getCsmShadowMapSizeForQuality,
   type WeatherQuality
 } from '../utils/weatherGpuUtils'
@@ -61,8 +62,8 @@ export class CSMShadowSystem {
       maxFar = 5000,
       shadowMapSize = 2048, // High resolution like Streets GL
       lightDirection = new THREE.Vector3(-1, -1, -1),
-      shadowBias = -0.0002,
-      shadowNormalBias = 0.03, // IMPROVED: Increased from 0.01 to 0.03 to prevent shadow artifacts on curved surfaces (recommended: 0.02-0.05)
+      shadowBias = CSM_SHADER_BIAS,
+      shadowNormalBias = CSM_SHADER_NORMAL_BIAS, // Streets GL shader bias (scaled per cascade in CSMBias)
       biasScale = 1.0,
       mode = 'practical', // Streets GL CSM mode
       shadowRadius = 2 // IMPROVED: Default to 2 for smoother shadows (recommended: 2-3)
@@ -397,48 +398,12 @@ export class CSMShadowSystem {
   }
 
   /**
-   * Update CSM shadow quality (recreates CSM with new settings)
+   * Update CSM shadow quality — aligned with weather GPU tiers (not legacy 4096px presets).
    */
   public setShadowQuality(quality: 'low' | 'medium' | 'high'): void {
-    if (!this.csm) return
-
-    // Streets GL quality presets
-    let cascades: number
-    let shadowMapSize: number
-    let maxFar: number
-    let biasScale: number
-
-    if (quality === 'low') {
-      cascades = 1
-      shadowMapSize = 2048
-      maxFar = 3000
-      biasScale = 1.0
-    } else if (quality === 'medium') {
-      cascades = 3
-      shadowMapSize = 2048
-      maxFar = 4000
-      biasScale = 1.0
-    } else { // high
-      cascades = 3
-      shadowMapSize = 4096
-      maxFar = 5000
-      biasScale = 0.5
-    }
-
-    // Update config
-    this.config.cascades = cascades
-    this.config.shadowMapSize = shadowMapSize
-    this.config.maxFar = maxFar
-
-    // CRITICAL: Also update the store's shadowMapSize to keep them in sync
-    // This ensures that any code that reads from the store will use the correct value
-    // Note: We can't import useAppStore here due to circular dependency, so we'll update it via the viewer
-    // The store update will be handled by the LightingPanel component when it calls setShadowQuality
-
-    // Recreate CSM with new settings
-    this.init()
-    
-    console.log(`[CSMShadowSystem] Shadow quality set to: ${quality} (${cascades} cascades, ${shadowMapSize}px, ${maxFar}m)`)
+    const weatherQuality: WeatherQuality =
+      quality === 'low' ? 'low' : quality === 'medium' ? 'medium' : 'high'
+    this.applyWeatherQuality(weatherQuality)
   }
 
   /**
@@ -446,44 +411,25 @@ export class CSMShadowSystem {
    */
   public setShadowBias(bias: number): void {
     if (!this.csm) return
-    
-    // Update config
+
     this.config.shadowBias = bias
-    
-    // Update bias on all CSM lights
-    const lights = this.csm.getLights()
+    this.csm.setShaderBias(bias * (this.config.biasScale || 1.0))
+
     const previousBias = this.config.shadowBias
-    lights.forEach((light) => {
-      if (light.shadow) {
-        light.shadow.bias = bias * (this.config.biasScale || 1.0)
-        light.shadow.needsUpdate = true
-      }
-    })
-    
-    // Only log if bias changed significantly to reduce console spam during slider movement
     if (Math.abs(bias - previousBias) > 0.0001) {
       console.log(`[CSMShadowSystem] Shadow bias updated to: ${bias.toFixed(6)}`)
     }
   }
 
   /**
-   * Update CSM shadow normal bias (applies to all cascade lights)
+   * Update CSM shader normal bias (CSMBias uniform — not Three.js light.shadow.normalBias)
    */
   public setShadowNormalBias(normalBias: number): void {
     if (!this.csm) return
-    
-    // Update config
+
     this.config.shadowNormalBias = normalBias
-    
-    // Update normal bias on all CSM lights
-    const lights = this.csm.getLights()
-    lights.forEach((light) => {
-      if (light.shadow) {
-        light.shadow.normalBias = normalBias * (this.config.biasScale || 1.0)
-        light.shadow.needsUpdate = true
-      }
-    })
-    
+    this.csm.setShaderNormalBias(normalBias * (this.config.biasScale || 1.0))
+
     console.log(`[CSMShadowSystem] Shadow normal bias updated to: ${normalBias}`)
   }
 
@@ -532,15 +478,31 @@ export class CSMShadowSystem {
 
     const cascades = getCsmCascadeCountForQuality(quality)
     const shadowMapSize = getCsmShadowMapSizeForQuality(quality)
-    if (this.config.cascades === cascades && this.config.shadowMapSize === shadowMapSize) {
+    const maxFar = getCsmMaxFarForQuality(quality)
+    if (
+      this.config.cascades === cascades &&
+      this.config.shadowMapSize === shadowMapSize &&
+      this.config.maxFar === maxFar
+    ) {
       return
     }
 
+    const currentDirection = this.csm.direction.clone()
+    const currentIntensity = this.csm.intensity
+    const lights = this.csm.getLights()
+    const currentColor = lights.length > 0 ? lights[0].color.clone() : new THREE.Color(0xffffff)
+
     this.config.cascades = cascades
     this.config.shadowMapSize = shadowMapSize
+    this.config.maxFar = maxFar
     this.init()
+
+    this.setLightDirection(currentDirection)
+    this.setLightIntensity(currentIntensity)
+    this.setLightColor(currentColor)
+
     console.log(
-      `[CSMShadowSystem] Weather quality ${quality}: ${cascades} cascade(s), ${shadowMapSize}px maps`
+      `[CSMShadowSystem] Weather quality ${quality}: ${cascades} cascade(s), ${shadowMapSize}px maps, ${maxFar}m far`
     )
   }
 

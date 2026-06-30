@@ -485,12 +485,12 @@ export default function LightingPanel() {
                           fontSize: '14px'
                         }}
                       >
-                        <option value="low">Low (1 cascade, 2048px, 3000m)</option>
-                        <option value="medium">Medium (3 cascades, 2048px, 4000m)</option>
-                        <option value="high">High (3 cascades, 4096px, 5000m)</option>
+                        <option value="low">Low (1 cascade, 512px, 3000m)</option>
+                        <option value="medium">Medium (2 cascades, 1024px, 4000m)</option>
+                        <option value="high">High (3 cascades, 2048px, 5000m)</option>
                       </select>
                       <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
-                        Cascaded Shadow Maps - better quality at different distances
+                        Matches weather quality tiers. Prefer the Weather panel quality preset when standalone weather is on.
                       </small>
                     </label>
                   </div>
@@ -505,18 +505,6 @@ export default function LightingPanel() {
                         defaultValue="high"
                         onChange={(e) => {
                           const quality = e.target.value as 'low' | 'medium' | 'high'
-                          // CRITICAL: Update store shadowMapSize to match quality preset
-                          // This ensures store and CSM config stay in sync
-                          let targetSize = 2048
-                          if (quality === 'high') {
-                            targetSize = 4096
-                          } else if (quality === 'medium') {
-                            targetSize = 2048
-                          } else { // low
-                            targetSize = 2048
-                          }
-                          setShadowMapSize(targetSize)
-                          // Then update CSM quality (which will use the updated store value)
                           viewer.csmShadowSystem?.setShadowQuality(quality)
                         }}
                         style={{
@@ -529,12 +517,12 @@ export default function LightingPanel() {
                           fontSize: '14px'
                         }}
                       >
-                        <option value="low">Low (1 cascade, 2048px, 3000m)</option>
-                        <option value="medium">Medium (3 cascades, 2048px, 4000m)</option>
-                        <option value="high">High (3 cascades, 4096px, 5000m)</option>
+                        <option value="low">Low (1 cascade, 512px, 3000m)</option>
+                        <option value="medium">Medium (2 cascades, 1024px, 4000m)</option>
+                        <option value="high">High (3 cascades, 2048px, 5000m)</option>
                       </select>
                       <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
-                        Cascaded Shadow Maps - better quality at different distances
+                        Matches weather quality tiers. Prefer the Weather panel quality preset when standalone weather is on.
                       </small>
                     </label>
                   </div>
@@ -1646,12 +1634,12 @@ export default function LightingPanel() {
                           fontSize: '14px'
                         }}
                       >
-                        <option value="low">Low (1 cascade, 2048px, 3000m)</option>
-                        <option value="medium">Medium (3 cascades, 2048px, 4000m)</option>
-                        <option value="high">High (3 cascades, 4096px, 5000m)</option>
+                        <option value="low">Low (1 cascade, 512px, 3000m)</option>
+                        <option value="medium">Medium (2 cascades, 1024px, 4000m)</option>
+                        <option value="high">High (3 cascades, 2048px, 5000m)</option>
                       </select>
                       <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
-                        Cascaded Shadow Maps - better quality at different distances
+                        Matches weather quality tiers. Prefer the Weather panel quality preset when standalone weather is on.
                       </small>
                     </label>
                   )}

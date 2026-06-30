@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as THREE from 'three'
 import { useAppStore } from '../src/store/useAppStore'
 import { CSMShadowSystem } from '../src/viewer/effects/CSMShadowSystem'
+import { StreetsGLCSM, CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS, CSM_LIGHT_SHADOW_NORMAL_BIAS } from '../src/viewer/effects/StreetsGLCSM'
+import { enhanceInternalShadows } from '../src/utils/enhanceInternalShadows'
 
 describe('Shadow System', () => {
   let scene: THREE.Scene
@@ -317,19 +319,20 @@ describe('Shadow System', () => {
   })
 
   describe('Shadow Quality Settings', () => {
-    it('should set shadow quality to low', () => {
+    it('should set shadow quality to low (weather tier: 1 cascade, 512px)', () => {
       const csmSystem = new CSMShadowSystem(scene, {
         camera,
-        parent: scene
+        parent: scene,
+        shadowMapSize: 2048,
+        cascades: 3
       })
       
       csmSystem.init()
-      
       csmSystem.setShadowQuality('low')
       
       const diagnostics = csmSystem.getShadowMapDiagnostics()
-      // Low quality should have fewer cascades or smaller map size
-      expect(diagnostics.totalLights).toBeGreaterThan(0)
+      expect(diagnostics.totalLights).toBe(1)
+      expect(diagnostics.configuredSize).toBe(512)
     })
 
     it('should set shadow quality to medium', () => {
@@ -440,6 +443,71 @@ describe('Shadow System', () => {
       
       // Material should be set up for CSM
       expect(anyMat.userData?.csmSetup).toBe(true)
+    })
+  })
+
+  describe('StreetsGLCSM uniform buffers', () => {
+    it('refreshes cascade matrices in place each update', () => {
+      const csm = new StreetsGLCSM({
+        camera,
+        near: camera.near,
+        far: 5000,
+        cascades: 2,
+        resolution: 1024,
+        shadowBias: CSM_SHADER_BIAS,
+        shadowNormalBias: CSM_SHADER_NORMAL_BIAS
+      })
+
+      const uniformsBefore = csm.getUniforms()
+      const matrixRef = uniformsBefore.CSMMatrixWorldInverse
+      const matrixSnapshot = new Float32Array(matrixRef)
+
+      camera.position.set(5, 2, 10)
+      camera.updateMatrixWorld()
+      csm.update()
+
+      const uniformsAfter = csm.getUniforms()
+      expect(uniformsAfter.CSMMatrixWorldInverse).toBe(matrixRef)
+      const changed = matrixRef.some((v, i) => v !== matrixSnapshot[i])
+      expect(changed).toBe(true)
+    })
+
+    it('uses separate Three.js light normalBias for depth pass', () => {
+      const csm = new StreetsGLCSM({
+        camera,
+        near: camera.near,
+        far: 5000,
+        cascades: 1,
+        resolution: 512,
+        shadowBias: CSM_SHADER_BIAS,
+        shadowNormalBias: CSM_SHADER_NORMAL_BIAS
+      })
+
+      const light = csm.getLights()[0]
+      expect(light.shadow?.normalBias).toBe(CSM_LIGHT_SHADOW_NORMAL_BIAS)
+    })
+  })
+
+  describe('Interior enhancement vs CSM lights', () => {
+    it('does not override bias on CSM cascade lights', () => {
+      const csmLight = new THREE.DirectionalLight(0xffffff, 1)
+      csmLight.castShadow = true
+      csmLight.userData.isCSMLight = true
+      csmLight.shadow.normalBias = 0.02
+      csmLight.shadow.bias = -0.0002
+
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial()
+      )
+      mesh.userData.isImportedModel = true
+      mesh.name = 'engine_block'
+      scene.add(mesh)
+
+      enhanceInternalShadows(scene, [csmLight], { hideInteriorGeometry: false })
+
+      expect(csmLight.shadow.normalBias).toBe(0.02)
+      expect(csmLight.shadow.bias).toBe(-0.0002)
     })
   })
 
