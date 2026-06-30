@@ -10,6 +10,11 @@ import { WaterSystem } from './effects/WaterSystem'
 // Streets GL only - Three.js weather systems removed
 import { CSMShadowSystem } from './effects/CSMShadowSystem'
 import { CSM_SHADER_BIAS, CSM_SHADER_NORMAL_BIAS } from './effects/StreetsGLCSM'
+import {
+  PHYSICAL_CSM_SHADOW_RADIUS,
+  PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS,
+  PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
+} from './utils/physicalShadowSettings'
 import { SunMoonSystem } from './effects/SunMoonSystem'
 import { StandaloneWaterSystem } from './effects/StandaloneWaterSystem'
 import { AtmosphericPerspective } from './effects/AtmosphericPerspective'
@@ -6374,9 +6379,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           shadow.bias = shadowBiasForLights
           // IMPROVED: Use initial normal bias - will be refined in updateShadowCameraBounds
           // Normal bias helps reduce shadow acne on surfaces with sharp angles
-          shadow.normalBias = 0.01
-          // Larger radius for realistic soft shadows
-          shadow.radius = config.shadowRadius ?? 3
+          shadow.normalBias = PHYSICAL_DIRECTIONAL_SHADOW_NORMAL_BIAS
+          // Physical-reference subtle PCF softness (see physicalShadowSettings.ts)
+          shadow.radius = config.shadowRadius ?? PHYSICAL_DIRECTIONAL_SHADOW_RADIUS
           shadow.needsUpdate = true
           
           // Configure shadow camera based on light type
@@ -7456,7 +7461,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           shadowMapSize: getCsmShadowMapSizeForQuality(weatherQuality || 'high'),
           lightDirection: sunLightTravelDir,
           shadowBias: CSM_SHADER_BIAS,
-          shadowNormalBias: CSM_SHADER_NORMAL_BIAS
+          shadowNormalBias: CSM_SHADER_NORMAL_BIAS,
+          shadowRadius: PHYSICAL_CSM_SHADOW_RADIUS
         })
         csmShadowSystem.init()
         viewerRef.current.csmShadowSystem = csmShadowSystem
@@ -9067,7 +9073,8 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           shadowMapSize: getCsmShadowMapSizeForQuality(store.weatherQuality || 'high'),
           lightDirection: new THREE.Vector3(-1, -1, -1), // Will be updated by time of day
           shadowBias: CSM_SHADER_BIAS,
-          shadowNormalBias: CSM_SHADER_NORMAL_BIAS
+          shadowNormalBias: CSM_SHADER_NORMAL_BIAS,
+          shadowRadius: PHYSICAL_CSM_SHADOW_RADIUS
         })
         
         // Initialize CSM

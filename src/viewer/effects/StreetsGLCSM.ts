@@ -18,13 +18,21 @@ import * as THREE from 'three'
 const ShadowCameraTopOffset = 5000
 const FadeOffsetFactor = 250
 
+import {
+  CSM_LIGHT_SHADOW_BIAS_PHYSICAL,
+  CSM_LIGHT_SHADOW_NORMAL_BIAS_PHYSICAL,
+  CSM_SHADER_BIAS_PHYSICAL,
+  CSM_SHADER_NORMAL_BIAS_PHYSICAL,
+  PHYSICAL_CSM_SHADOW_RADIUS
+} from '../utils/physicalShadowSettings'
+
 /** Streets GL CSM shader bias (scaled by cascade ortho size in getUniforms). */
-export const CSM_SHADER_BIAS = -0.003
-export const CSM_SHADER_NORMAL_BIAS = 0.002
+export const CSM_SHADER_BIAS = CSM_SHADER_BIAS_PHYSICAL
+export const CSM_SHADER_NORMAL_BIAS = CSM_SHADER_NORMAL_BIAS_PHYSICAL
 
 /** Three.js shadow-map pass bias (unscaled; applied during depth render). */
-export const CSM_LIGHT_SHADOW_BIAS = -0.0002
-export const CSM_LIGHT_SHADOW_NORMAL_BIAS = 0.02
+export const CSM_LIGHT_SHADOW_BIAS = CSM_LIGHT_SHADOW_BIAS_PHYSICAL
+export const CSM_LIGHT_SHADOW_NORMAL_BIAS = CSM_LIGHT_SHADOW_NORMAL_BIAS_PHYSICAL
 
 /** Cascade lights only render shadow depth maps; the user sun light provides direct illumination. */
 export const CSM_CASCADE_LIGHT_RENDER_INTENSITY = 0
@@ -82,7 +90,7 @@ export class StreetsGLCSM {
     this.direction = config.direction || new THREE.Vector3(-1, -1, -1).normalize()
     this.intensity = config.intensity || 1.0
     this.biasScale = config.biasScale || 1.0
-    this.shadowRadius = config.shadowRadius ?? 0 // Default to sharp shadows
+    this.shadowRadius = config.shadowRadius ?? PHYSICAL_CSM_SHADOW_RADIUS
 
     this.updateCascades()
   }
@@ -395,7 +403,7 @@ export class StreetsGLCSM {
         // IMPROVED: Optimize bounds to achieve better effective resolution (at least 1.0 pixels/unit)
         // Reduced padding from 50% to 25% to improve shadow quality while still ensuring coverage
         // IMPORTANT: Snap bounds to common texel grid to ensure cascade alignment
-        const padding = Math.max(bboxSize.x, bboxSize.y) * 0.25 // IMPROVED: Reduced from 0.5 to 0.25 for better resolution
+        const padding = Math.max(bboxSize.x, bboxSize.y) * 0.2 // Tighter padding for sharper cascade texels
         let maxSize = Math.max(bboxSize.x, bboxSize.y) + padding
         
         // Snap bounds to common texel grid (ensures cascades align at boundaries)
