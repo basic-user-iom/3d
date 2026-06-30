@@ -59,7 +59,8 @@ import {
   standaloneSkySunDirection,
   standaloneLightSunDirection,
   sunSkyDirectionToLightPosition,
-  sunSkyDirectionToLightTravelDirection
+  sunSkyDirectionToLightTravelDirection,
+  computeHdrSyncedSunSkyDirection
 } from './utils/lightUtils'
 import { latLonToStreetsGL } from '../utils/mapCoordinates'
 import {
@@ -5921,6 +5922,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // CRITICAL: Ensure shadow plane always has correct shadow properties
         obj.receiveShadow = true
         obj.castShadow = false // Shadow plane should not cast shadows
+        obj.position.y = -0.001
         
         // Ensure material has depthWrite = true (required for shadows)
         const material = obj.material
@@ -7000,14 +7002,21 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     if (!viewerRef.current?.hdrSystem) return
 
     const hdrSystem = viewerRef.current.hdrSystem
+    hdrSystem.cancelPendingLoad()
 
     const applyHDR = async () => {
-      // Use HDRSystem to handle all HDR operations
+      const store = useAppStore.getState()
       try {
         const hdrSource = hdrFile ?? hdrUrl
         if (hdrEnabled && hdrSource) {
-          // Load and apply HDR
-          await hdrSystem.applyHDR(hdrSource, hdrIntensity)
+          store.setHdrLoading(true)
+          store.setHdrLoadProgress(0)
+
+          await hdrSystem.applyHDR(hdrSource, hdrIntensity, (progress) => {
+            store.setHdrLoadProgress(progress)
+          })
+
+          store.setHdrLoadProgress(100)
           
           // Update intensity if changed
           if (hdrSystem.getPMREMMap()) {
@@ -7065,15 +7074,27 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             viewerRef.current.csmShadowSystem.setupSceneMaterials(true)
           }
 
-          // HDR-derived SH probe replaces part of flat ambient fill (specular stays on scene.environment)
+          // Defer light-probe SH bake to next frame so PMREM/scene setup can paint first
           const equirectForProbe =
             hdrSystem.getOriginalTexture() ??
             (viewerRef.current.scene.environment instanceof THREE.Texture
               ? viewerRef.current.scene.environment
               : null)
-          if (viewerRef.current?.indirectLightingSystem && equirectForProbe) {
-            viewerRef.current.indirectLightingSystem.applyFromEquirect(equirectForProbe, hdrIntensity)
-          }
+          const probeRenderTarget = hdrSystem.getProbeRenderTarget()
+          const indirectSystem = viewerRef.current?.indirectLightingSystem
+          requestAnimationFrame(() => {
+            if (!viewerRef.current?.indirectLightingSystem || indirectSystem !== viewerRef.current.indirectLightingSystem) {
+              return
+            }
+            if (probeRenderTarget) {
+              viewerRef.current.indirectLightingSystem.applyFromPmremRenderTarget(
+                probeRenderTarget,
+                hdrIntensity
+              )
+            } else if (equirectForProbe) {
+              viewerRef.current.indirectLightingSystem.applyFromEquirect(equirectForProbe, hdrIntensity)
+            }
+          })
 
           // Re-apply interior cavity dimming after HDR overwrites envMapIntensity
           if (viewerRef.current?.scene) {
@@ -7114,11 +7135,17 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error'
         useAppStore.getState().setError(`Failed to load HDR: ${errorMsg}`)
         hdrSystem.disableHDR()
+      } finally {
+        useAppStore.getState().setHdrLoading(false)
       }
     }
     
-          applyHDR()
-    }, [
+    applyHDR()
+
+    return () => {
+      hdrSystem.cancelPendingLoad()
+    }
+  }, [
       hdrEnabled,
       hdrUrl,
       hdrFile
@@ -7145,7 +7172,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     if (!viewerRef.current?.hdrSystem) return
     
     viewerRef.current.hdrSystem.updateRotation(hdrRotationAzimuth, hdrRotationElevation)
-  }, [hdrRotationAzimuth, hdrRotationElevation])
+    if (hdrEnabled && viewerRef.current.updateShadowCameraBounds) {
+      viewerRef.current.updateShadowCameraBounds()
+    }
+    wakeViewerRender(viewerRef.current)
+  }, [hdrRotationAzimuth, hdrRotationElevation, hdrEnabled])
 
   useEffect(() => {
     if (!viewerRef.current?.hdrSystem) return
@@ -7804,20 +7835,16 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (directionalLights) {
         directionalLights.forEach((light) => {
           if (light.userData.isSun && light instanceof THREE.DirectionalLight) {
-            // CRITICAL: When HDR is enabled, adjust sun direction to match HDR rotation
-            // HDR has been rotated 180° (both X and Y) to fix orientation, so sun light should match
+            const storeForSun = useAppStore.getState()
             let adjustedSunDir = skySunDir.clone()
-            const hdrEnabled = useAppStore.getState().hdrEnabled
-            if (hdrEnabled) {
-              // Apply 180° rotation to match HDR's rotated environment
-              // Rotate 180° around X axis (flip Y), then 180° around Y axis (flip X)
-              adjustedSunDir.x = -adjustedSunDir.x
-              adjustedSunDir.y = -adjustedSunDir.y
-              // Z might also need to be flipped depending on coordinate system
-              adjustedSunDir.z = -adjustedSunDir.z
-              adjustedSunDir.normalize()
+            if (storeForSun.hdrEnabled) {
+              adjustedSunDir = computeHdrSyncedSunSkyDirection(
+                skySunDir,
+                storeForSun.hdrRotationAzimuth,
+                storeForSun.hdrRotationElevation
+              )
             }
-            
+
             const sunLightPosition = sunSkyDirectionToLightPosition(adjustedSunDir)
             light.position.copy(sunLightPosition)
             if (!light.target.parent) {
@@ -7828,7 +7855,6 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             light.visible = true
             light.intensity = sunIntensity
             light.color.set(sunColor)
-            const storeForSun = useAppStore.getState()
             const csmActiveForSun = viewerRef.current?.csmShadowSystem?.isEnabled() ?? false
             const sunLightingMode = resolveLightingMode({
               enableStandaloneWeather: storeForSun.enableStandaloneWeather,
@@ -8603,7 +8629,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // No warning needed as this is normal behavior during loading
       }
     }
-  }, [weatherPreset, cloudDensity, cloudThickness, cloudDetail, cloudScale, cloudStorminess, cloudShadowStrength, cloudColor, fogDensity, fogHeight, fogColor, rainIntensity, snowIntensity, windIntensity, timeOfDay, skyTurbidity, skyAtmosphereDensity, skyRayleigh, skyMieCoefficient, skyMieDirectionalG, skyExposure, skyElevation, skyAzimuth, hdrEnabled, hdrIntensity, sunSize, moonSize, northOffset, postProcessingEnabled, toneMappingType, enableStandaloneWeather, streetsGLIframeOverlay, streetsGLBridge, waterEnabled, waterLevel, waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, weatherQuality])
+  }, [weatherPreset, cloudDensity, cloudThickness, cloudDetail, cloudScale, cloudStorminess, cloudShadowStrength, cloudColor, fogDensity, fogHeight, fogColor, rainIntensity, snowIntensity, windIntensity, timeOfDay, skyTurbidity, skyAtmosphereDensity, skyRayleigh, skyMieCoefficient, skyMieDirectionalG, skyExposure, skyElevation, skyAzimuth, hdrEnabled, hdrIntensity, hdrRotationAzimuth, hdrRotationElevation, sunSize, moonSize, northOffset, postProcessingEnabled, toneMappingType, enableStandaloneWeather, streetsGLIframeOverlay, streetsGLBridge, waterEnabled, waterLevel, waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, weatherQuality])
 
   // Effect to update ambient light intensity from store (user slider)
   // This MUST run AFTER weather system to ensure user's slider value takes precedence

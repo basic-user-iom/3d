@@ -71,6 +71,8 @@ export default function LightingPanel() {
     hdrRotationAzimuth,
     hdrRotationElevation,
     hdrBackgroundVisible,
+    hdrLoading,
+    hdrLoadProgress,
     setHdrEnabled,
     setHdrUrl,
     setHdrFile,
@@ -1003,9 +1005,18 @@ export default function LightingPanel() {
               type="checkbox"
               checked={hdrEnabled}
               onChange={(e) => setHdrEnabled(e.target.checked)}
-              disabled={!hdrUrl}
+              disabled={!hdrUrl || hdrLoading}
             />
           </label>
+
+          {hdrLoading && (
+            <div className="hdr-loading-status" role="status" aria-live="polite">
+              <span className="hdr-loading-spinner" aria-hidden="true" />
+              <span>
+                Loading HDR environment… {hdrLoadProgress > 0 ? `${Math.round(hdrLoadProgress)}%` : ''}
+              </span>
+            </div>
+          )}
           
           {hdrEnabled && hdrUrl && (
             <>

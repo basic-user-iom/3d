@@ -6,6 +6,13 @@ import { useAppStore } from '../../store/useAppStore'
 import { materialUpdateQueue } from '../utils/MaterialUpdateQueue'
 import { calculateMaterialIntensity, shouldApplyHDR } from '../utils/materialIntensityHelper'
 import { applyHdrShadowContrastToMaterials } from '../../utils/lightProbeUtils'
+import {
+  getHdrCacheKey,
+  getCachedHdrPmrem,
+  setCachedHdrPmrem,
+  isTextureOwnedByCache,
+  type HdrPmremCacheEntry
+} from '../utils/hdrPmremCache'
 
 export interface GroundProjectionConfig {
   enabled: boolean
@@ -100,7 +107,10 @@ export class HDRSystem {
   // Textures
   private originalHdrTexture: THREE.DataTexture | null = null
   private pmremEnvMap: THREE.Texture | null = null
+  private pmremRenderTarget: THREE.WebGLCubeRenderTarget | null = null
   private defaultEnvTexture: THREE.Texture | null = null
+  private currentCacheKey: string | null = null
+  private loadGeneration = 0
   
   // Store original clear color to restore when HDR is disabled
   private originalClearColor: THREE.Color | null = null
@@ -753,38 +763,84 @@ export class HDRSystem {
    * CRITICAL: PMREMGenerator.fromEquirectangular() respects texture.flipY property
    * Using flipY = true fixes the vertical inversion (sky/ground swap)
    */
-  private generatePMREM(hdrTexture: THREE.DataTexture): THREE.Texture {
+  private generatePMREM(hdrTexture: THREE.DataTexture): {
+    texture: THREE.Texture
+    renderTarget: THREE.WebGLCubeRenderTarget
+  } {
     console.log('[HDRSystem] Generating PMREM cube map from HDR texture', {
-      width: hdrTexture.image.width,
-      height: hdrTexture.image.height,
+      width: hdrTexture.image?.width ?? hdrTexture.width,
+      height: hdrTexture.image?.height ?? hdrTexture.height,
       format: hdrTexture.format,
       type: hdrTexture.type,
       flipY: hdrTexture.flipY
     })
-    
-    // CRITICAL: flipY is already set to true during texture loading
-    // PMREMGenerator.fromEquirectangular() respects the flipY property
-    // This fixes the vertical inversion (sky/ground swap) issue
-    console.log('[HDRSystem] Using HDR texture with flipY=true to fix orientation')
-    
-    // Use PMREM generator directly - it will respect flipY
-    const envMap = this.pmremGenerator!.fromEquirectangular(hdrTexture).texture
-    
+
+    const renderTarget = this.pmremGenerator!.fromEquirectangular(
+      hdrTexture
+    ) as THREE.WebGLCubeRenderTarget
+
     console.log('[HDRSystem] ✅ PMREM generated - flipY=true applied, sky should be on top, ground on bottom')
-    
-    return envMap
+
+    return { texture: renderTarget.texture, renderTarget }
+  }
+
+  /** Cancel an in-flight applyHDR load (e.g. user switched HDR quickly). */
+  cancelPendingLoad(): void {
+    this.loadGeneration++
+  }
+
+  private isLoadStale(generation: number): boolean {
+    return generation !== this.loadGeneration
+  }
+
+  private applyCachedEntry(entry: HdrPmremCacheEntry): THREE.DataTexture {
+    this.currentCacheKey = entry.cacheKey
+    this.originalHdrTexture = entry.originalTexture as THREE.DataTexture
+    this.pmremEnvMap = entry.pmremTexture
+    this.pmremRenderTarget = entry.pmremRenderTarget
+    return entry.originalTexture as THREE.DataTexture
+  }
+
+  private storeInCache(
+    cacheKey: string,
+    originalTexture: THREE.Texture,
+    pmremTexture: THREE.Texture,
+    pmremRenderTarget: THREE.WebGLCubeRenderTarget,
+    isFastHdr: boolean
+  ): void {
+    this.currentCacheKey = cacheKey
+    setCachedHdrPmrem({
+      cacheKey,
+      originalTexture,
+      pmremTexture,
+      pmremRenderTarget,
+      isFastHdr
+    })
+  }
+
+  private releaseTextureRefs(): void {
+    this.originalHdrTexture = null
+    this.pmremEnvMap = null
+    this.pmremRenderTarget = null
+    this.currentCacheKey = null
   }
   
   /**
    * Apply HDR to scene
    */
-  async applyHDR(url: string | File | null, intensity: number): Promise<void> {
+  async applyHDR(
+    url: string | File | null,
+    intensity: number,
+    onProgress?: (progress: number) => void
+  ): Promise<void> {
     if (!url) {
       this.disableHDR()
       return
     }
     
     try {
+      const loadGen = ++this.loadGeneration
+
       // Normalize URL if it's a string (handle Windows file paths)
       let normalizedUrl: string | File = url
       if (typeof url === 'string') {
@@ -793,142 +849,168 @@ export class HDRSystem {
           console.log('[HDRSystem] URL normalized:', { original: url, normalized: normalizedUrl })
         }
       }
-      
+
+      const cacheKey = getHdrCacheKey(
+        url,
+        typeof normalizedUrl === 'string' ? normalizedUrl : undefined
+      )
+      const cachedEntry = getCachedHdrPmrem(cacheKey)
+
       // Check if this is a FastHDR (KTX2) file
       const isFile = normalizedUrl instanceof File
       const fileName = isFile ? (normalizedUrl as File).name.toLowerCase() : (normalizedUrl as string).toLowerCase()
       const cleanFileName = fileName.split('?')[0].split('#')[0]
       const isFastHDR = cleanFileName.endsWith('.ktx2')
-      
-      // Load HDR texture
-      console.log('[HDRSystem] Loading HDR file...', { isFastHDR })
-      let lastLoggedProgress = -1
-      const hdrTexture = await this.loadHDR(normalizedUrl, (progress) => {
-        // Log progress every 10% to show loading status
-        const roundedProgress = Math.floor(progress / 10) * 10
-        if (roundedProgress !== lastLoggedProgress) {
-          console.log(`[HDRSystem] Loading progress: ${roundedProgress.toFixed(0)}%`)
-          lastLoggedProgress = roundedProgress
-        }
-      })
-      
-      // For FastHDR files, check if it's a pre-computed PMREM or needs PMREM conversion
-      // According to https://cloud.needle.tools/articles/fasthdr-environment-maps
-      // FastHDR files are pre-computed PMREM textures in CubeUV format
+
+      let hdrTexture: THREE.DataTexture
       let envMap: THREE.Texture
       let isPMREMKTX2 = false
-      
-      if (isFastHDR && hdrTexture instanceof THREE.Texture) {
-        // Check if this is a FastHDR (PMREM) file
-        const isPMREM = hdrTexture.mapping === THREE.CubeUVReflectionMapping ||
-                       (url instanceof File && url.name.toLowerCase().includes('.pmrem.')) ||
-                       (typeof url === 'string' && url.toLowerCase().includes('.pmrem.'))
-        
-        if (isPMREM) {
-          // FastHDR (pre-computed PMREM) - use directly for both environment and background
-          // No PMREM generation needed - it's already done!
-          console.log('[HDRSystem] ✅ FastHDR (PMREM) detected - using directly for environment and background')
-          console.log('[HDRSystem] FastHDR files are pre-computed PMREM textures - no conversion needed')
-          envMap = hdrTexture
-          isPMREMKTX2 = true
-          // Store the PMREM texture for background use
-          this.originalHdrTexture = hdrTexture as any // PMREM can be used as background
-        } else {
-          // Regular KTX2 - check if it's actually a cubemap (faceCount = 6) or equirectangular (faceCount = 1)
-          // Re-inspect the file to get faceCount if we don't have it
-          let actualIsCubemap = false
-          let faceCount = 1
-          try {
-            const fileFormatInfo = await this.inspectKTX2Format(url)
-            actualIsCubemap = fileFormatInfo?.isCubemap === true && fileFormatInfo?.faceCount === 6
-            faceCount = fileFormatInfo?.faceCount || 1
-          } catch (e) {
-            console.warn('[HDRSystem] Could not re-inspect KTX2 format, using texture type detection')
-            // Fallback to texture type detection
-            actualIsCubemap = (hdrTexture as any).isCubeTexture === true || hdrTexture instanceof THREE.CubeTexture
-          }
-          
-          if (actualIsCubemap && faceCount === 6) {
-            // Actual cubemap KTX2 (faceCount = 6) - use for environment, but can't use as background
-            console.log('[HDRSystem] KTX2 file is a cubemap (faceCount = 6), using directly for environment (no PMREM conversion needed)')
-            console.log('[HDRSystem] Note: Cubemap KTX2 files cannot be used as background - background will use default or be hidden')
-            envMap = hdrTexture
-            isPMREMKTX2 = false // Not PMREM, but also not equirectangular
-          } else {
-            // Equirectangular KTX2 (faceCount = 1) - can be used for background and needs PMREM for environment
-            console.log('[HDRSystem] ✅ KTX2 file is equirectangular (faceCount = 1), generating PMREM cube map for environment...')
-            console.log('[HDRSystem] Equirectangular KTX2 can be used as background')
-            // Ensure it's treated as a DataTexture for PMREM generation
-            if (hdrTexture instanceof THREE.Texture && !(hdrTexture instanceof THREE.DataTexture)) {
-              // Convert to DataTexture if needed (for PMREM generation)
-              const textureImage = (hdrTexture as any).image
-              const imageWidth = textureImage?.width || (hdrTexture as any).image?.width || 1
-              const imageHeight = textureImage?.height || (hdrTexture as any).image?.height || 1
-              const dataTexture = new THREE.DataTexture(
-                textureImage?.data || new Uint8Array(0),
-                imageWidth,
-                imageHeight,
-                THREE.RGBAFormat
-              )
-              dataTexture.mapping = THREE.EquirectangularReflectionMapping
-              dataTexture.flipY = false
-              dataTexture.colorSpace = (hdrTexture as any).colorSpace || THREE.LinearSRGBColorSpace
-              envMap = this.generatePMREM(dataTexture)
-              this.originalHdrTexture = dataTexture
-            } else {
-              envMap = this.generatePMREM(hdrTexture as THREE.DataTexture)
-              // Store original for background
-              this.originalHdrTexture = hdrTexture as THREE.DataTexture
-            }
-          }
-        }
+
+      if (cachedEntry) {
+        console.log('[HDRSystem] ✅ PMREM cache hit — skipping download and PMREM bake:', cacheKey)
+        onProgress?.(100)
+        hdrTexture = this.applyCachedEntry(cachedEntry)
+        envMap = cachedEntry.pmremTexture
+        isPMREMKTX2 =
+          cachedEntry.isFastHdr && cachedEntry.pmremTexture === cachedEntry.originalTexture
       } else {
-        // Regular HDR/EXR file, always needs PMREM conversion
-        console.log('[HDRSystem] ✅ HDR texture loaded, generating PMREM cube map (this may take a moment)...')
-        
-        // Temporarily hide objects with ShaderMaterial during PMREM generation
-        // ShaderMaterial instances have custom shaders that might not be compatible with PMREMGenerator
-        const hiddenObjects: THREE.Object3D[] = []
-        this.scene.traverse((object) => {
-          if (object instanceof THREE.Mesh && object.material) {
-            const materials = Array.isArray(object.material) ? object.material : [object.material]
-            const hasShaderMaterial = materials.some(m => m instanceof THREE.ShaderMaterial)
-            if (hasShaderMaterial && object.visible) {
-              object.visible = false
-              hiddenObjects.push(object)
+        this.releaseTextureRefs()
+
+        // Load HDR texture
+        console.log('[HDRSystem] Loading HDR file...', { isFastHDR })
+        let lastLoggedProgress = -1
+        hdrTexture = (await this.loadHDR(normalizedUrl, (progress) => {
+          onProgress?.(progress)
+          const roundedProgress = Math.floor(progress / 10) * 10
+          if (roundedProgress !== lastLoggedProgress) {
+            console.log(`[HDRSystem] Loading progress: ${roundedProgress.toFixed(0)}%`)
+            lastLoggedProgress = roundedProgress
+          }
+        })) as THREE.DataTexture
+
+        if (this.isLoadStale(loadGen)) {
+          console.log('[HDRSystem] Load cancelled (superseded by newer request)')
+          return
+        }
+
+        if (isFastHDR && hdrTexture instanceof THREE.Texture) {
+          const isPMREM =
+            hdrTexture.mapping === THREE.CubeUVReflectionMapping ||
+            (url instanceof File && url.name.toLowerCase().includes('.pmrem.')) ||
+            (typeof url === 'string' && url.toLowerCase().includes('.pmrem.'))
+
+          if (isPMREM) {
+            console.log('[HDRSystem] ✅ FastHDR (PMREM) detected - using directly for environment and background')
+            envMap = hdrTexture
+            isPMREMKTX2 = true
+            this.originalHdrTexture = hdrTexture as THREE.DataTexture
+          } else {
+            let actualIsCubemap = false
+            let faceCount = 1
+            try {
+              const fileFormatInfo = await this.inspectKTX2Format(url)
+              actualIsCubemap = fileFormatInfo?.isCubemap === true && fileFormatInfo?.faceCount === 6
+              faceCount = fileFormatInfo?.faceCount || 1
+            } catch {
+              console.warn('[HDRSystem] Could not re-inspect KTX2 format, using texture type detection')
+              actualIsCubemap =
+                (hdrTexture as any).isCubeTexture === true || hdrTexture instanceof THREE.CubeTexture
+            }
+
+            if (this.isLoadStale(loadGen)) return
+
+            if (actualIsCubemap && faceCount === 6) {
+              console.log('[HDRSystem] KTX2 file is a cubemap (faceCount = 6), using directly for environment')
+              envMap = hdrTexture
+              isPMREMKTX2 = false
+            } else {
+              console.log('[HDRSystem] ✅ KTX2 equirectangular — generating PMREM cube map...')
+              let sourceTexture: THREE.DataTexture
+              if (hdrTexture instanceof THREE.Texture && !(hdrTexture instanceof THREE.DataTexture)) {
+                const textureImage = (hdrTexture as any).image
+                const imageWidth = textureImage?.width || 1
+                const imageHeight = textureImage?.height || 1
+                sourceTexture = new THREE.DataTexture(
+                  textureImage?.data || new Uint8Array(0),
+                  imageWidth,
+                  imageHeight,
+                  THREE.RGBAFormat
+                )
+                sourceTexture.mapping = THREE.EquirectangularReflectionMapping
+                sourceTexture.flipY = false
+                sourceTexture.colorSpace =
+                  (hdrTexture as any).colorSpace || THREE.LinearSRGBColorSpace
+                this.originalHdrTexture = sourceTexture
+              } else {
+                sourceTexture = hdrTexture as THREE.DataTexture
+                this.originalHdrTexture = sourceTexture
+              }
+              const pmrem = this.generatePMREM(sourceTexture)
+              envMap = pmrem.texture
+              this.pmremRenderTarget = pmrem.renderTarget
             }
           }
-        })
-        
-        try {
-          // Generate PMREM cube map
-          console.log('[HDRSystem] Generating PMREM cube map from HDR texture...')
-          envMap = this.generatePMREM(hdrTexture)
-          console.log('[HDRSystem] ✅ PMREM cube map generated successfully')
-          
-          // Restore visibility after PMREM generation
-          hiddenObjects.forEach(obj => {
-            obj.visible = true
+        } else {
+          console.log('[HDRSystem] ✅ HDR texture loaded, generating PMREM cube map (this may take a moment)...')
+
+          const hiddenObjects: THREE.Object3D[] = []
+          this.scene.traverse((object) => {
+            if (object instanceof THREE.Mesh && object.material) {
+              const materials = Array.isArray(object.material) ? object.material : [object.material]
+              const hasShaderMaterial = materials.some((m) => m instanceof THREE.ShaderMaterial)
+              if (hasShaderMaterial && object.visible) {
+                object.visible = false
+                hiddenObjects.push(object)
+              }
+            }
           })
-        } catch (pmremError) {
-          // Restore visibility even if PMREM generation fails
-          hiddenObjects.forEach(obj => {
-            obj.visible = true
+
+          try {
+            const pmrem = this.generatePMREM(hdrTexture)
+            envMap = pmrem.texture
+            this.pmremRenderTarget = pmrem.renderTarget
+            console.log('[HDRSystem] ✅ PMREM cube map generated successfully')
+          } finally {
+            hiddenObjects.forEach((obj) => {
+              obj.visible = true
+            })
+          }
+
+          if (this.isLoadStale(loadGen)) return
+        }
+
+        if (!isPMREMKTX2 && !isFastHDR) {
+          this.originalHdrTexture = hdrTexture
+        }
+        this.pmremEnvMap = envMap
+
+        const originalForCache = this.originalHdrTexture ?? hdrTexture
+        if (this.pmremRenderTarget) {
+          this.storeInCache(
+            cacheKey,
+            originalForCache,
+            envMap,
+            this.pmremRenderTarget,
+            isFastHDR
+          )
+        } else if (isPMREMKTX2 || isFastHDR) {
+          setCachedHdrPmrem({
+            cacheKey,
+            originalTexture: originalForCache,
+            pmremTexture: envMap,
+            pmremRenderTarget: null,
+            isFastHdr: true
           })
-          throw pmremError
+          this.currentCacheKey = cacheKey
         }
       }
-      
-      // Store textures
-      // For FastHDR (PMREM) files, the texture itself is the PMREM and can be used for both
-      // For regular KTX2 cubemaps, we can't use them as background
-      // For equirectangular KTX2, we store the original for background and PMREM for environment
-      if (!isPMREMKTX2 && !isFastHDR) {
-        // Regular HDR/EXR - store original for background
-        this.originalHdrTexture = hdrTexture
+
+      if (this.isLoadStale(loadGen)) return
+
+      if (!cachedEntry) {
+        // pmremEnvMap already set in miss path; ensure refs for cache hit path
+        this.pmremEnvMap = envMap
       }
-      // For FastHDR PMREM, originalHdrTexture was already set above
-      this.pmremEnvMap = envMap
       console.log('[HDRSystem] HDR textures stored, setting up scene environment...', {
         isPMREMKTX2,
         isFastHDR,
@@ -2324,16 +2406,14 @@ export class HDRSystem {
       this.groundProjection = null
     }
     
-    // Clear HDR textures
-    if (this.originalHdrTexture) {
+    // Clear HDR texture refs (cached GPU resources are retained in hdrPmremCache)
+    if (this.originalHdrTexture && !isTextureOwnedByCache(this.originalHdrTexture)) {
       this.originalHdrTexture.dispose()
-      this.originalHdrTexture = null
     }
-    
-    if (this.pmremEnvMap) {
+    if (this.pmremEnvMap && !isTextureOwnedByCache(this.pmremEnvMap)) {
       this.pmremEnvMap.dispose()
-      this.pmremEnvMap = null
     }
+    this.releaseTextureRefs()
     
     // Clear scene
     this.scene.background = null
@@ -2390,6 +2470,11 @@ export class HDRSystem {
    */
   getPMREMMap(): THREE.Texture | null {
     return this.pmremEnvMap
+  }
+
+  /** PMREM cube render target for light-probe SH extraction (shared, not owned by caller). */
+  getProbeRenderTarget(): THREE.WebGLCubeRenderTarget | null {
+    return this.pmremRenderTarget
   }
   
   /**

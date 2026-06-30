@@ -490,6 +490,8 @@ export interface AppState {
   hdrRotationAzimuth: number
   hdrRotationElevation: number
   hdrBackgroundVisible: boolean
+  hdrLoading: boolean
+  hdrLoadProgress: number
   replicateApiKey: string | null
   setReplicateApiKey: (key: string | null) => void
   
@@ -686,6 +688,8 @@ export interface AppState {
   setHdrRotationAzimuth: (degrees: number) => void
   setHdrRotationElevation: (degrees: number) => void
   setHdrBackgroundVisible: (visible: boolean) => void
+  setHdrLoading: (loading: boolean) => void
+  setHdrLoadProgress: (progress: number) => void
   
   // Camera Views actions
   addCameraView: (view: Omit<CameraView, 'id' | 'createdAt'> | Omit<CameraView, 'id'>) => void
@@ -1053,6 +1057,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     hdrRotationAzimuth: 0,
     hdrRotationElevation: 0,
     hdrBackgroundVisible: true,
+    hdrLoading: false,
+    hdrLoadProgress: 0,
     replicateApiKey: (import.meta.env.VITE_REPLICATE_API_TOKEN ?? '').trim() || null,
     
     // Camera Views defaults
@@ -2251,6 +2257,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       hdrRotationElevation: Math.max(-90, Math.min(90, degrees))
     }),
   setHdrBackgroundVisible: (visible) => set({ hdrBackgroundVisible: visible }),
+  setHdrLoading: (loading) => set({ hdrLoading: loading }),
+  setHdrLoadProgress: (progress) => set({ hdrLoadProgress: progress }),
   setReplicateApiKey: (key) =>
     set({
       replicateApiKey: key ? key.trim() || null : null
