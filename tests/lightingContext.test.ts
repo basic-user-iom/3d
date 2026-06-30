@@ -236,6 +236,18 @@ describe('lightingContext', () => {
         })
       ).toBe(true)
     })
+
+    it('suppresses point shadows when HDR sun diminish is active', () => {
+      expect(
+        resolvePointLightCastShadow({
+          mode: 'standard',
+          enabled: true,
+          castShadowConfig: true,
+          shadowsEnabled: true,
+          diminishForHdrSun: true
+        })
+      ).toBe(false)
+    })
   })
 
   describe('resolveStreetsGLWeatherExclusion', () => {

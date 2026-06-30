@@ -218,6 +218,16 @@ export function computeLightDirection(light: THREE.Light): THREE.Vector3 | null 
   return null
 }
 
+/** Runtime Three.js light class mapped to store LightType. */
+export function getRuntimeLightType(light: THREE.Light): LightType {
+  if (light instanceof THREE.DirectionalLight) return 'directional'
+  if (light instanceof THREE.PointLight) return 'point'
+  if (light instanceof THREE.SpotLight) return 'spot'
+  if (light instanceof THREE.RectAreaLight) return 'rectarea'
+  if (light instanceof THREE.HemisphereLight) return 'hemisphere'
+  return 'directional'
+}
+
 /**
  * Creates a light of the specified type with physical properties
  * Supports: directional, point, spot, rectarea, hemisphere

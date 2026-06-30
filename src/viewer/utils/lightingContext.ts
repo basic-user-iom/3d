@@ -131,9 +131,13 @@ export function resolvePointLightCastShadow(options: {
   enabled: boolean
   castShadowConfig: boolean
   shadowsEnabled: boolean
+  /** When HDR + sun shadows are active, point cube-map shadows are suppressed. */
+  diminishForHdrSun?: boolean
 }): boolean {
   if (!options.enabled || !options.shadowsEnabled) return false
   if (options.mode === 'streets-gl' || options.mode === 'path-tracer') return false
+  // Omnidirectional cube-map shadows on flat HDR ground read as a hard circle and hide sun silhouettes.
+  if (options.diminishForHdrSun) return false
   return options.castShadowConfig
 }
 
@@ -201,7 +205,7 @@ export function detectLightingConflicts(input: LightingContextInput): LightingCo
       severity: 'info',
       code: 'HDR_POINT_SHADOW_DIMINISHED',
       message:
-        'HDR + sun shadows — point-light cube shadows are softened so sun contact shadows stay visible on the ground'
+        'HDR + sun shadows — point-light cube shadows are auto-disabled so sun contact shadows stay visible on the ground'
     })
   }
 

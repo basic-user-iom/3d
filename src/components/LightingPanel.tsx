@@ -2004,11 +2004,30 @@ export default function LightingPanel() {
                       directionalLights.some((l) => l.isSun && l.enabled && l.castShadow) && (
                         <>
                           {' '}
-                          With HDR + Sun shadows on, point-light shadow strength is auto-reduced so
-                          the sun silhouette stays visible on the ground.
+                          With HDR + Sun shadows on, point-light cube shadows are auto-disabled so
+                          the sun car silhouette stays visible on the ground.
                         </>
                       )}
                   </small>
+                )}
+                {selectedLight.type === 'point' && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ marginTop: '8px' }}
+                    onClick={() => {
+                      const pos = selectedLight.position ?? { x: 0, y: 5, z: 0 }
+                      updateDirectionalLight(selectedLight.id, {
+                        type: 'spot',
+                        castShadow: true,
+                        angle: Math.PI / 4,
+                        penumbra: 0.25,
+                        target: { x: 0, y: 0, z: 0 }
+                      })
+                    }}
+                  >
+                    Use spot for shadows
+                  </button>
                 )}
               </label>
 

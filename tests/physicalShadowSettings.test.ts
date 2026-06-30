@@ -78,7 +78,7 @@ describe('physicalShadowSettings', () => {
     expect(far).toBeGreaterThanOrEqual(80)
   })
 
-  it('tightens point-light shadow far for large HDR scenes', () => {
+  it('keeps point-light shadow far at full ground reach on large HDR scenes', () => {
     const lightPos = new THREE.Vector3(0, 12, 0)
     const racetrackBox = new THREE.Box3(
       new THREE.Vector3(-200, 0, -200),
@@ -86,13 +86,13 @@ describe('physicalShadowSettings', () => {
     )
     const fullFar = computeOmnidirectionalShadowFar(lightPos, racetrackBox)
     const pointFar = computePointLightShadowFar(lightPos, racetrackBox)
-    expect(pointFar).toBeLessThan(fullFar)
+    expect(pointFar).toBe(fullFar)
     expect(pointFar).toBeGreaterThan(12)
   })
 
   it('scales point-light shadow intensity down for HDR sun fill lights', () => {
-    expect(computePointLightShadowIntensity(0.15, true)).toBeCloseTo(0.375, 2)
-    expect(computePointLightShadowIntensity(1.0, true)).toBe(0.4)
+    expect(computePointLightShadowIntensity(0.15, true)).toBeCloseTo(0.04, 2)
+    expect(computePointLightShadowIntensity(3.0, true)).toBe(0.15)
     expect(computePointLightShadowIntensity(0.1, false)).toBe(1)
   })
 
