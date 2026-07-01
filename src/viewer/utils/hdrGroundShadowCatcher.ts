@@ -147,20 +147,15 @@ export function applyHdrGroundShadowCatcherMaterial(
 
   const material = plane.material as THREE.ShadowMaterial
   material.userData.isHdrGroundShadowCatcher = true
-  // Ground projection: composite shadow catcher over GroundedSkybox (MeshBasicMaterial, depthWrite=false).
-  // depthTest=false ensures the catcher draws on the projected ground even when the depth buffer
-  // holds car or sky geometry from the opaque pass (matches working webexport behaviour).
+  // Match webexport: depthTest=true so the catcher is occluded by car/scene geometry above the ground.
+  // GroundedSkybox uses depthWrite=false, so ground pixels retain far depth and the catcher still composites.
+  material.depthTest = true
+  material.depthWrite = true
   if (hdrGroundProjectionEnabled) {
-    material.depthTest = false
-    material.depthWrite = true
-    material.userData.preserveDepthTestOff = true
     material.polygonOffset = true
     material.polygonOffsetFactor = -1
     material.polygonOffsetUnits = -1
   } else {
-    material.depthTest = true
-    material.depthWrite = true
-    delete material.userData.preserveDepthTestOff
     material.polygonOffset = false
   }
   material.visible = true

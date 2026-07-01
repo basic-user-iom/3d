@@ -151,7 +151,7 @@ describe('hdrGroundShadowCatcher', () => {
     expect(plane.renderOrder).toBe(0)
   })
 
-  it('uses projected ground Y and depthTest off for ground projection overlay', () => {
+  it('uses projected ground Y and depthTest on for ground projection overlay', () => {
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 10),
       new THREE.MeshStandardMaterial({ color: 0x333333 })
@@ -172,9 +172,9 @@ describe('hdrGroundShadowCatcher', () => {
     }
     expect(plane.position.y).toBe(GROUND_PROJECTION_SHADOW_PLANE_Y + 2)
     expect(plane.renderOrder).toBe(0)
-    expect(material.depthTest).toBe(false)
+    expect(material.depthTest).toBe(true)
     expect(material.userData.isHdrGroundShadowCatcher).toBe(true)
-    expect(material.userData.preserveDepthTestOff).toBe(true)
+    expect(material.polygonOffset).toBe(true)
     expect(shadowPlaneYForHdrMode(true, groundProjection)).toBe(1.99)
     expect(shadowPlaneYForHdrMode(false)).toBe(STANDARD_HDR_SHADOW_PLANE_Y)
   })
