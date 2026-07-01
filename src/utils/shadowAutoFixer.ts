@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { convertSceneBasicMaterials } from './materialConverter'
+import { resolveGroundProjectionActive } from '../viewer/utils/hdrGroundShadowCatcher'
+import { useAppStore } from '../store/useAppStore'
 
 /**
  * Auto-fix common shadow issues in the scene
@@ -101,49 +103,60 @@ export function autoFixShadowIssues(
     }
 
     // Fix 5: Update shadow camera bounds for all lights
-    scene.traverse((obj) => {
-      if ((obj instanceof THREE.DirectionalLight || obj instanceof THREE.SpotLight) && obj.castShadow && obj.shadow) {
-        try {
-          // Calculate scene bounds
-          const box = new THREE.Box3()
-          let hasObjects = false
-          scene.traverse((child) => {
-            if (child instanceof THREE.Mesh && !child.userData.isShadowPlane && !child.userData.isGridHelper) {
-              box.expandByObject(child)
-              hasObjects = true
-            }
-          })
+    // Skip when HDR ground projection is active — shadowManager owns frustum + far plane tuning.
+    const store = useAppStore.getState()
+    const skipShadowCameraReset =
+      store.hdrEnabled &&
+      store.shadowsEnabled &&
+      resolveGroundProjectionActive(store.hdrGroundProjectionEnabled, scene)
 
-          if (hasObjects) {
-            const size = box.getSize(new THREE.Vector3())
-            const center = box.getCenter(new THREE.Vector3())
-            const maxDim = Math.max(size.x, size.y, size.z)
-            const minDim = Math.min(size.x, size.y, size.z)
+    if (!skipShadowCameraReset) {
+      scene.traverse((obj) => {
+        if ((obj instanceof THREE.DirectionalLight || obj instanceof THREE.SpotLight) && obj.castShadow && obj.shadow) {
+          try {
+            // Calculate scene bounds
+            const box = new THREE.Box3()
+            let hasObjects = false
+            scene.traverse((child) => {
+              if (child instanceof THREE.Mesh && !child.userData.isShadowPlane && !child.userData.isGridHelper) {
+                box.expandByObject(child)
+                hasObjects = true
+              }
+            })
 
-            if (obj instanceof THREE.DirectionalLight) {
-              // Set reasonable shadow camera bounds
-              const shadowCamera = obj.shadow.camera as THREE.OrthographicCamera
-              const shadowSize = maxDim * 1.5 // 1.5x scene size for safety margin
-              shadowCamera.left = -shadowSize
-              shadowCamera.right = shadowSize
-              shadowCamera.top = shadowSize
-              shadowCamera.bottom = -shadowSize
-              // CRITICAL: Use very small near plane to capture interior surfaces (like car interiors)
-              // 0.001 allows the shadow camera to see very close surfaces
-              shadowCamera.near = minDim < 1.0 ? 0.0005 : 0.001
-              shadowCamera.far = maxDim * 3
-              shadowCamera.position.copy(center)
-              shadowCamera.position.add(new THREE.Vector3(0, maxDim, 0))
-              shadowCamera.lookAt(center)
-              shadowCamera.updateProjectionMatrix()
-              obj.shadow.needsUpdate = true
+            if (hasObjects) {
+              const size = box.getSize(new THREE.Vector3())
+              const center = box.getCenter(new THREE.Vector3())
+              const maxDim = Math.max(size.x, size.y, size.z)
+              const minDim = Math.min(size.x, size.y, size.z)
+
+              if (obj instanceof THREE.DirectionalLight) {
+                // Set reasonable shadow camera bounds
+                const shadowCamera = obj.shadow.camera as THREE.OrthographicCamera
+                const shadowSize = maxDim * 1.5 // 1.5x scene size for safety margin
+                shadowCamera.left = -shadowSize
+                shadowCamera.right = shadowSize
+                shadowCamera.top = shadowSize
+                shadowCamera.bottom = -shadowSize
+                // CRITICAL: Use very small near plane to capture interior surfaces (like car interiors)
+                // 0.001 allows the shadow camera to see very close surfaces
+                shadowCamera.near = minDim < 1.0 ? 0.0005 : 0.001
+                shadowCamera.far = maxDim * 3
+                shadowCamera.position.copy(center)
+                shadowCamera.position.add(new THREE.Vector3(0, maxDim, 0))
+                shadowCamera.lookAt(center)
+                shadowCamera.updateProjectionMatrix()
+                obj.shadow.needsUpdate = true
+              }
             }
+          } catch (error) {
+            result.errors.push(`Failed to update shadow camera for light: ${error}`)
           }
-        } catch (error) {
-          result.errors.push(`Failed to update shadow camera for light: ${error}`)
         }
-      }
-    })
+      })
+    } else {
+      result.fixesApplied.push('Skipped shadow camera reset (HDR ground projection active)')
+    }
 
   } catch (error) {
     result.errors.push(`Auto-fix failed: ${error}`)

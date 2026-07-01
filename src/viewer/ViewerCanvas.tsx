@@ -87,8 +87,9 @@ import {
 } from './utils/lightingContext'
 import {
   applyHdrGroundShadowCatcherMaterial,
+  applyHdrGroundSunShadowBias,
   effectiveShadowPlaneVisible,
-  forceHdrSunShadowState,
+  refreshHdrGroundShadowState,
   resolveGroundProjectionActive,
   shadowPlaneYForHdrMode,
   shouldUseHdrGroundShadowCatcher,
@@ -4688,27 +4689,22 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           renderStore.hdrGroundProjectionEnabled,
           scene
         )
-        forceHdrSunShadowState(scene, renderer, shadowsEnabledFromStore, {
-          groundProjectionActive
-        })
-        syncHdrShadowPlaneInScene(scene, {
+        const gpParams = groundProjectionActive
+          ? {
+              height: renderStore.hdrGroundProjectionHeight,
+              radius: renderStore.hdrGroundProjectionRadius,
+              positionY: renderStore.hdrGroundProjectionPositionY
+            }
+          : undefined
+        refreshHdrGroundShadowState(scene, renderer, {
           showShadowPlane: renderStore.showShadowPlane,
           shadowIntensity: renderStore.shadowIntensity,
-          input: {
-            hdrEnabled: renderStore.hdrEnabled,
-            hdrGroundProjectionEnabled: groundProjectionActive,
-            shadowsEnabled: shadowsEnabledFromStore
-          },
-          groundProjection: groundProjectionActive
-            ? {
-                height: renderStore.hdrGroundProjectionHeight,
-                radius: renderStore.hdrGroundProjectionRadius,
-                positionY: renderStore.hdrGroundProjectionPositionY
-              }
-            : undefined,
+          shadowsEnabled: shadowsEnabledFromStore,
+          hdrEnabled: renderStore.hdrEnabled,
+          hdrGroundProjectionEnabled: renderStore.hdrGroundProjectionEnabled,
+          groundProjection: gpParams,
           lightweight: hdrShadowPlaneFrameCount % 30 !== 0,
-          frameCount: hdrShadowPlaneFrameCount,
-          debugLog: groundProjectionActive
+          frameCount: hdrShadowPlaneFrameCount
         })
         if (groundProjectionActive && hdrShadowPlaneFrameCount % 2 === 0) {
           renderer.shadowMap.needsUpdate = true
@@ -5910,6 +5906,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
     } else {
       // Apply shadow bias to standard Three.js lights
+      const hdrGroundBiasActive =
+        store.hdrEnabled &&
+        store.shadowsEnabled &&
+        resolveGroundProjectionActive(store.hdrGroundProjectionEnabled, scene)
+
       if (!useAdaptiveShadowSettings) {
         // Manual mode: Use shadowBiasOverride from store (set by slider)
         const shadowBiasOverride = useAppStore.getState().shadowBiasOverride
@@ -5917,8 +5918,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         
         directionalLights.forEach((light) => {
           if (light.shadow && light.castShadow) {
-            light.shadow.bias = shadowBiasOverride
-            light.shadow.normalBias = shadowNormalBiasOverride
+            if (hdrGroundBiasActive && light.userData.isSun) {
+              applyHdrGroundSunShadowBias(light)
+            } else {
+              light.shadow.bias = shadowBiasOverride
+              light.shadow.normalBias = shadowNormalBiasOverride
+            }
             light.shadow.needsUpdate = true
           }
         })
@@ -7151,6 +7156,36 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             requestAnimationFrame(() => {
               viewerRef.current?.updateShadowCameraBounds()
               console.log('[HDRSystem] ✅ Shadow camera bounds updated after HDR application')
+            })
+          }
+
+          // CRITICAL: HDR loads async — re-sync shadow catcher + sun after GroundedSkybox is ready
+          if (viewerRef.current?.scene && viewerRef.current.renderer) {
+            const postHdrStore = useAppStore.getState()
+            requestAnimationFrame(() => {
+              if (!viewerRef.current?.scene || !viewerRef.current.renderer) return
+              refreshHdrGroundShadowState(
+                viewerRef.current.scene,
+                viewerRef.current.renderer,
+                {
+                  showShadowPlane: postHdrStore.showShadowPlane,
+                  shadowIntensity: postHdrStore.shadowIntensity,
+                  shadowsEnabled: postHdrStore.shadowsEnabled,
+                  hdrEnabled: postHdrStore.hdrEnabled,
+                  hdrGroundProjectionEnabled: postHdrStore.hdrGroundProjectionEnabled,
+                  groundProjection: postHdrStore.hdrGroundProjectionEnabled
+                    ? {
+                        height: postHdrStore.hdrGroundProjectionHeight,
+                        radius: postHdrStore.hdrGroundProjectionRadius,
+                        positionY: postHdrStore.hdrGroundProjectionPositionY
+                      }
+                    : undefined,
+                  lightweight: false,
+                  frameCount: 0
+                }
+              )
+              viewerRef.current?.updateShadowCameraBounds?.()
+              wakeViewerRender(viewerRef.current)
             })
           }
           

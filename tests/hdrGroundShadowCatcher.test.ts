@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import * as THREE from 'three'
 import {
   applyHdrGroundShadowCatcherMaterial,
@@ -16,6 +16,7 @@ import {
   STANDARD_HDR_SHADOW_PLANE_Y,
   syncHdrShadowPlaneInScene,
   forceHdrSunShadowState,
+  refreshHdrGroundShadowState,
   applyHdrGroundSunShadowBias
 } from '../src/viewer/utils/hdrGroundShadowCatcher'
 
@@ -307,5 +308,55 @@ describe('hdrGroundShadowCatcher', () => {
     expect(plane.scale.z).toBe(1)
     expect(plane.geometry.parameters.width).toBeLessThan(10000)
     expect(plane.material).toBeInstanceOf(THREE.ShadowMaterial)
+  })
+
+  it('refreshHdrGroundShadowState syncs catcher and logs status once', () => {
+    const scene = new THREE.Scene()
+    const renderer = {
+      shadowMap: { enabled: false, autoUpdate: true, needsUpdate: false }
+    } as unknown as THREE.WebGLRenderer
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(100, 100),
+      new THREE.MeshStandardMaterial({ color: 0x333333 })
+    )
+    plane.userData.isShadowPlane = true
+    scene.add(plane)
+    const sun = new THREE.DirectionalLight(0xffffff, 1)
+    sun.userData.isSun = true
+    scene.add(sun)
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const snapshot = refreshHdrGroundShadowState(scene, renderer, {
+      showShadowPlane: true,
+      shadowIntensity: 1,
+      shadowsEnabled: true,
+      hdrEnabled: true,
+      hdrGroundProjectionEnabled: false
+    })
+
+    expect(snapshot?.shadowPlaneMaterial).toBe('ShadowMaterial')
+    expect(snapshot?.sunCastShadow).toBe(true)
+    expect(renderer.shadowMap.enabled).toBe(true)
+    expect(
+      logSpy.mock.calls.some((call) =>
+        String(call[0]).includes('[HdrShadowCatcher] HDR ground shadows active')
+      )
+    ).toBe(true)
+
+    logSpy.mockClear()
+    refreshHdrGroundShadowState(scene, renderer, {
+      showShadowPlane: true,
+      shadowIntensity: 1,
+      shadowsEnabled: true,
+      hdrEnabled: true,
+      hdrGroundProjectionEnabled: false
+    })
+    expect(
+      logSpy.mock.calls.some((call) =>
+        String(call[0]).includes('[HdrShadowCatcher] HDR ground shadows active')
+      )
+    ).toBe(false)
+
+    logSpy.mockRestore()
   })
 })
