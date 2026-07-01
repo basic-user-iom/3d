@@ -88,7 +88,8 @@ import {
 import {
   applyHdrGroundShadowCatcherMaterial,
   effectiveShadowPlaneVisible,
-  shouldUseHdrGroundShadowCatcher
+  shouldUseHdrGroundShadowCatcher,
+  syncHdrShadowPlaneInScene
 } from './utils/hdrGroundShadowCatcher'
 import {
   applyHdrShadowContrastToMaterials,
@@ -1881,7 +1882,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // Shadow plane to receive shadows (can be toggled)
     // Use very large dimensions to make it effectively infinite
     // CRITICAL: Initialize visibility based on store state to prevent timing issues
-    const initialShowShadowPlane = useAppStore.getState().showShadowPlane
+    const storeAtInit = useAppStore.getState()
+    const initialShowShadowPlane = effectiveShadowPlaneVisible(storeAtInit.showShadowPlane, {
+      hdrEnabled: storeAtInit.hdrEnabled,
+      hdrGroundProjectionEnabled: storeAtInit.hdrGroundProjectionEnabled,
+      shadowsEnabled: storeAtInit.shadowsEnabled
+    })
     const shadowPlaneGeometry = new THREE.PlaneGeometry(10000, 10000)
     // Start with standard material, will be updated based on transparent option
     // CRITICAL: depthWrite MUST be true for shadows to render correctly on the plane
@@ -4496,6 +4502,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       renderer.domElement.removeEventListener('wheel', wakeAnimationLoopFromCanvas)
     }
 
+    let hdrShadowPlaneFrameCount = 0
+
     const animate = (currentTime: number = performance.now()) => {
       if (webglContextLostRef.current || !documentVisible) {
         animationFrameRef.current = undefined
@@ -4669,6 +4677,22 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (shadowsEnabledFromStore && !renderer.shadowMap.enabled) {
         console.warn('[ShadowDebug] ⚠️ Shadows were disabled before render - RE-ENABLING')
         renderer.shadowMap.enabled = true
+      }
+
+      hdrShadowPlaneFrameCount += 1
+      const renderStore = useAppStore.getState()
+      if (renderStore.hdrEnabled && shadowsEnabledFromStore) {
+        syncHdrShadowPlaneInScene(scene, {
+          showShadowPlane: renderStore.showShadowPlane,
+          shadowIntensity: renderStore.shadowIntensity,
+          input: {
+            hdrEnabled: renderStore.hdrEnabled,
+            hdrGroundProjectionEnabled: renderStore.hdrGroundProjectionEnabled,
+            shadowsEnabled: shadowsEnabledFromStore
+          },
+          lightweight: hdrShadowPlaneFrameCount % 30 !== 0,
+          frameCount: hdrShadowPlaneFrameCount
+        })
       }
       
       // IMPROVED: Run comprehensive shadow diagnostics periodically (every 10 seconds) to catch issues
@@ -5822,18 +5846,22 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     hdrGroundShadowInput
   )
 
-    // Update shadow plane visibility
-    scene.traverse((obj) => {
-      if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
-        const hiddenForPathTracer = Boolean(obj.userData.__hiddenForPathTracer)
-        obj.visible = hiddenForPathTracer ? false : effectiveShowShadowPlane
-        obj.receiveShadow = true
-
-        if (useHdrGroundShadowCatcher) {
-          applyHdrGroundShadowCatcherMaterial(obj, shadowIntensity)
+    if (useHdrGroundShadowCatcher) {
+      syncHdrShadowPlaneInScene(scene, {
+        showShadowPlane,
+        shadowIntensity,
+        input: hdrGroundShadowInput,
+        lightweight: true
+      })
+    } else {
+      scene.traverse((obj) => {
+        if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
+          const hiddenForPathTracer = Boolean(obj.userData.__hiddenForPathTracer)
+          obj.visible = hiddenForPathTracer ? false : effectiveShowShadowPlane
+          obj.receiveShadow = true
         }
-      }
-    })
+      })
+    }
     
     if (csmActive && csmSystem) {
       // Apply shadow bias to CSM system
@@ -5884,7 +5912,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     scene.traverse((obj) => {
       if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
         if (useHdrGroundShadowCatcher) {
-          applyHdrGroundShadowCatcherMaterial(obj, shadowIntensity)
+          applyHdrGroundShadowCatcherMaterial(
+            obj,
+            shadowIntensity,
+            hdrGroundProjectionEnabled
+          )
           return
         }
 

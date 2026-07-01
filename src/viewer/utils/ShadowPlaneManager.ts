@@ -7,6 +7,7 @@
 
 import * as THREE from 'three'
 import { materialUpdateQueue } from './MaterialUpdateQueue'
+import { effectiveShadowPlaneVisible } from './hdrGroundShadowCatcher'
 
 export interface ShadowPlaneConfig {
   transparent?: boolean
@@ -196,9 +197,14 @@ export class ShadowPlaneManager {
     // CRITICAL: Ensure shadow plane is visible (Perplexity finding: visibility must be explicitly managed)
     if (!this.shadowPlane.visible) {
       const store = (window as any).__appStore?.getState?.()
-      const showShadowPlane = store?.showShadowPlane ?? true
-      this.shadowPlane.visible = showShadowPlane
-      console.log('[ShadowPlaneManager] ✅ Restored shadow plane visibility after HDR disable:', showShadowPlane)
+      const showShadowPlane = store?.showShadowPlane ?? false
+      const effectiveVisible = effectiveShadowPlaneVisible(showShadowPlane, {
+        hdrEnabled: store?.hdrEnabled ?? false,
+        hdrGroundProjectionEnabled: store?.hdrGroundProjectionEnabled ?? false,
+        shadowsEnabled: store?.shadowsEnabled ?? true
+      })
+      this.shadowPlane.visible = effectiveVisible
+      console.log('[ShadowPlaneManager] ✅ Restored shadow plane visibility after HDR disable:', effectiveVisible)
     }
 
     const material = this.shadowPlane.material
