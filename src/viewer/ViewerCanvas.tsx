@@ -89,6 +89,8 @@ import {
   applyHdrGroundShadowCatcherMaterial,
   effectiveShadowPlaneVisible,
   forceHdrSunShadowState,
+  resolveGroundProjectionActive,
+  shadowPlaneYForHdrMode,
   shouldUseHdrGroundShadowCatcher,
   syncHdrShadowPlaneInScene
 } from './utils/hdrGroundShadowCatcher'
@@ -1908,9 +1910,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     shadowPlane.userData.isShadowPlane = true
     // CRITICAL: Set initial visibility from store to prevent visible flash before App.tsx effect runs
     shadowPlane.visible = initialShowShadowPlane
-    // CRITICAL: Shadow plane must render after GroundedSkybox (renderOrder -1000) to properly occlude it
-    // when viewed from below. Higher renderOrder means it renders later (on top).
-    shadowPlane.renderOrder = 100 // Render shadow plane after grid and after GroundedSkybox
+    // Match webexport: renderOrder 0 (GroundedSkybox uses -1000; transparent catcher sorts after opaque).
+    shadowPlane.renderOrder = 0
     nativeObjectsGroup.add(shadowPlane)
 
     // Axes helper
@@ -4683,16 +4684,22 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       hdrShadowPlaneFrameCount += 1
       const renderStore = useAppStore.getState()
       if (renderStore.hdrEnabled && shadowsEnabledFromStore) {
-        forceHdrSunShadowState(scene, renderer, shadowsEnabledFromStore)
+        const groundProjectionActive = resolveGroundProjectionActive(
+          renderStore.hdrGroundProjectionEnabled,
+          scene
+        )
+        forceHdrSunShadowState(scene, renderer, shadowsEnabledFromStore, {
+          groundProjectionActive
+        })
         syncHdrShadowPlaneInScene(scene, {
           showShadowPlane: renderStore.showShadowPlane,
           shadowIntensity: renderStore.shadowIntensity,
           input: {
             hdrEnabled: renderStore.hdrEnabled,
-            hdrGroundProjectionEnabled: renderStore.hdrGroundProjectionEnabled,
+            hdrGroundProjectionEnabled: groundProjectionActive,
             shadowsEnabled: shadowsEnabledFromStore
           },
-          groundProjection: renderStore.hdrGroundProjectionEnabled
+          groundProjection: groundProjectionActive
             ? {
                 height: renderStore.hdrGroundProjectionHeight,
                 radius: renderStore.hdrGroundProjectionRadius,
@@ -4701,9 +4708,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             : undefined,
           lightweight: hdrShadowPlaneFrameCount % 30 !== 0,
           frameCount: hdrShadowPlaneFrameCount,
-          debugLog: renderStore.hdrGroundProjectionEnabled
+          debugLog: groundProjectionActive
         })
-        if (renderStore.hdrGroundProjectionEnabled && hdrShadowPlaneFrameCount % 2 === 0) {
+        if (groundProjectionActive && hdrShadowPlaneFrameCount % 2 === 0) {
           renderer.shadowMap.needsUpdate = true
         }
       }
@@ -5850,7 +5857,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     
   const hdrGroundShadowInput = {
     hdrEnabled: store.hdrEnabled,
-    hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+    hdrGroundProjectionEnabled: resolveGroundProjectionActive(
+      store.hdrGroundProjectionEnabled,
+      scene
+    ),
     shadowsEnabled
   }
   const useHdrGroundShadowCatcher = shouldUseHdrGroundShadowCatcher(
@@ -5867,7 +5877,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         showShadowPlane,
         shadowIntensity,
         input: hdrGroundShadowInput,
-        groundProjection: hdrGroundProjectionEnabled
+        groundProjection: hdrGroundShadowInput.hdrGroundProjectionEnabled
           ? {
               height: hdrGroundProjectionHeight,
               radius: hdrGroundProjectionRadius,
@@ -5935,10 +5945,18 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     scene.traverse((obj) => {
       if (obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
         if (useHdrGroundShadowCatcher) {
+          const catcherY = hdrGroundShadowInput.hdrGroundProjectionEnabled
+            ? shadowPlaneYForHdrMode(true, {
+                height: hdrGroundProjectionHeight,
+                radius: hdrGroundProjectionRadius,
+                positionY: hdrGroundProjectionPositionY
+              })
+            : undefined
           applyHdrGroundShadowCatcherMaterial(
             obj,
             shadowIntensity,
-            hdrGroundProjectionEnabled
+            hdrGroundShadowInput.hdrGroundProjectionEnabled,
+            catcherY
           )
           return
         }
