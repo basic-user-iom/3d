@@ -53,6 +53,30 @@ export const GROUND_PROJECTION_SHADOW_PLANE_Y = -0.01
 /** Minimum ShadowMaterial opacity so contact shadows stay visible on dark HDR ground (matches webexport). */
 export const MIN_SHADOW_CATCHER_OPACITY = 0.3
 
+/** webexport sun bias for contact shadows on the flat ground catcher */
+export const HDR_GROUND_SUN_SHADOW_BIAS = 0.00015
+export const HDR_GROUND_SUN_SHADOW_NORMAL_BIAS = 0.1
+
+/** True when a GroundedSkybox is present (store flag can lag behind HDRSystem). */
+export function sceneHasGroundProjection(scene: THREE.Scene): boolean {
+  let found = false
+  scene.traverse((obj) => {
+    if (found) return
+    if (obj.userData?.isGroundedSkybox || (obj as THREE.Object3D & { isGroundedSkybox?: boolean }).isGroundedSkybox) {
+      found = true
+    }
+  })
+  return found
+}
+
+/** Store flag OR live GroundedSkybox in the scene. */
+export function resolveGroundProjectionActive(
+  hdrGroundProjectionEnabled: boolean,
+  scene?: THREE.Scene | null
+): boolean {
+  return hdrGroundProjectionEnabled || (scene ? sceneHasGroundProjection(scene) : false)
+}
+
 /** @deprecated Use shadowPlaneYForHdrMode instead */
 export const HDR_SHADOW_CATCHER_PLANE_Y = STANDARD_HDR_SHADOW_PLANE_Y
 
@@ -122,15 +146,22 @@ export function applyHdrGroundShadowCatcherMaterial(
   }
 
   const material = plane.material as THREE.ShadowMaterial
+  material.userData.isHdrGroundShadowCatcher = true
   // Ground projection: composite shadow catcher over GroundedSkybox (MeshBasicMaterial, depthWrite=false).
   // depthTest=false ensures the catcher draws on the projected ground even when the depth buffer
   // holds car or sky geometry from the opaque pass (matches working webexport behaviour).
   if (hdrGroundProjectionEnabled) {
     material.depthTest = false
     material.depthWrite = true
+    material.userData.preserveDepthTestOff = true
+    material.polygonOffset = true
+    material.polygonOffsetFactor = -1
+    material.polygonOffsetUnits = -1
   } else {
     material.depthTest = true
     material.depthWrite = true
+    delete material.userData.preserveDepthTestOff
+    material.polygonOffset = false
   }
   material.visible = true
   if (material.opacity < MIN_SHADOW_CATCHER_OPACITY) {
@@ -278,8 +309,12 @@ export function syncHdrShadowPlaneInScene(
     return
   }
 
+  const groundProjectionActive = resolveGroundProjectionActive(
+    input.hdrGroundProjectionEnabled,
+    scene
+  )
   const effectiveVisible = effectiveShadowPlaneVisible(showShadowPlane, input)
-  const targetY = shadowPlaneYForHdrMode(input.hdrGroundProjectionEnabled, groundProjection)
+  const targetY = shadowPlaneYForHdrMode(groundProjectionActive, groundProjection)
   const shouldReposition = !lightweight && frameCount % 30 === 0
   const sceneBounds = shouldReposition ? collectSceneShadowBounds(scene) : null
 
@@ -306,11 +341,11 @@ export function syncHdrShadowPlaneInScene(
     applyHdrGroundShadowCatcherMaterial(
       obj,
       shadowIntensity,
-      input.hdrGroundProjectionEnabled,
+      groundProjectionActive,
       targetY
     )
 
-    if (input.hdrGroundProjectionEnabled) {
+    if (groundProjectionActive) {
       if (Math.abs(obj.position.y - targetY) > 0.001) {
         obj.position.y = targetY
       }
@@ -328,10 +363,10 @@ export function syncHdrShadowPlaneInScene(
       fitShadowPlaneToBounds(
         obj,
         sceneBounds,
-        input.hdrGroundProjectionEnabled,
+        groundProjectionActive,
         groundProjection
       )
-    } else if (input.hdrGroundProjectionEnabled && groundProjection) {
+    } else if (groundProjectionActive && groundProjection) {
       const targetGeoSize = Math.max(groundProjection.radius * 2, 50)
       ensureShadowPlaneGeometrySize(obj, targetGeoSize, true)
       if (Math.abs(obj.scale.x - 1) > 0.01) {
@@ -345,14 +380,48 @@ export function syncHdrShadowPlaneInScene(
   })
 }
 
+function findHdrSunDirectionalLights(scene: THREE.Scene): THREE.DirectionalLight[] {
+  const marked: THREE.DirectionalLight[] = []
+  let fallback: THREE.DirectionalLight | null = null
+
+  scene.traverse((obj) => {
+    if (!(obj instanceof THREE.DirectionalLight)) return
+    const name = (obj.name || '').toLowerCase()
+    if (obj.userData.isSun || name.includes('sun')) {
+      if (!obj.userData.isSun) {
+        obj.userData.isSun = true
+      }
+      marked.push(obj)
+    } else if (!fallback) {
+      fallback = obj
+    }
+  })
+
+  if (marked.length > 0) return marked
+  if (fallback) {
+    fallback.userData.isSun = true
+    return [fallback]
+  }
+  return []
+}
+
+/** webexport-matched sun bias for flat ShadowMaterial ground catcher. */
+export function applyHdrGroundSunShadowBias(light: THREE.DirectionalLight): void {
+  if (!light.shadow) return
+  light.shadow.bias = HDR_GROUND_SUN_SHADOW_BIAS
+  light.shadow.normalBias = HDR_GROUND_SUN_SHADOW_NORMAL_BIAS
+}
+
 /** Force sun shadow maps + renderer shadowMap when HDR ground projection shadows are active. */
 export function forceHdrSunShadowState(
   scene: THREE.Scene,
   renderer: THREE.WebGLRenderer | null | undefined,
-  shadowsEnabled: boolean
+  shadowsEnabled: boolean,
+  options?: { groundProjectionActive?: boolean }
 ): { sunFound: boolean; sunCastShadow: boolean } {
   let sunFound = false
   let sunCastShadow = false
+  const groundProjectionActive = options?.groundProjectionActive ?? sceneHasGroundProjection(scene)
 
   if (renderer?.shadowMap && shadowsEnabled) {
     if (!renderer.shadowMap.enabled) {
@@ -361,19 +430,23 @@ export function forceHdrSunShadowState(
     renderer.shadowMap.autoUpdate = true
   }
 
-  scene.traverse((obj) => {
-    if (obj instanceof THREE.DirectionalLight && obj.userData.isSun) {
-      sunFound = true
-      if (shadowsEnabled && !obj.castShadow) {
-        obj.castShadow = true
+  const sunLights = findHdrSunDirectionalLights(scene)
+  for (const light of sunLights) {
+    sunFound = true
+    if (shadowsEnabled) {
+      light.castShadow = true
+      sunCastShadow = true
+      if (light.shadow) {
+        if (groundProjectionActive) {
+          applyHdrGroundSunShadowBias(light)
+        }
+        light.shadow.needsUpdate = true
+        light.shadow.camera?.updateProjectionMatrix()
       }
-      sunCastShadow = obj.castShadow
-      if (obj.castShadow && obj.shadow) {
-        obj.shadow.needsUpdate = true
-        obj.shadow.camera?.updateProjectionMatrix()
-      }
+    } else {
+      sunCastShadow = light.castShadow
     }
-  })
+  }
 
   if (renderer?.shadowMap && shadowsEnabled) {
     renderer.shadowMap.needsUpdate = true

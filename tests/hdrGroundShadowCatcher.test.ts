@@ -6,13 +6,17 @@ import {
   groundProjectionShadowPlaneY,
   GROUND_PROJECTION_SHADOW_PLANE_Y,
   MIN_SHADOW_CATCHER_OPACITY,
+  HDR_GROUND_SUN_SHADOW_BIAS,
+  sceneHasGroundProjection,
+  resolveGroundProjectionActive,
   shadowCatcherOpacity,
   shadowPlaneYForHdrMode,
   shouldAutoShowShadowPlaneForHdr,
   shouldUseHdrGroundShadowCatcher,
   STANDARD_HDR_SHADOW_PLANE_Y,
   syncHdrShadowPlaneInScene,
-  forceHdrSunShadowState
+  forceHdrSunShadowState,
+  applyHdrGroundSunShadowBias
 } from '../src/viewer/utils/hdrGroundShadowCatcher'
 
 describe('hdrGroundShadowCatcher', () => {
@@ -168,6 +172,8 @@ describe('hdrGroundShadowCatcher', () => {
     expect(plane.position.y).toBe(GROUND_PROJECTION_SHADOW_PLANE_Y + 2)
     expect(plane.renderOrder).toBe(0)
     expect(material.depthTest).toBe(false)
+    expect(material.userData.isHdrGroundShadowCatcher).toBe(true)
+    expect(material.userData.preserveDepthTestOff).toBe(true)
     expect(shadowPlaneYForHdrMode(true, groundProjection)).toBe(1.99)
     expect(shadowPlaneYForHdrMode(false)).toBe(STANDARD_HDR_SHADOW_PLANE_Y)
   })
@@ -192,6 +198,46 @@ describe('hdrGroundShadowCatcher', () => {
     expect(result.sunCastShadow).toBe(true)
     expect(renderer.shadowMap.enabled).toBe(true)
     expect(sun.castShadow).toBe(true)
+  })
+
+  it('forceHdrSunShadowState falls back to first directional light without isSun', () => {
+    const scene = new THREE.Scene()
+    const renderer = {
+      shadowMap: { enabled: true, autoUpdate: true, needsUpdate: false }
+    } as unknown as THREE.WebGLRenderer
+    const light = new THREE.DirectionalLight(0xffffff, 1)
+    light.castShadow = false
+    scene.add(light)
+
+    const result = forceHdrSunShadowState(scene, renderer, true, { groundProjectionActive: true })
+    expect(result.sunFound).toBe(true)
+    expect(result.sunCastShadow).toBe(true)
+    expect(light.userData.isSun).toBe(true)
+    expect(light.castShadow).toBe(true)
+    expect(light.shadow?.bias).toBe(HDR_GROUND_SUN_SHADOW_BIAS)
+  })
+
+  it('detects ground projection from GroundedSkybox in scene', () => {
+    const scene = new THREE.Scene()
+    expect(sceneHasGroundProjection(scene)).toBe(false)
+
+    const skybox = new THREE.Mesh(
+      new THREE.SphereGeometry(10),
+      new THREE.MeshBasicMaterial()
+    )
+    skybox.userData.isGroundedSkybox = true
+    scene.add(skybox)
+
+    expect(sceneHasGroundProjection(scene)).toBe(true)
+    expect(resolveGroundProjectionActive(false, scene)).toBe(true)
+  })
+
+  it('applyHdrGroundSunShadowBias matches webexport contact shadow tuning', () => {
+    const sun = new THREE.DirectionalLight(0xffffff, 1)
+    sun.castShadow = true
+    applyHdrGroundSunShadowBias(sun)
+    expect(sun.shadow.bias).toBe(HDR_GROUND_SUN_SHADOW_BIAS)
+    expect(sun.shadow.normalBias).toBe(0.1)
   })
 
   it('syncHdrShadowPlaneInScene reveals hidden shadow plane under HDR + shadows', () => {

@@ -3,7 +3,8 @@ import { useAppStore } from '../../store/useAppStore'
 import {
   expandBoundsWithShadowCatcher,
   shadowPlaneYForHdrMode,
-  groundProjectionShadowParamsFromStore
+  groundProjectionShadowParamsFromStore,
+  resolveGroundProjectionActive
 } from './hdrGroundShadowCatcher'
 import { computeLightDirection } from './lightGizmos'
 import { CSMShadowSystem, CSMConfig } from '../effects/CSMShadowSystem'
@@ -347,7 +348,11 @@ export function updateShadowCameraBounds(
 
   if (hasObjects && !targetBox.isEmpty()) {
     const store = useAppStore.getState()
-    if (store.hdrEnabled && store.shadowsEnabled && store.hdrGroundProjectionEnabled) {
+    const groundProjectionActive = resolveGroundProjectionActive(
+      store.hdrGroundProjectionEnabled,
+      scene
+    )
+    if (store.hdrEnabled && store.shadowsEnabled && groundProjectionActive) {
       const gp = groundProjectionShadowParamsFromStore(store)
       const catcherY = shadowPlaneYForHdrMode(true, gp)
       const halfExtent = Math.max(gp.radius, 25)
@@ -373,6 +378,13 @@ export function updateShadowCameraBounds(
         currentNear <= frustum.near ? currentNear : frustum.near
 
       light.shadow.camera.far = frustum.far
+      if (groundProjectionActive) {
+        const gp = groundProjectionShadowParamsFromStore(store)
+        light.shadow.camera.far = Math.max(
+          light.shadow.camera.far,
+          Math.max(gp.radius * 3, 5000)
+        )
+      }
 
       let lightDirection: THREE.Vector3
       const computedDir = computeLightDirection(light)

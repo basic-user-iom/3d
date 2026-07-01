@@ -14,7 +14,7 @@ import { cacheImportedModelScene } from './importedModelCache'
 import { descriptorFromImportedModel } from './objectRegistry'
 import { attachModelAnimations } from './utils/modelAnimations'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
-import { syncHdrShadowPlaneInScene, forceHdrSunShadowState } from './utils/hdrGroundShadowCatcher'
+import { syncHdrShadowPlaneInScene, forceHdrSunShadowState, resolveGroundProjectionActive } from './utils/hdrGroundShadowCatcher'
 import { wakeViewerRender } from './utils/wakeViewerRender'
 
 export interface LoadedModel {
@@ -1555,7 +1555,12 @@ export function useViewer() {
       viewer.renderer.shadowMap.needsUpdate = true
     }
 
-    forceHdrSunShadowState(scene, viewer.renderer, store.shadowsEnabled)
+    forceHdrSunShadowState(scene, viewer.renderer, store.shadowsEnabled, {
+      groundProjectionActive: resolveGroundProjectionActive(
+        store.hdrGroundProjectionEnabled,
+        scene
+      )
+    })
 
     wakeViewerRender(viewer)
   }
@@ -2145,6 +2150,9 @@ export function useViewer() {
               (mat as any).isUnlitShaderMaterial === true
 
               // Industry-standard depth masking: Ensure imported models occlude background
+              if ((mat as any).userData?.isHdrGroundShadowCatcher || (mat as any).userData?.preserveDepthTestOff) {
+                return
+              }
               if (mat.depthTest !== true) {
                 mat.depthTest = true
                 depthMaskedCount++
