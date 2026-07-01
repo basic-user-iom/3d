@@ -7083,13 +7083,14 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             if (!viewerRef.current?.indirectLightingSystem || indirectSystem !== viewerRef.current.indirectLightingSystem) {
               return
             }
-            if (probeRenderTarget) {
+            // Prefer CPU equirect SH — PMREM cube RT is half-float and breaks readPixels with Uint8Array
+            if (equirectForProbe) {
+              viewerRef.current.indirectLightingSystem.applyFromEquirect(equirectForProbe, hdrIntensity)
+            } else if (probeRenderTarget) {
               viewerRef.current.indirectLightingSystem.applyFromPmremRenderTarget(
                 probeRenderTarget,
                 hdrIntensity
               )
-            } else if (equirectForProbe) {
-              viewerRef.current.indirectLightingSystem.applyFromEquirect(equirectForProbe, hdrIntensity)
             }
           })
 

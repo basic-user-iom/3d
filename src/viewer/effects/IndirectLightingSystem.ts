@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-import { LightProbeGenerator } from 'three-stdlib'
 import {
   EXTERIOR_PROBE_INTENSITY_SCALE,
   INTERIOR_PROBE_SH_SCALE,
@@ -8,6 +7,10 @@ import {
   getAmbientMultiplierWithProbe,
   getProbeIntensityScaleForShadows
 } from '../../utils/lightProbeUtils'
+import {
+  generateLightProbeFromCubeRenderTarget,
+  generateLightProbeFromEquirect
+} from '../../utils/lightProbeGenerator'
 import { useAppStore } from '../../store/useAppStore'
 
 /**
@@ -20,7 +23,6 @@ import { useAppStore } from '../../store/useAppStore'
 export class IndirectLightingSystem {
   private scene: THREE.Scene
   private renderer: THREE.WebGLRenderer
-  private pmremGenerator: THREE.PMREMGenerator | null = null
   private probeRenderTarget: THREE.WebGLCubeRenderTarget | null = null
   /** When true, probeRenderTarget is owned by HDR PMREM cache — do not dispose. */
   private probeRenderTargetShared = false
@@ -61,23 +63,26 @@ export class IndirectLightingSystem {
   }
 
   /**
-   * Build SH probe from HDR equirectangular texture (fallback when no PMREM RT available).
+   * Build SH probe from HDR equirectangular texture CPU data (no PMREM bake / GPU readback).
    * Keeps scene.environment for specular IBL; probe replaces flat ambient fill.
    */
   applyFromEquirect(equirectTexture: THREE.Texture, hdrIntensity: number): void {
     this.remove()
+    this.installProbesFromEquirect(equirectTexture, hdrIntensity)
+  }
 
-    if (!this.pmremGenerator) {
-      this.pmremGenerator = new THREE.PMREMGenerator(this.renderer)
-      this.pmremGenerator.compileEquirectangularShader()
+  private installProbesFromEquirect(equirectTexture: THREE.Texture, hdrIntensity: number): void {
+    try {
+      const baseProbe = generateLightProbeFromEquirect(equirectTexture)
+      if (!baseProbe) {
+        console.warn('[IndirectLighting] No CPU equirect data for probe — ambient-only fallback')
+        return
+      }
+      this.finishProbeInstall(baseProbe, hdrIntensity, 'equirect')
+    } catch (error) {
+      console.warn('[IndirectLighting] Failed to generate light probe from equirect:', error)
+      this.disposeProbeResources()
     }
-
-    const rt = this.pmremGenerator.fromEquirectangular(
-      equirectTexture
-    ) as unknown as THREE.WebGLCubeRenderTarget
-    this.probeRenderTarget = rt
-    this.probeRenderTargetShared = false
-    this.installProbesFromCubeRenderTarget(rt, hdrIntensity)
   }
 
   private installProbesFromCubeRenderTarget(
@@ -85,38 +90,51 @@ export class IndirectLightingSystem {
     hdrIntensity: number
   ): void {
     try {
-      const baseProbe = LightProbeGenerator.fromCubeRenderTarget(this.renderer, rt)
-      this.hdrIntensity = hdrIntensity
-      const shadowsEnabled = useAppStore.getState().shadowsEnabled
-      const probeShadowScale = getProbeIntensityScaleForShadows(shadowsEnabled)
-
-      this.exteriorProbe = createScaledLightProbe(
-        baseProbe,
-        EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity * probeShadowScale
-      )
-      this.exteriorProbe.name = 'HDR Exterior Light Probe'
-      this.exteriorProbe.userData.isIndirectLightingProbe = true
-
-      this.interiorProbeHeuristic = createScaledLightProbe(
-        baseProbe,
-        EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity * 0.5,
-        INTERIOR_PROBE_SH_SCALE
-      )
-      this.interiorProbeHeuristic.name = 'Interior Probe Heuristic (not scene-bound)'
-      this.interiorProbeHeuristic.userData.isInteriorProbeHeuristic = true
-
-      this.scene.add(this.exteriorProbe)
-
-      console.log('[IndirectLighting] HDR light probe applied', {
-        probeIntensity: this.exteriorProbe.intensity,
-        interiorShScale: INTERIOR_PROBE_SH_SCALE,
-        cubemapSize: PROBE_CUBEMAP_SIZE,
-        sharedPmrem: this.probeRenderTargetShared
-      })
+      const baseProbe = generateLightProbeFromCubeRenderTarget(this.renderer, rt)
+      if (!baseProbe) {
+        console.warn('[IndirectLighting] Cube RT probe readback failed — ambient-only fallback')
+        return
+      }
+      this.finishProbeInstall(baseProbe, hdrIntensity, 'cubeRT')
     } catch (error) {
       console.warn('[IndirectLighting] Failed to generate light probe from HDR:', error)
       this.disposeProbeResources()
     }
+  }
+
+  private finishProbeInstall(
+    baseProbe: THREE.LightProbe,
+    hdrIntensity: number,
+    source: 'equirect' | 'cubeRT'
+  ): void {
+    this.hdrIntensity = hdrIntensity
+    const shadowsEnabled = useAppStore.getState().shadowsEnabled
+    const probeShadowScale = getProbeIntensityScaleForShadows(shadowsEnabled)
+
+    this.exteriorProbe = createScaledLightProbe(
+      baseProbe,
+      EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity * probeShadowScale
+    )
+    this.exteriorProbe.name = 'HDR Exterior Light Probe'
+    this.exteriorProbe.userData.isIndirectLightingProbe = true
+
+    this.interiorProbeHeuristic = createScaledLightProbe(
+      baseProbe,
+      EXTERIOR_PROBE_INTENSITY_SCALE * hdrIntensity * 0.5,
+      INTERIOR_PROBE_SH_SCALE
+    )
+    this.interiorProbeHeuristic.name = 'Interior Probe Heuristic (not scene-bound)'
+    this.interiorProbeHeuristic.userData.isInteriorProbeHeuristic = true
+
+    this.scene.add(this.exteriorProbe)
+
+    console.log('[IndirectLighting] HDR light probe applied', {
+      source,
+      probeIntensity: this.exteriorProbe.intensity,
+      interiorShScale: INTERIOR_PROBE_SH_SCALE,
+      cubemapSize: PROBE_CUBEMAP_SIZE,
+      sharedPmrem: this.probeRenderTargetShared
+    })
   }
 
   updateIntensity(hdrIntensity: number): void {
@@ -156,9 +174,5 @@ export class IndirectLightingSystem {
 
   dispose(): void {
     this.remove()
-    if (this.pmremGenerator) {
-      this.pmremGenerator.dispose()
-      this.pmremGenerator = null
-    }
   }
 }
