@@ -1535,6 +1535,13 @@ export function useViewer() {
         hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
         shadowsEnabled: store.shadowsEnabled
       },
+      groundProjection: store.hdrGroundProjectionEnabled
+        ? {
+            height: store.hdrGroundProjectionHeight,
+            radius: store.hdrGroundProjectionRadius,
+            positionY: store.hdrGroundProjectionPositionY
+          }
+        : undefined,
       lightweight: false,
       frameCount: 0
     })
