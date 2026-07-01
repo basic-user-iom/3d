@@ -5,12 +5,14 @@ import {
   effectiveShadowPlaneVisible,
   groundProjectionShadowPlaneY,
   GROUND_PROJECTION_SHADOW_PLANE_Y,
+  MIN_SHADOW_CATCHER_OPACITY,
   shadowCatcherOpacity,
   shadowPlaneYForHdrMode,
   shouldAutoShowShadowPlaneForHdr,
   shouldUseHdrGroundShadowCatcher,
   STANDARD_HDR_SHADOW_PLANE_Y,
-  syncHdrShadowPlaneInScene
+  syncHdrShadowPlaneInScene,
+  forceHdrSunShadowState
 } from '../src/viewer/utils/hdrGroundShadowCatcher'
 
 describe('hdrGroundShadowCatcher', () => {
@@ -144,7 +146,7 @@ describe('hdrGroundShadowCatcher', () => {
     expect(plane.renderOrder).toBe(0)
   })
 
-  it('uses projected ground Y and render order when ground projection is enabled', () => {
+  it('uses projected ground Y and depthTest off for ground projection overlay', () => {
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 10),
       new THREE.MeshStandardMaterial({ color: 0x333333 })
@@ -158,10 +160,38 @@ describe('hdrGroundShadowCatcher', () => {
       groundProjectionShadowPlaneY(groundProjection)
     )
 
+    const material = plane.material
+    expect(material).toBeInstanceOf(THREE.ShadowMaterial)
+    if (!(material instanceof THREE.ShadowMaterial)) {
+      throw new Error('expected ShadowMaterial')
+    }
     expect(plane.position.y).toBe(GROUND_PROJECTION_SHADOW_PLANE_Y + 2)
-    expect(plane.renderOrder).toBe(100)
+    expect(plane.renderOrder).toBe(0)
+    expect(material.depthTest).toBe(false)
     expect(shadowPlaneYForHdrMode(true, groundProjection)).toBe(1.99)
     expect(shadowPlaneYForHdrMode(false)).toBe(STANDARD_HDR_SHADOW_PLANE_Y)
+  })
+
+  it('enforces minimum shadow catcher opacity', () => {
+    expect(shadowCatcherOpacity(0)).toBe(MIN_SHADOW_CATCHER_OPACITY)
+    expect(shadowCatcherOpacity(2)).toBe(1.0)
+  })
+
+  it('forceHdrSunShadowState enables renderer and sun shadows', () => {
+    const scene = new THREE.Scene()
+    const renderer = {
+      shadowMap: { enabled: false, autoUpdate: false, needsUpdate: false }
+    } as unknown as THREE.WebGLRenderer
+    const sun = new THREE.DirectionalLight(0xffffff, 1)
+    sun.userData.isSun = true
+    sun.castShadow = false
+    scene.add(sun)
+
+    const result = forceHdrSunShadowState(scene, renderer, true)
+    expect(result.sunFound).toBe(true)
+    expect(result.sunCastShadow).toBe(true)
+    expect(renderer.shadowMap.enabled).toBe(true)
+    expect(sun.castShadow).toBe(true)
   })
 
   it('syncHdrShadowPlaneInScene reveals hidden shadow plane under HDR + shadows', () => {
@@ -227,8 +257,9 @@ describe('hdrGroundShadowCatcher', () => {
     expect(plane.position.x).toBeCloseTo(12, 1)
     expect(plane.position.z).toBeCloseTo(-6, 1)
     expect(plane.position.y).toBe(GROUND_PROJECTION_SHADOW_PLANE_Y)
-    expect(plane.scale.x).toBeGreaterThanOrEqual(1)
-    expect(plane.scale.z).toBeGreaterThan(1)
+    expect(plane.scale.x).toBe(1)
+    expect(plane.scale.z).toBe(1)
     expect(plane.geometry.parameters.width).toBeLessThan(10000)
+    expect(plane.material).toBeInstanceOf(THREE.ShadowMaterial)
   })
 })

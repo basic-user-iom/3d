@@ -1,5 +1,10 @@
 import * as THREE from 'three'
 import { useAppStore } from '../../store/useAppStore'
+import {
+  expandBoundsWithShadowCatcher,
+  shadowPlaneYForHdrMode,
+  groundProjectionShadowParamsFromStore
+} from './hdrGroundShadowCatcher'
 import { computeLightDirection } from './lightGizmos'
 import { CSMShadowSystem, CSMConfig } from '../effects/CSMShadowSystem'
 import {
@@ -341,6 +346,14 @@ export function updateShadowCameraBounds(
   const useVisibleBounds = false // Always use full bounds for interior shadows
 
   if (hasObjects && !targetBox.isEmpty()) {
+    const store = useAppStore.getState()
+    if (store.hdrEnabled && store.shadowsEnabled && store.hdrGroundProjectionEnabled) {
+      const gp = groundProjectionShadowParamsFromStore(store)
+      const catcherY = shadowPlaneYForHdrMode(true, gp)
+      const halfExtent = Math.max(gp.radius, 25)
+      targetBox.copy(expandBoundsWithShadowCatcher(targetBox, catcherY, halfExtent))
+    }
+
     const size = targetBox.getSize(new THREE.Vector3())
     const center = targetBox.getCenter(new THREE.Vector3())
     const maxDim = Math.max(size.x, size.y, size.z)

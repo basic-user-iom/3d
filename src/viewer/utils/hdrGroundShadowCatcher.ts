@@ -50,6 +50,9 @@ export const STANDARD_HDR_SHADOW_PLANE_Y = -0.001
 /** Ground projection base offset — ground surface = skybox.y - height, skybox.y = height - 0.01 + positionY. */
 export const GROUND_PROJECTION_SHADOW_PLANE_Y = -0.01
 
+/** Minimum ShadowMaterial opacity so contact shadows stay visible on dark HDR ground (matches webexport). */
+export const MIN_SHADOW_CATCHER_OPACITY = 0.3
+
 /** @deprecated Use shadowPlaneYForHdrMode instead */
 export const HDR_SHADOW_CATCHER_PLANE_Y = STANDARD_HDR_SHADOW_PLANE_Y
 
@@ -82,7 +85,8 @@ export function effectiveShadowPlaneVisible(
 }
 
 export function shadowCatcherOpacity(shadowIntensity: number): number {
-  return Math.min(1.0, 0.1 + (shadowIntensity / 2.0) * 0.9)
+  const raw = 0.1 + (shadowIntensity / 2.0) * 0.9
+  return Math.min(1.0, Math.max(MIN_SHADOW_CATCHER_OPACITY, raw))
 }
 
 export function applyHdrGroundShadowCatcherMaterial(
@@ -104,24 +108,43 @@ export function applyHdrGroundShadowCatcherMaterial(
       depthWrite: true,
       side: THREE.DoubleSide
     })
+    shadowMaterial.userData.baseOpacity = opacity
     plane.material = shadowMaterial
   } else {
     current.opacity = opacity
     current.transparent = true
     current.side = THREE.DoubleSide
+    current.userData.baseOpacity = opacity
     if (current.depthWrite !== true) {
       current.depthWrite = true
     }
     current.needsUpdate = true
   }
 
+  const material = plane.material as THREE.ShadowMaterial
+  // Ground projection: composite shadow catcher over GroundedSkybox (MeshBasicMaterial, depthWrite=false).
+  // depthTest=false ensures the catcher draws on the projected ground even when the depth buffer
+  // holds car or sky geometry from the opaque pass (matches working webexport behaviour).
+  if (hdrGroundProjectionEnabled) {
+    material.depthTest = false
+    material.depthWrite = true
+  } else {
+    material.depthTest = true
+    material.depthWrite = true
+  }
+  material.visible = true
+  if (material.opacity < MIN_SHADOW_CATCHER_OPACITY) {
+    material.opacity = Math.max(MIN_SHADOW_CATCHER_OPACITY, material.userData.baseOpacity ?? MIN_SHADOW_CATCHER_OPACITY)
+  }
+
   plane.receiveShadow = true
   plane.castShadow = false
+  plane.frustumCulled = false
   if (targetY !== undefined) {
     plane.position.y = targetY
   }
-  // Render after GroundedSkybox (renderOrder -1000) so shadows composite on the projected ground.
-  plane.renderOrder = hdrGroundProjectionEnabled ? 100 : 0
+  // Match webexport: renderOrder 0 (GroundedSkybox uses -1000; transparent ShadowMaterial sorts after opaque).
+  plane.renderOrder = 0
 }
 
 export interface SyncHdrShadowPlaneOptions {
@@ -132,6 +155,8 @@ export interface SyncHdrShadowPlaneOptions {
   /** Skip bbox reposition (visibility/material only) */
   lightweight?: boolean
   frameCount?: number
+  /** Log shadow plane state once per second (frameCount % 60 === 0) */
+  debugLog?: boolean
 }
 
 const SHADOW_PLANE_BASE_GEOMETRY_SIZE = 10000
@@ -169,17 +194,26 @@ function fitShadowPlaneToBounds(
   const size = sceneBounds.getSize(new THREE.Vector3())
   const radiusX = size.x * 0.75
   const radiusZ = size.z * 0.75
-  const targetScaleX = Math.max(radiusX / 5, 1)
-  const targetScaleZ = Math.max(radiusZ / 5, 1)
 
   if (hdrGroundProjectionEnabled && groundProjection) {
     const footprint = Math.max(radiusX, radiusZ) * 2
     const targetGeoSize = Math.max(groundProjection.radius * 2, footprint, 50)
     ensureShadowPlaneGeometrySize(plane, targetGeoSize, true)
-  } else {
-    plane.scale.set(1, 1, 1)
-    ensureShadowPlaneGeometrySize(plane, SHADOW_PLANE_BASE_GEOMETRY_SIZE)
+    // Match webexport ground projection: full scale, centered under model X/Z.
+    if (Math.abs(plane.scale.x - 1) > 0.01 || Math.abs(plane.scale.y - 1) > 0.01 || Math.abs(plane.scale.z - 1) > 0.01) {
+      plane.scale.set(1, 1, 1)
+    }
+    if (Math.abs(plane.position.x - center.x) > 0.05 || Math.abs(plane.position.z - center.z) > 0.05) {
+      plane.position.x = center.x
+      plane.position.z = center.z
+    }
+    return
   }
+
+  const targetScaleX = Math.max(radiusX / 5, 1)
+  const targetScaleZ = Math.max(radiusZ / 5, 1)
+  plane.scale.set(1, 1, 1)
+  ensureShadowPlaneGeometrySize(plane, SHADOW_PLANE_BASE_GEOMETRY_SIZE)
 
   if (Math.abs(plane.position.x - center.x) > 0.05 || Math.abs(plane.position.z - center.z) > 0.05) {
     plane.position.x = center.x
@@ -189,6 +223,37 @@ function fitShadowPlaneToBounds(
     plane.scale.x = targetScaleX
     plane.scale.z = targetScaleZ
   }
+}
+
+/** Expand shadow camera bounds to include the HDR ground catcher plane. */
+export function expandBoundsWithShadowCatcher(
+  box: THREE.Box3,
+  targetY: number,
+  halfExtent = 50
+): THREE.Box3 {
+  const expanded = box.clone()
+  expanded.expandByPoint(new THREE.Vector3(-halfExtent, targetY, -halfExtent))
+  expanded.expandByPoint(new THREE.Vector3(halfExtent, targetY, halfExtent))
+  return expanded
+}
+
+function logShadowPlaneState(plane: THREE.Mesh, frameCount: number): void {
+  if (frameCount % 60 !== 0) return
+  const mat = plane.material
+  const materialName = mat instanceof THREE.Material ? mat.constructor.name : 'unknown'
+  const opacity = mat instanceof THREE.ShadowMaterial ? mat.opacity : undefined
+  console.log('[HdrShadowCatcher] shadow plane state', {
+    visible: plane.visible,
+    receiveShadow: plane.receiveShadow,
+    castShadow: plane.castShadow,
+    position: { x: plane.position.x, y: plane.position.y, z: plane.position.z },
+    scale: { x: plane.scale.x, y: plane.scale.y, z: plane.scale.z },
+    renderOrder: plane.renderOrder,
+    materialType: materialName,
+    opacity,
+    depthTest: mat instanceof THREE.Material && 'depthTest' in mat ? (mat as THREE.Material).depthTest : undefined,
+    inScene: !!plane.parent
+  })
 }
 
 /**
@@ -205,7 +270,8 @@ export function syncHdrShadowPlaneInScene(
     input,
     groundProjection,
     lightweight = false,
-    frameCount = 0
+    frameCount = 0,
+    debugLog = false
   } = options
 
   if (!shouldAutoShowShadowPlaneForHdr(input)) {
@@ -226,6 +292,7 @@ export function syncHdrShadowPlaneInScene(
       return
     }
 
+    // Every-frame integrity (matches webexport render loop)
     if (!obj.visible && effectiveVisible) {
       obj.visible = true
     } else if (obj.visible !== effectiveVisible) {
@@ -234,6 +301,7 @@ export function syncHdrShadowPlaneInScene(
 
     obj.receiveShadow = true
     obj.castShadow = false
+    obj.frustumCulled = false
 
     applyHdrGroundShadowCatcherMaterial(
       obj,
@@ -263,6 +331,53 @@ export function syncHdrShadowPlaneInScene(
         input.hdrGroundProjectionEnabled,
         groundProjection
       )
+    } else if (input.hdrGroundProjectionEnabled && groundProjection) {
+      const targetGeoSize = Math.max(groundProjection.radius * 2, 50)
+      ensureShadowPlaneGeometrySize(obj, targetGeoSize, true)
+      if (Math.abs(obj.scale.x - 1) > 0.01) {
+        obj.scale.set(1, 1, 1)
+      }
+    }
+
+    if (debugLog) {
+      logShadowPlaneState(obj, frameCount)
     }
   })
+}
+
+/** Force sun shadow maps + renderer shadowMap when HDR ground projection shadows are active. */
+export function forceHdrSunShadowState(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer | null | undefined,
+  shadowsEnabled: boolean
+): { sunFound: boolean; sunCastShadow: boolean } {
+  let sunFound = false
+  let sunCastShadow = false
+
+  if (renderer?.shadowMap && shadowsEnabled) {
+    if (!renderer.shadowMap.enabled) {
+      renderer.shadowMap.enabled = true
+    }
+    renderer.shadowMap.autoUpdate = true
+  }
+
+  scene.traverse((obj) => {
+    if (obj instanceof THREE.DirectionalLight && obj.userData.isSun) {
+      sunFound = true
+      if (shadowsEnabled && !obj.castShadow) {
+        obj.castShadow = true
+      }
+      sunCastShadow = obj.castShadow
+      if (obj.castShadow && obj.shadow) {
+        obj.shadow.needsUpdate = true
+        obj.shadow.camera?.updateProjectionMatrix()
+      }
+    }
+  })
+
+  if (renderer?.shadowMap && shadowsEnabled) {
+    renderer.shadowMap.needsUpdate = true
+  }
+
+  return { sunFound, sunCastShadow }
 }
