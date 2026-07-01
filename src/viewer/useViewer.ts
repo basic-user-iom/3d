@@ -14,7 +14,7 @@ import { cacheImportedModelScene } from './importedModelCache'
 import { descriptorFromImportedModel } from './objectRegistry'
 import { attachModelAnimations } from './utils/modelAnimations'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
-import { syncHdrShadowPlaneInScene, forceHdrSunShadowState, resolveGroundProjectionActive } from './utils/hdrGroundShadowCatcher'
+import { refreshHdrGroundShadowState, resolveGroundProjectionActive } from './utils/hdrGroundShadowCatcher'
 import { wakeViewerRender } from './utils/wakeViewerRender'
 
 export interface LoadedModel {
@@ -1523,19 +1523,22 @@ export function useViewer() {
 
   function refreshHdrShadowPlaneAfterModelLoad(scene: THREE.Scene, viewer: ViewerInstance): void {
     const store = useAppStore.getState()
-    if (!store.hdrEnabled || !store.shadowsEnabled) {
+    if (!store.shadowsEnabled) {
       return
     }
 
-    syncHdrShadowPlaneInScene(scene, {
+    const groundProjectionActive = resolveGroundProjectionActive(
+      store.hdrGroundProjectionEnabled,
+      scene
+    )
+
+    refreshHdrGroundShadowState(scene, viewer.renderer, {
       showShadowPlane: store.showShadowPlane,
       shadowIntensity: store.shadowIntensity,
-      input: {
-        hdrEnabled: store.hdrEnabled,
-        hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
-        shadowsEnabled: store.shadowsEnabled
-      },
-      groundProjection: store.hdrGroundProjectionEnabled
+      shadowsEnabled: store.shadowsEnabled,
+      hdrEnabled: store.hdrEnabled,
+      hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+      groundProjection: groundProjectionActive
         ? {
             height: store.hdrGroundProjectionHeight,
             radius: store.hdrGroundProjectionRadius,
@@ -1554,13 +1557,6 @@ export function useViewer() {
       viewer.renderer.shadowMap.enabled = true
       viewer.renderer.shadowMap.needsUpdate = true
     }
-
-    forceHdrSunShadowState(scene, viewer.renderer, store.shadowsEnabled, {
-      groundProjectionActive: resolveGroundProjectionActive(
-        store.hdrGroundProjectionEnabled,
-        scene
-      )
-    })
 
     wakeViewerRender(viewer)
   }

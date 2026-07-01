@@ -287,6 +287,130 @@ function logShadowPlaneState(plane: THREE.Mesh, frameCount: number): void {
   })
 }
 
+export interface HdrShadowStatusSnapshot {
+  sunFound: boolean
+  sunCastShadow: boolean
+  rendererShadowMapEnabled: boolean
+  groundProjectionActive: boolean
+  shadowPlaneFound: boolean
+  shadowPlaneVisible: boolean
+  shadowPlaneMaterial: string
+  shadowPlaneReceiveShadow: boolean
+  shadowPlaneY: number | null
+}
+
+function findShadowPlaneInScene(scene: THREE.Scene): THREE.Mesh | null {
+  let plane: THREE.Mesh | null = null
+  scene.traverse((obj) => {
+    if (!plane && obj.userData.isShadowPlane && obj instanceof THREE.Mesh) {
+      plane = obj
+    }
+  })
+  return plane
+}
+
+let lastHdrShadowStatusLogKey = ''
+
+/** One-time log when HDR + shadows state changes — helps debug missing contact shadows. */
+export function logHdrShadowStatusOnce(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer | null | undefined,
+  options: {
+    sunFound: boolean
+    sunCastShadow: boolean
+    input: HdrGroundShadowInput
+    showShadowPlane: boolean
+    groundProjectionActive: boolean
+  }
+): HdrShadowStatusSnapshot | null {
+  if (!shouldAutoShowShadowPlaneForHdr(options.input)) {
+    return null
+  }
+
+  const plane = findShadowPlaneInScene(scene)
+  const mat = plane?.material
+  const materialName = mat instanceof THREE.Material ? mat.constructor.name : 'none'
+  const snapshot: HdrShadowStatusSnapshot = {
+    sunFound: options.sunFound,
+    sunCastShadow: options.sunCastShadow,
+    rendererShadowMapEnabled: renderer?.shadowMap?.enabled ?? false,
+    groundProjectionActive: options.groundProjectionActive,
+    shadowPlaneFound: !!plane,
+    shadowPlaneVisible: plane?.visible ?? false,
+    shadowPlaneMaterial: materialName,
+    shadowPlaneReceiveShadow: plane?.receiveShadow ?? false,
+    shadowPlaneY: plane ? plane.position.y : null
+  }
+
+  const logKey = JSON.stringify(snapshot)
+  if (logKey === lastHdrShadowStatusLogKey) {
+    return snapshot
+  }
+  lastHdrShadowStatusLogKey = logKey
+
+  console.log('[HdrShadowCatcher] HDR ground shadows active', {
+    ...snapshot,
+    showShadowPlane: options.showShadowPlane,
+    effectiveShadowPlaneVisible: effectiveShadowPlaneVisible(options.showShadowPlane, options.input),
+    storeGroundProjectionFlag: options.input.hdrGroundProjectionEnabled,
+    sceneHasGroundedSkybox: sceneHasGroundProjection(scene)
+  })
+
+  return snapshot
+}
+
+/** Sync sun + catcher after HDR load or model load (handles async HDR / GroundedSkybox timing). */
+export function refreshHdrGroundShadowState(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer | null | undefined,
+  options: {
+    showShadowPlane: boolean
+    shadowIntensity: number
+    shadowsEnabled: boolean
+    hdrEnabled: boolean
+    hdrGroundProjectionEnabled: boolean
+    groundProjection?: GroundProjectionShadowParams
+    lightweight?: boolean
+    frameCount?: number
+  }
+): HdrShadowStatusSnapshot | null {
+  if (!options.hdrEnabled || !options.shadowsEnabled) {
+    return null
+  }
+
+  const groundProjectionActive = resolveGroundProjectionActive(
+    options.hdrGroundProjectionEnabled,
+    scene
+  )
+  const input: HdrGroundShadowInput = {
+    hdrEnabled: options.hdrEnabled,
+    hdrGroundProjectionEnabled: groundProjectionActive,
+    shadowsEnabled: options.shadowsEnabled
+  }
+
+  const sunState = forceHdrSunShadowState(scene, renderer, options.shadowsEnabled, {
+    groundProjectionActive
+  })
+
+  syncHdrShadowPlaneInScene(scene, {
+    showShadowPlane: options.showShadowPlane,
+    shadowIntensity: options.shadowIntensity,
+    input,
+    groundProjection: groundProjectionActive ? options.groundProjection : undefined,
+    lightweight: options.lightweight ?? false,
+    frameCount: options.frameCount ?? 0,
+    debugLog: true
+  })
+
+  return logHdrShadowStatusOnce(scene, renderer, {
+    sunFound: sunState.sunFound,
+    sunCastShadow: sunState.sunCastShadow,
+    input,
+    showShadowPlane: options.showShadowPlane,
+    groundProjectionActive
+  })
+}
+
 /**
  * Keep HDR shadow plane state aligned with webexport: visible, ShadowMaterial catcher,
  * receiveShadow on, and positioned under the model on the projected ground surface.
