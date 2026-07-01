@@ -323,6 +323,10 @@ function ensureCavityOcclusionSession(viewer: ViewerInstance): { applied: boolea
 }
 
 function refreshInteriorCavityEnhancements(viewer: ViewerInstance, scene: THREE.Scene): void {
+  const restored = ensureImportedMeshesVisible(scene)
+  if (restored > 0) {
+    console.log(`[CavityOcclusion] Restored ${restored} stale hidden/layer issue(s) on imported meshes`)
+  }
   const lights = viewer.csmShadowSystem?.getDirectionalLights() ?? []
   const { darkenInteriorCavities } = useAppStore.getState()
   const result = reapplyInteriorCavityEnhancements(scene, lights, {
@@ -331,16 +335,15 @@ function refreshInteriorCavityEnhancements(viewer: ViewerInstance, scene: THREE.
   })
   if (
     result.cavityMeshesDimmed > 0 ||
-    result.exteriorPanelsFrontSided > 0 ||
     result.materialsMadeDoubleSided > 0
   ) {
     console.log('[CavityOcclusion] Interior shadow refresh:', {
       cavityMeshesDimmed: result.cavityMeshesDimmed,
-      exteriorPanelsFrontSided: result.exteriorPanelsFrontSided,
       materialsDoubleSided: result.materialsMadeDoubleSided,
       fixes: result.fixesApplied
     })
   }
+  auditHiddenImportedMeshes(scene)
   viewer.csmShadowSystem?.setupSceneMaterials()
 }
 

@@ -8,7 +8,8 @@ export const INTERIOR_RENDER_LAYER = 1
 export const CAVITY_ENV_MAP_DIM_FACTOR = 0.12
 export const CAVITY_COLOR_DIM_FACTOR = 0.4
 export const CAVITY_BRIGHT_COLOR_DIM_FACTOR = 0.35
-export const CAVITY_EMISSIVE_DIM_FACTOR = 0
+/** Keep a trace of emissive so interior lights/glow stay visible when dimmed. */
+export const CAVITY_EMISSIVE_DIM_FACTOR = 0.25
 export const CAVITY_METALNESS_DIM_FACTOR = 0.35
 export const CAVITY_ROUGHNESS_BOOST = 0.25
 export const BRIGHT_ALBEDO_THRESHOLD = 0.7
@@ -494,24 +495,8 @@ function restoreExteriorVisibility(scene: THREE.Object3D, result: InternalShadow
       obj.visible = true
       restored++
     }
-
-    const rawMaterial = obj.material
-    const materials = Array.isArray(rawMaterial) ? rawMaterial : rawMaterial ? [rawMaterial] : []
-    materials.forEach((mat) => {
-      if (isTransparentMaterial(mat)) return
-      if (
-        mat instanceof THREE.MeshStandardMaterial ||
-        mat instanceof THREE.MeshPhysicalMaterial ||
-        mat instanceof THREE.MeshPhongMaterial ||
-        mat instanceof THREE.MeshLambertMaterial
-      ) {
-        if (mat.side !== THREE.FrontSide) {
-          mat.side = THREE.FrontSide
-          mat.needsUpdate = true
-          result.exteriorPanelsFrontSided++
-        }
-      }
-    })
+    // Never force FrontSide on exterior panels — back faces must stay visible through
+    // grilles/vents (engine bay). Cavity darkness comes from shadows + dimming only.
   })
 
   if (restored > 0) {
@@ -654,35 +639,10 @@ export function enhanceInternalShadows(
         return
       }
 
-      const rawMaterial = obj.material
-      const materials = Array.isArray(rawMaterial) ? rawMaterial : [rawMaterial]
-
-      materials.forEach((mat) => {
-        if (isTransparentMaterial(mat)) return
-        if (
-          mat instanceof THREE.MeshStandardMaterial ||
-          mat instanceof THREE.MeshPhysicalMaterial ||
-          mat instanceof THREE.MeshPhongMaterial ||
-          mat instanceof THREE.MeshLambertMaterial
-        ) {
-          if (mat.side !== THREE.FrontSide) {
-            mat.side = THREE.FrontSide
-            mat.needsUpdate = true
-            result.exteriorPanelsFrontSided++
-          }
-        }
-      })
-
       if (!obj.visible) {
         obj.visible = true
       }
     })
-
-    if (result.exteriorPanelsFrontSided > 0) {
-      result.fixesApplied.push(
-        `Set ${result.exteriorPanelsFrontSided} exterior panel material(s) to front-side only`
-      )
-    }
 
     scene.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh) || isSystemMesh(obj) || !isImportedMesh(obj)) {
