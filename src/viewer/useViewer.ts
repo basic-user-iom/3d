@@ -14,6 +14,8 @@ import { cacheImportedModelScene } from './importedModelCache'
 import { descriptorFromImportedModel } from './objectRegistry'
 import { attachModelAnimations } from './utils/modelAnimations'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
+import { syncHdrShadowPlaneInScene } from './utils/hdrGroundShadowCatcher'
+import { wakeViewerRender } from './utils/wakeViewerRender'
 
 export interface LoadedModel {
   scene: THREE.Object3D
@@ -1519,6 +1521,36 @@ export function useViewer() {
     }
   }, [])
 
+  function refreshHdrShadowPlaneAfterModelLoad(scene: THREE.Scene, viewer: ViewerInstance): void {
+    const store = useAppStore.getState()
+    if (!store.hdrEnabled || !store.shadowsEnabled) {
+      return
+    }
+
+    syncHdrShadowPlaneInScene(scene, {
+      showShadowPlane: store.showShadowPlane,
+      shadowIntensity: store.shadowIntensity,
+      input: {
+        hdrEnabled: store.hdrEnabled,
+        hdrGroundProjectionEnabled: store.hdrGroundProjectionEnabled,
+        shadowsEnabled: store.shadowsEnabled
+      },
+      lightweight: false,
+      frameCount: 0
+    })
+
+    if (viewer.updateShadowCameraBounds) {
+      viewer.updateShadowCameraBounds()
+    }
+
+    if (viewer.renderer?.shadowMap) {
+      viewer.renderer.shadowMap.enabled = true
+      viewer.renderer.shadowMap.needsUpdate = true
+    }
+
+    wakeViewerRender(viewer)
+  }
+
   async function applyInteriorEnhancementsToModel(
     modelScene: THREE.Object3D,
     scene: THREE.Scene,
@@ -2301,6 +2333,7 @@ export function useViewer() {
 
     // After HDR/envMap — interior dimming must run last so values are not overwritten
     await applyInteriorEnhancementsToModel(model.scene, scene, viewer)
+    refreshHdrShadowPlaneAfterModelLoad(scene, viewer)
     }
 
     // CRITICAL: Setup CSM materials for newly loaded model if CSM is active
@@ -2996,6 +3029,7 @@ export function useViewer() {
 
     // After material/HDR setup — Pagani auto-load uses loadFromUrl; interior pass was missing here
     await applyInteriorEnhancementsToModel(model.scene, scene, viewer)
+    refreshHdrShadowPlaneAfterModelLoad(scene, viewer)
     }
     
     // CRITICAL: Diagnostic check for light and material configuration in standard mode

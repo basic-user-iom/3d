@@ -3,10 +3,13 @@ import * as THREE from 'three'
 import {
   applyHdrGroundShadowCatcherMaterial,
   effectiveShadowPlaneVisible,
-  HDR_SHADOW_CATCHER_PLANE_Y,
+  GROUND_PROJECTION_SHADOW_PLANE_Y,
   shadowCatcherOpacity,
+  shadowPlaneYForHdrMode,
   shouldAutoShowShadowPlaneForHdr,
-  shouldUseHdrGroundShadowCatcher
+  shouldUseHdrGroundShadowCatcher,
+  STANDARD_HDR_SHADOW_PLANE_Y,
+  syncHdrShadowPlaneInScene
 } from '../src/viewer/utils/hdrGroundShadowCatcher'
 
 describe('hdrGroundShadowCatcher', () => {
@@ -117,26 +120,67 @@ describe('hdrGroundShadowCatcher', () => {
     ).toBe(true)
   })
 
-  it('applies ShadowMaterial to the shadow plane', () => {
+  it('applies ShadowMaterial to the shadow plane for standard HDR', () => {
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 10),
       new THREE.MeshStandardMaterial({ color: 0x333333 })
     )
 
-    applyHdrGroundShadowCatcherMaterial(plane, 1.0)
+    applyHdrGroundShadowCatcherMaterial(plane, 1.0, false)
 
     const material = plane.material
     expect(material).toBeInstanceOf(THREE.ShadowMaterial)
     if (!(material instanceof THREE.ShadowMaterial)) {
       throw new Error('expected ShadowMaterial')
     }
-    expect(material.depthWrite).toBe(false)
+    expect(material.depthWrite).toBe(true)
     expect(material.transparent).toBe(true)
     expect(material.side).toBe(THREE.DoubleSide)
     expect(material.opacity).toBe(shadowCatcherOpacity(1.0))
     expect(plane.receiveShadow).toBe(true)
     expect(plane.castShadow).toBe(false)
-    expect(plane.position.y).toBe(HDR_SHADOW_CATCHER_PLANE_Y)
+    expect(plane.position.y).toBe(STANDARD_HDR_SHADOW_PLANE_Y)
+    expect(plane.renderOrder).toBe(0)
+  })
+
+  it('uses ground projection Y and render order when enabled', () => {
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10),
+      new THREE.MeshStandardMaterial({ color: 0x333333 })
+    )
+
+    applyHdrGroundShadowCatcherMaterial(plane, 1.0, true)
+
+    expect(plane.position.y).toBe(GROUND_PROJECTION_SHADOW_PLANE_Y)
     expect(plane.renderOrder).toBe(100)
+    expect(shadowPlaneYForHdrMode(true)).toBe(GROUND_PROJECTION_SHADOW_PLANE_Y)
+    expect(shadowPlaneYForHdrMode(false)).toBe(STANDARD_HDR_SHADOW_PLANE_Y)
+  })
+
+  it('syncHdrShadowPlaneInScene reveals hidden shadow plane under HDR + shadows', () => {
+    const scene = new THREE.Scene()
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(100, 100),
+      new THREE.MeshStandardMaterial({ color: 0x333333 })
+    )
+    plane.userData.isShadowPlane = true
+    plane.visible = false
+    scene.add(plane)
+
+    syncHdrShadowPlaneInScene(scene, {
+      showShadowPlane: false,
+      shadowIntensity: 1,
+      input: {
+        hdrEnabled: true,
+        hdrGroundProjectionEnabled: false,
+        shadowsEnabled: true
+      },
+      lightweight: true,
+      frameCount: 0
+    })
+
+    expect(plane.visible).toBe(true)
+    expect(plane.material).toBeInstanceOf(THREE.ShadowMaterial)
+    expect(plane.receiveShadow).toBe(true)
   })
 })
