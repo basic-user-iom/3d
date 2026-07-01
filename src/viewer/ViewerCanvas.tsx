@@ -4690,6 +4690,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             hdrGroundProjectionEnabled: renderStore.hdrGroundProjectionEnabled,
             shadowsEnabled: shadowsEnabledFromStore
           },
+          groundProjection: renderStore.hdrGroundProjectionEnabled
+            ? {
+                height: renderStore.hdrGroundProjectionHeight,
+                radius: renderStore.hdrGroundProjectionRadius,
+                positionY: renderStore.hdrGroundProjectionPositionY
+              }
+            : undefined,
           lightweight: hdrShadowPlaneFrameCount % 30 !== 0,
           frameCount: hdrShadowPlaneFrameCount
         })
@@ -5747,6 +5754,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   const hdrEnabled = useAppStore((state) => state.hdrEnabled)
   const hdrIntensity = useAppStore((state) => state.hdrIntensity)
   const hdrGroundProjectionEnabled = useAppStore((state) => state.hdrGroundProjectionEnabled)
+  const hdrGroundProjectionHeight = useAppStore((state) => state.hdrGroundProjectionHeight)
+  const hdrGroundProjectionRadius = useAppStore((state) => state.hdrGroundProjectionRadius)
+  const hdrGroundProjectionPositionY = useAppStore((state) => state.hdrGroundProjectionPositionY)
 
   useEffect(() => {
     if (!viewerRef.current) return
@@ -5851,6 +5861,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         showShadowPlane,
         shadowIntensity,
         input: hdrGroundShadowInput,
+        groundProjection: hdrGroundProjectionEnabled
+          ? {
+              height: hdrGroundProjectionHeight,
+              radius: hdrGroundProjectionRadius,
+              positionY: hdrGroundProjectionPositionY
+            }
+          : undefined,
         lightweight: true
       })
     } else {
@@ -5992,7 +6009,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     })
 
     wakeViewerRender(viewerRef.current)
-  }, [shadowsEnabled, shadowIntensity, shadowPlaneTransparent, shadowBias, showShadowPlane, shadowMapSize, useAdaptiveShadowSettings, hdrEnabled, hdrIntensity, hdrGroundProjectionEnabled])
+  }, [shadowsEnabled, shadowIntensity, shadowPlaneTransparent, shadowBias, showShadowPlane, shadowMapSize, useAdaptiveShadowSettings, hdrEnabled, hdrIntensity, hdrGroundProjectionEnabled, hdrGroundProjectionHeight, hdrGroundProjectionRadius, hdrGroundProjectionPositionY])
   
   // Effect to update shadow map size and bias settings when they change
   useEffect(() => {
@@ -6692,8 +6709,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
   // Effect to handle HDR environment map - COMPLETE REWRITE using HDRSystem
   const hdrUrl = useAppStore((state) => state.hdrUrl)
   const hdrFile = useAppStore((state) => state.hdrFile)
-  const hdrGroundProjectionHeight = useAppStore((state) => state.hdrGroundProjectionHeight)
-  const hdrGroundProjectionRadius = useAppStore((state) => state.hdrGroundProjectionRadius)
+  const hdrGroundProjectionResolution = useAppStore((state) => state.hdrGroundProjectionResolution)
   const hdrRotationAzimuth = useAppStore((state) => state.hdrRotationAzimuth)
   const hdrRotationElevation = useAppStore((state) => state.hdrRotationElevation)
   const hdrBackgroundVisible = useAppStore((state) => state.hdrBackgroundVisible)
@@ -6776,7 +6792,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         groundProjection: {
           enabled: hdrGroundProjectionEnabled,
           height: hdrGroundProjectionHeight,
-          radius: hdrGroundProjectionRadius
+          radius: hdrGroundProjectionRadius,
+          resolution: hdrGroundProjectionResolution,
+          positionY: hdrGroundProjectionPositionY
         }
       })
       
@@ -7023,7 +7041,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             hdrSystem.updateGroundProjection({
               enabled: hdrGroundProjectionEnabled,
               height: hdrGroundProjectionHeight,
-              radius: hdrGroundProjectionRadius
+              radius: hdrGroundProjectionRadius,
+              resolution: hdrGroundProjectionResolution,
+              positionY: hdrGroundProjectionPositionY
             })
           }
           
@@ -7193,10 +7213,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       hdrSystem.updateGroundProjection({
         enabled: hdrGroundProjectionEnabled,
         height: hdrGroundProjectionHeight,
-        radius: hdrGroundProjectionRadius
+        radius: hdrGroundProjectionRadius,
+        resolution: hdrGroundProjectionResolution,
+        positionY: hdrGroundProjectionPositionY
       })
     }
-  }, [hdrEnabled, hdrGroundProjectionEnabled, hdrGroundProjectionHeight, hdrGroundProjectionRadius])
+  }, [hdrEnabled, hdrGroundProjectionEnabled, hdrGroundProjectionHeight, hdrGroundProjectionRadius, hdrGroundProjectionResolution, hdrGroundProjectionPositionY])
 
   // OLD HDR CODE REMOVED - Now using HDRSystem above
 
