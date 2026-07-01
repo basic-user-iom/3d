@@ -88,6 +88,7 @@ import {
 import {
   applyHdrGroundShadowCatcherMaterial,
   effectiveShadowPlaneVisible,
+  forceHdrSunShadowState,
   shouldUseHdrGroundShadowCatcher,
   syncHdrShadowPlaneInScene
 } from './utils/hdrGroundShadowCatcher'
@@ -4682,6 +4683,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       hdrShadowPlaneFrameCount += 1
       const renderStore = useAppStore.getState()
       if (renderStore.hdrEnabled && shadowsEnabledFromStore) {
+        forceHdrSunShadowState(scene, renderer, shadowsEnabledFromStore)
         syncHdrShadowPlaneInScene(scene, {
           showShadowPlane: renderStore.showShadowPlane,
           shadowIntensity: renderStore.shadowIntensity,
@@ -4698,8 +4700,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               }
             : undefined,
           lightweight: hdrShadowPlaneFrameCount % 30 !== 0,
-          frameCount: hdrShadowPlaneFrameCount
+          frameCount: hdrShadowPlaneFrameCount,
+          debugLog: renderStore.hdrGroundProjectionEnabled
         })
+        if (renderStore.hdrGroundProjectionEnabled && hdrShadowPlaneFrameCount % 2 === 0) {
+          renderer.shadowMap.needsUpdate = true
+        }
       }
       
       // IMPROVED: Run comprehensive shadow diagnostics periodically (every 10 seconds) to catch issues
