@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import {
   clampStandaloneSunSkyDirection,
   computeHdrSyncedSunSkyDirection,
+  computeHdrSunLightDirection,
   computeSunLightingFromElevation,
   isNightTimeOfDay,
   standaloneLightSunDirection,
@@ -121,16 +122,25 @@ describe('standalone sun lighting', () => {
     })
   })
 
-  it('rotates sun direction with HDR azimuth to match environmentRotation', () => {
+  it('rotates sun direction with HDR azimuth without inverting below the horizon', () => {
     const { sunPosition } = timeOfDayToSkyAngles(12, 0)
     const base = sunPosition.clone()
-    const synced = computeHdrSyncedSunSkyDirection(base, 90, 0)
+    const synced = computeHdrSyncedSunSkyDirection(base, 0, 0)
 
-    const negated = base.clone().multiplyScalar(-1)
-    expect(synced.distanceTo(negated)).toBeLessThan(0.05)
+    expect(synced.y).toBeGreaterThan(0.5)
 
     const rotated = computeHdrSyncedSunSkyDirection(base, 45, 10)
     expect(rotated.distanceTo(base)).toBeGreaterThan(0.05)
     expect(rotated.length()).toBeCloseTo(1, 5)
+    expect(rotated.y).toBeGreaterThan(0)
+  })
+
+  it('computeHdrSunLightDirection keeps noon sun above horizon for downward shadows', () => {
+    const { sunPosition } = timeOfDayToSkyAngles(12, 0)
+    const lightDir = computeHdrSunLightDirection(sunPosition, 0, 0)
+    const travel = sunSkyDirectionToLightTravelDirection(lightDir)
+
+    expect(lightDir.y).toBeGreaterThan(0)
+    expect(travel.y).toBeLessThan(0)
   })
 })

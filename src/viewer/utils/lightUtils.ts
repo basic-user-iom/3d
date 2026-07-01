@@ -118,8 +118,9 @@ export const HDR_ENV_BASE_ROTATION_Y = Math.PI
 const _hdrSunRotationEuler = new THREE.Euler()
 
 /**
- * Rotate sky sun direction with HDR azimuth/elevation so directional shadows align with IBL.
- * Mirrors scene.environmentRotation in HDRSystem.applyRotationToScene.
+ * Rotate sky sun direction with HDR user azimuth/elevation for shadow alignment.
+ * Applies the horizontal 180° env fix (Y) plus user rotation — not the vertical 180° (X),
+ * which is only for equirectangular env-map sampling and would place the sun below the ground.
  */
 export function computeHdrSyncedSunSkyDirection(
   baseSkySunDir: THREE.Vector3,
@@ -132,12 +133,30 @@ export function computeHdrSyncedSunSkyDirection(
   const elevationRad = THREE.MathUtils.degToRad(clampedElevation)
 
   _hdrSunRotationEuler.set(
-    elevationRad + HDR_ENV_BASE_ROTATION_X,
+    elevationRad,
     azimuthRad + HDR_ENV_BASE_ROTATION_Y,
     0,
     'YXZ'
   )
   return normalizeSunSkyDirection(baseSkySunDir).applyEuler(_hdrSunRotationEuler)
+}
+
+/**
+ * HDR directional-light sun: synced with user HDR rotation, clamped above the horizon
+ * so contact shadows render on top of the ground catcher (not on its underside).
+ */
+export function computeHdrSunLightDirection(
+  baseSkySunDir: THREE.Vector3,
+  hdrRotationAzimuthDeg: number,
+  hdrRotationElevationDeg: number,
+  minElevationY = STANDALONE_MIN_SUN_ELEVATION_Y
+): THREE.Vector3 {
+  const synced = computeHdrSyncedSunSkyDirection(
+    baseSkySunDir,
+    hdrRotationAzimuthDeg,
+    hdrRotationElevationDeg
+  )
+  return clampStandaloneSunSkyDirection(synced, minElevationY)
 }
 
 /**
