@@ -62,7 +62,7 @@ import {
   standaloneLightSunDirection,
   sunSkyDirectionToLightPosition,
   sunSkyDirectionToLightTravelDirection,
-  computeHdrSyncedSunSkyDirection
+  computeHdrSunLightDirection
 } from './utils/lightUtils'
 import { latLonToStreetsGL } from '../utils/mapCoordinates'
 import {
@@ -7917,11 +7917,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             const storeForSun = useAppStore.getState()
             let adjustedSunDir = skySunDir.clone()
             if (storeForSun.hdrEnabled) {
-              adjustedSunDir = computeHdrSyncedSunSkyDirection(
+              adjustedSunDir = computeHdrSunLightDirection(
                 skySunDir,
                 storeForSun.hdrRotationAzimuth,
                 storeForSun.hdrRotationElevation
               )
+            } else if (!enableStandaloneWeather) {
+              adjustedSunDir = standaloneLightSunDirection(skySunDir)
             }
 
             const sunLightPosition = sunSkyDirectionToLightPosition(adjustedSunDir)
