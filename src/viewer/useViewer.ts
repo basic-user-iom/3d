@@ -2146,9 +2146,6 @@ export function useViewer() {
               (mat as any).isUnlitShaderMaterial === true
 
               // Industry-standard depth masking: Ensure imported models occlude background
-              if ((mat as any).userData?.isHdrGroundShadowCatcher || (mat as any).userData?.preserveDepthTestOff) {
-                return
-              }
               if (mat.depthTest !== true) {
                 mat.depthTest = true
                 depthMaskedCount++
