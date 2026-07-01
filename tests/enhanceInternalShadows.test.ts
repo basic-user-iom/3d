@@ -13,6 +13,7 @@ import {
   CAVITY_ENV_MAP_DIM_FACTOR,
   CAVITY_COLOR_DIM_FACTOR,
   CAVITY_BRIGHT_COLOR_DIM_FACTOR,
+  CAVITY_EMISSIVE_DIM_FACTOR,
   CAVITY_SHADER_COLOR_MUL,
   BRIGHT_ALBEDO_THRESHOLD,
   INTERIOR_RENDER_LAYER,
@@ -103,7 +104,7 @@ describe('enhanceInternalShadows', () => {
     expect(mat.color.r).toBeCloseTo(0.5 * CAVITY_BRIGHT_COLOR_DIM_FACTOR)
     // Combined material + shader dim should stay above near-black
     expect(mat.color.r * CAVITY_SHADER_COLOR_MUL).toBeGreaterThan(0.05)
-    expect(mat.emissiveIntensity).toBe(0)
+    expect(mat.emissiveIntensity).toBeCloseTo(0.5 * CAVITY_EMISSIVE_DIM_FACTOR)
     expect(mat.userData.cavityDimApplied).toBe(true)
     expect(mat.userData.cavityShaderPatched).toBe(true)
     expect(mesh.visible).toBe(true)
@@ -157,7 +158,7 @@ describe('enhanceInternalShadows', () => {
     expect(mat.color.r).toBeCloseTo(0.9)
   })
 
-  it('keeps exterior panels front-sided and visible', () => {
+  it('keeps exterior panels visible without forcing front-side culling', () => {
     mesh.name = 'bumper_rear'
     const mat = mesh.material as THREE.MeshStandardMaterial
     mat.side = THREE.DoubleSide
@@ -167,8 +168,8 @@ describe('enhanceInternalShadows', () => {
     scene.add(mesh)
 
     const result = enhanceInternalShadows(scene)
-    expect(result.exteriorPanelsFrontSided).toBe(1)
-    expect(mat.side).toBe(THREE.FrontSide)
+    expect(result.exteriorPanelsFrontSided).toBe(0)
+    expect(mat.side).toBe(THREE.DoubleSide)
     expect(mesh.visible).toBe(true)
   })
 
