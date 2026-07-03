@@ -9,6 +9,7 @@ import * as THREE from 'three'
 import FastHDRConverter from './FastHDRConverter'
 import { getPhysicalLightingPresetValues, DEFAULT_SPOT_SHADOW_CONVERSION_ANGLE } from '../viewer/utils/physicalShadowSettings'
 import { getSceneShadowBoundsCenter } from '../viewer/utils/shadowManager'
+import { deriveGroundProjectionBounds } from '../viewer/utils/cameraBounds'
 import './LightingPanel.css'
 
 const HDR_PRESETS = [
@@ -17,30 +18,17 @@ const HDR_PRESETS = [
   { label: 'Rogland Clear Night (Outdoor 8K)', url: '/files-upload/rogland_clear_night_8k.hdr' }
 ]
 
-/**
- * Derive camera bounds from the HDR ground projection so the camera stays inside
- * the projected ground disc. The projection is a dome of the given radius centered
- * on the origin (offset vertically by positionY). We use a square X/Z box that
- * inscribes the disc's extent and clamp Y between just under the ground and the
- * dome height so the camera can't fly outside the projected sphere.
- */
-function deriveGroundProjectionBounds(
-  radius: number,
-  height: number,
-  positionY: number
-): { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } {
-  const r = Number.isFinite(radius) && radius > 0 ? radius : 100
-  const groundY = Number.isFinite(positionY) ? positionY : 0
-  // Keep a small margin so the camera stops before the visible edge of the disc.
-  const horizontal = r * 0.95
-  // Allow going slightly below ground for near-ground shots, and up to the dome height.
-  const domeHeight = Number.isFinite(height) && height > 0 ? Math.min(height, r) : Math.min(15, r)
-  const minY = groundY - r * 0.05
-  const maxY = groundY + domeHeight
-  return {
-    min: { x: -horizontal, y: minY, z: -horizontal },
-    max: { x: horizontal, y: maxY, z: horizontal }
-  }
+function applyDerivedGroundBounds(
+  derived: ReturnType<typeof deriveGroundProjectionBounds>,
+  setCameraBoundsMin: (min: { x: number; y: number; z: number }) => void,
+  setCameraBoundsMax: (max: { x: number; y: number; z: number }) => void,
+  setCameraBoundsDiscRadius: (radius: number) => void,
+  setCameraBoundsCenter: (center: { x: number; z: number }) => void
+) {
+  setCameraBoundsMin(derived.min)
+  setCameraBoundsMax(derived.max)
+  setCameraBoundsDiscRadius(derived.discRadius)
+  setCameraBoundsCenter({ x: derived.centerX, z: derived.centerZ })
 }
 
 export default function LightingPanel() {
@@ -118,9 +106,16 @@ export default function LightingPanel() {
     setHdrGroundProjectionResolution,
     setHdrGroundProjectionPositionY,
     cameraBoundsEnabled,
+    cameraBoundsMode,
+    cameraBoundsAutoSync,
+    cameraBoundsDiscRadius,
     cameraBoundsMin,
     cameraBoundsMax,
     setCameraBoundsEnabled,
+    setCameraBoundsMode,
+    setCameraBoundsAutoSync,
+    setCameraBoundsDiscRadius,
+    setCameraBoundsCenter,
     setCameraBoundsMin,
     setCameraBoundsMax,
     showGrid,
@@ -173,6 +168,33 @@ export default function LightingPanel() {
     120
   )
   const debouncedGroundPosY = useDebouncedStoreSetter(hdrGroundProjectionPositionY, setHdrGroundProjectionPositionY)
+
+  // Keep camera bounds aligned with ground projection when auto-sync is on (disc mode).
+  useEffect(() => {
+    if (!cameraBoundsEnabled || !cameraBoundsAutoSync) return
+    const derived = deriveGroundProjectionBounds(
+      hdrGroundProjectionRadius,
+      hdrGroundProjectionHeight,
+      hdrGroundProjectionPositionY
+    )
+    applyDerivedGroundBounds(
+      derived,
+      setCameraBoundsMin,
+      setCameraBoundsMax,
+      setCameraBoundsDiscRadius,
+      setCameraBoundsCenter
+    )
+  }, [
+    cameraBoundsEnabled,
+    cameraBoundsAutoSync,
+    hdrGroundProjectionRadius,
+    hdrGroundProjectionHeight,
+    hdrGroundProjectionPositionY,
+    setCameraBoundsMin,
+    setCameraBoundsMax,
+    setCameraBoundsDiscRadius,
+    setCameraBoundsCenter
+  ])
   
   // Calculate stacking offset for right-side panels
   const PANEL_WIDTH = 340
@@ -1250,34 +1272,85 @@ export default function LightingPanel() {
                             const validY = isFinite(cameraBoundsMin.y) && isFinite(cameraBoundsMax.y) && cameraBoundsMin.y < cameraBoundsMax.y
                             const validZ = isFinite(cameraBoundsMin.z) && isFinite(cameraBoundsMax.z) && cameraBoundsMin.z < cameraBoundsMax.z
                             if (!validX || !validY || !validZ) {
-                              const { min, max } = deriveGroundProjectionBounds(
+                              const derived = deriveGroundProjectionBounds(
                                 hdrGroundProjectionRadius,
                                 hdrGroundProjectionHeight,
                                 hdrGroundProjectionPositionY
                               )
-                              setCameraBoundsMin(min)
-                              setCameraBoundsMax(max)
+                              applyDerivedGroundBounds(
+                                derived,
+                                setCameraBoundsMin,
+                                setCameraBoundsMax,
+                                setCameraBoundsDiscRadius,
+                                setCameraBoundsCenter
+                              )
                             }
                           }
                           setCameraBoundsEnabled(enabled)
                         }}
                       />
                       <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
-                        Restrict camera movement to prevent going outside the HDR ground projection area
+                        {cameraBoundsMode === 'disc'
+                          ? 'Orbit target and camera are clamped to the ground disc (cylindrical XZ) with Y height limits.'
+                          : 'Orbit target and camera are clamped to an axis-aligned box.'}
                       </small>
                     </label>
-                    
+
                     {cameraBoundsEnabled && (
                       <>
+                        <label style={{ display: 'block', marginTop: '10px' }}>
+                          <span>Clamp mode</span>
+                          <select
+                            value={cameraBoundsMode}
+                            onChange={(e) => setCameraBoundsMode(e.target.value as 'disc' | 'box')}
+                            style={{ width: '100%', marginTop: '4px' }}
+                          >
+                            <option value="disc">Disc (recommended for HDR ground)</option>
+                            <option value="box">Box (axis-aligned)</option>
+                          </select>
+                        </label>
+
+                        <label style={{ display: 'block', marginTop: '8px' }}>
+                          <input
+                            type="checkbox"
+                            checked={cameraBoundsAutoSync}
+                            onChange={(e) => setCameraBoundsAutoSync(e.target.checked)}
+                          />
+                          <span style={{ marginLeft: '6px' }}>Auto-sync with ground projection</span>
+                          <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                            Updates disc radius and Y limits when ground radius, height, or position changes.
+                          </small>
+                        </label>
+
+                        {cameraBoundsMode === 'disc' && (
+                          <label style={{ display: 'block', marginTop: '8px' }}>
+                            <span>Ground disc radius</span>
+                            <NumberInput
+                              value={cameraBoundsDiscRadius}
+                              onChange={(value) => setCameraBoundsDiscRadius(value)}
+                              step={1}
+                              decimals={1}
+                            />
+                            <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
+                              Horizontal limit from center on XZ (95% of ground projection radius by default).
+                            </small>
+                          </label>
+                        )}
+
                         <button
                           onClick={() => {
-                            const { min, max } = deriveGroundProjectionBounds(
+                            const derived = deriveGroundProjectionBounds(
                               hdrGroundProjectionRadius,
                               hdrGroundProjectionHeight,
                               hdrGroundProjectionPositionY
                             )
-                            setCameraBoundsMin(min)
-                            setCameraBoundsMax(max)
+                            applyDerivedGroundBounds(
+                              derived,
+                              setCameraBoundsMin,
+                              setCameraBoundsMax,
+                              setCameraBoundsDiscRadius,
+                              setCameraBoundsCenter
+                            )
                           }}
                           className="button-secondary"
                           style={{ marginTop: '12px', width: '100%', fontSize: '12px' }}

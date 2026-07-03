@@ -38,6 +38,11 @@ import {
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
+import {
+  applyOrbitCameraBounds,
+  buildCameraBoundsConfig,
+  syncOrbitControlsLimits
+} from './utils/cameraBounds'
 import { getCsmShadowMapSizeForQuality, getCsmCascadeCountForQuality, getEffectiveMaxFps, getEffectivePixelRatio, prefersLowPowerGpu } from './utils/weatherGpuUtils'
 import { reapplyInteriorCavityEnhancements, applyInteriorCavityDimming, ensureImportedMeshesVisible, auditHiddenImportedMeshes } from '../utils/enhanceInternalShadows'
 import { applyCavityAoIfEligible } from './utils/cavityOcclusion'
@@ -4550,28 +4555,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // Update camera controls (handles damping)
       controls.update()
 
-      // Apply camera bounds constraint (HDR "Prevent Going Outside") in the live editor.
-      // Mirrors the clamping used in the exported web viewer so what you see here matches export.
+      // Apply camera bounds (HDR "Prevent Going Outside") — clamp orbit target first,
+      // compensate camera position, then clamp camera. Matches exported web viewer.
       {
         const boundsState = useAppStore.getState()
-        if (boundsState.cameraBoundsEnabled) {
-          const min = boundsState.cameraBoundsMin
-          const max = boundsState.cameraBoundsMax
-          // Only clamp axes where a finite, valid (min < max) range is defined.
-          // This avoids locking the camera when bounds are infinite/zero-volume.
-          const clampAxis = (v: number, lo: number, hi: number) =>
-            Number.isFinite(lo) && Number.isFinite(hi) && lo < hi
-              ? Math.max(lo, Math.min(hi, v))
-              : v
-          const pos = camera.position
-          pos.x = clampAxis(pos.x, min.x, max.x)
-          pos.y = clampAxis(pos.y, min.y, max.y)
-          pos.z = clampAxis(pos.z, min.z, max.z)
-          const target = controls.target
-          target.x = clampAxis(target.x, min.x, max.x)
-          target.y = clampAxis(target.y, min.y, max.y)
-          target.z = clampAxis(target.z, min.z, max.z)
-        }
+        const boundsConfig = buildCameraBoundsConfig(boundsState)
+        syncOrbitControlsLimits(controls, boundsConfig)
+        applyOrbitCameraBounds(camera, controls, boundsConfig)
       }
 
       const continuousUpdates = needsViewerRenderUpdates()

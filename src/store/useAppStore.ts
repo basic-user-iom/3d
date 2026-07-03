@@ -465,6 +465,11 @@ export interface AppState {
   shadowNormalBiasOverride: number // Manual normal bias override (0.0 to 0.1)
   csmShadowRadius: number // CSM (Cascaded Shadow Map) shadow radius
   cameraBoundsEnabled: boolean // Enable camera bounds
+  cameraBoundsMode: 'disc' | 'box' // Disc = cylindrical XZ clamp for HDR ground; box = axis-aligned
+  cameraBoundsAutoSync: boolean // Re-derive bounds when ground projection changes
+  cameraBoundsDiscRadius: number // Horizontal disc radius for disc mode
+  cameraBoundsCenterX: number // Disc center X
+  cameraBoundsCenterZ: number // Disc center Z
   cameraBoundsMin: { x: number; y: number; z: number } // Camera bounds minimum
   cameraBoundsMax: { x: number; y: number; z: number } // Camera bounds maximum
   gridSize: number
@@ -663,6 +668,10 @@ export interface AppState {
   setShadowNormalBiasOverride: (bias: number) => void // Manual normal bias override
   setCsmShadowRadius: (radius: number) => void // CSM shadow radius
   setCameraBoundsEnabled: (enabled: boolean) => void // Enable camera bounds
+  setCameraBoundsMode: (mode: 'disc' | 'box') => void
+  setCameraBoundsAutoSync: (enabled: boolean) => void
+  setCameraBoundsDiscRadius: (radius: number) => void
+  setCameraBoundsCenter: (center: { x: number; z: number }) => void
   setCameraBoundsMin: (min: { x: number; y: number; z: number }) => void // Set camera bounds minimum
   setCameraBoundsMax: (max: { x: number; y: number; z: number }) => void // Set camera bounds maximum
   setGridSize: (size: number) => void
@@ -1030,6 +1039,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     shadowNormalBiasOverride: 0.02, // Physical reference
     csmShadowRadius: 100, // Default CSM shadow radius
     cameraBoundsEnabled: false, // Camera bounds disabled by default
+    cameraBoundsMode: 'disc',
+    cameraBoundsAutoSync: true,
+    cameraBoundsDiscRadius: 95,
+    cameraBoundsCenterX: 0,
+    cameraBoundsCenterZ: 0,
     cameraBoundsMin: { x: -Infinity, y: -Infinity, z: -Infinity }, // No minimum bounds by default
     cameraBoundsMax: { x: Infinity, y: Infinity, z: Infinity }, // No maximum bounds by default
   gridSize: 200,
@@ -2132,6 +2146,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setShadowNormalBiasOverride: (bias) => set({ shadowNormalBiasOverride: THREE.MathUtils.clamp(bias, 0.0, 0.1) }),
   setCsmShadowRadius: (radius: number) => set({ csmShadowRadius: Math.max(0, radius) }),
   setCameraBoundsEnabled: (enabled: boolean) => set({ cameraBoundsEnabled: enabled }),
+  setCameraBoundsMode: (mode) => set({ cameraBoundsMode: mode }),
+  setCameraBoundsAutoSync: (enabled) => set({ cameraBoundsAutoSync: enabled }),
+  setCameraBoundsDiscRadius: (radius) =>
+    set({ cameraBoundsDiscRadius: Math.max(0.1, radius) }),
+  setCameraBoundsCenter: (center) =>
+    set({ cameraBoundsCenterX: center.x, cameraBoundsCenterZ: center.z }),
   setCameraBoundsMin: (min: { x: number; y: number; z: number }) => set({ cameraBoundsMin: min }),
   setCameraBoundsMax: (max: { x: number; y: number; z: number }) => set({ cameraBoundsMax: max }),
   setGridSize: (size) => set({ gridSize: Math.max(10, Math.min(1000, size)) }),

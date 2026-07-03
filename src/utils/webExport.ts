@@ -17,6 +17,7 @@ import JSZip from 'jszip'
 import { useAppStore, CameraView } from '../store/useAppStore'
 import { getSharedViewer } from '../viewer/useViewer'
 import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
+import { getCameraBoundsClampSource } from '../viewer/utils/cameraBounds'
 import { ExportWorkerPool } from './webExportWorker'
 
 export interface WebExportOptions {
@@ -1519,6 +1520,8 @@ export function createStandaloneViewerHTML(
     
     // Configuration - includes all exported settings
     const CONFIG = ${configString};
+
+    ${getCameraBoundsClampSource()}
     
     // Ensure cameraViews is always an array
     if (!CONFIG.cameraViews || !Array.isArray(CONFIG.cameraViews)) {
@@ -1538,28 +1541,34 @@ export function createStandaloneViewerHTML(
     if (!CONFIG.cameraBounds) {
       CONFIG.cameraBounds = {
         enabled: false,
+        mode: 'disc',
         min: { x: -100, y: -10, z: -100 },
-        max: { x: 100, y: 100, z: 100 }
+        max: { x: 100, y: 100, z: 100 },
+        centerX: 0,
+        centerZ: 0,
+        discRadius: 95
       };
     }
+    if (CONFIG.cameraBounds.mode === undefined) {
+      CONFIG.cameraBounds.mode = 'disc';
+    }
+    if (CONFIG.cameraBounds.centerX === undefined) CONFIG.cameraBounds.centerX = 0;
+    if (CONFIG.cameraBounds.centerZ === undefined) CONFIG.cameraBounds.centerZ = 0;
+    if (!Number.isFinite(CONFIG.cameraBounds.discRadius) || CONFIG.cameraBounds.discRadius <= 0) {
+      CONFIG.cameraBounds.discRadius = Math.min(
+        Math.abs(CONFIG.cameraBounds.max.x),
+        Math.abs(CONFIG.cameraBounds.max.z),
+        95
+      );
+    }
     
-    // Validate camera bounds - warn if bounds are invalid (min >= max or all zeros)
+    // Validate camera bounds
     if (CONFIG.cameraBounds && CONFIG.cameraBounds.enabled) {
-      const min = CONFIG.cameraBounds.min;
-      const max = CONFIG.cameraBounds.max;
-      const isValid = min.x < max.x && min.y < max.y && min.z < max.z;
-      if (!isValid) {
-        console.warn('[WebExport] Camera bounds are invalid (min >= max or all zeros). Disabling bounds.', {
-          min,
-          max
-        });
+      if (!isCameraBoundsValid(CONFIG.cameraBounds)) {
+        console.warn('[WebExport] Camera bounds are invalid. Disabling bounds.', CONFIG.cameraBounds);
         CONFIG.cameraBounds.enabled = false;
       } else {
-        console.log('[WebExport] Camera bounds enabled:', {
-          min,
-          max,
-          enabled: CONFIG.cameraBounds.enabled
-        });
+        console.log('[WebExport] Camera bounds enabled:', CONFIG.cameraBounds);
       }
     }
     
@@ -1597,6 +1606,9 @@ export function createStandaloneViewerHTML(
     controls.dampingFactor = 0.05;
     controls.minDistance = 1;
     controls.maxDistance = 1000;
+    if (CONFIG.cameraBounds && CONFIG.cameraBounds.enabled) {
+      syncOrbitControlsLimits(controls, CONFIG.cameraBounds);
+    }
     
     // Presentation state
     let currentViewIndex = 0;
@@ -7733,51 +7745,9 @@ export function createStandaloneViewerHTML(
             }
             
             // Apply camera bounds constraint if enabled
-            const cameraBounds = CONFIG.cameraBounds;
-            if (cameraBounds && cameraBounds.enabled) {
-              // Validate bounds - warn if invalid
-              const isValid = cameraBounds.min.x < cameraBounds.max.x && 
-                             cameraBounds.min.y < cameraBounds.max.y && 
-                             cameraBounds.min.z < cameraBounds.max.z;
-              
-              if (!isValid) {
-                // Bounds are invalid (min >= max), disable bounds to prevent camera lock
-                if (frameCount % 300 === 0) { // Every 5 seconds at 60fps
-                  console.warn('[WebExport] Camera bounds are invalid (min >= max). Bounds disabled.', {
-                    min: cameraBounds.min,
-                    max: cameraBounds.max
-                  });
-                }
-              } else {
-                // Clamp camera position to bounds
-                const pos = camera.position;
-                const oldPos = pos.clone();
-                camera.position.x = Math.max(cameraBounds.min.x, Math.min(cameraBounds.max.x, pos.x));
-                camera.position.y = Math.max(cameraBounds.min.y, Math.min(cameraBounds.max.y, pos.y));
-                camera.position.z = Math.max(cameraBounds.min.z, Math.min(cameraBounds.max.z, pos.z));
-                
-                // Also clamp target to bounds
-                const target = controls.target;
-                const oldTarget = target.clone();
-                controls.target.x = Math.max(cameraBounds.min.x, Math.min(cameraBounds.max.x, target.x));
-                controls.target.y = Math.max(cameraBounds.min.y, Math.min(cameraBounds.max.y, target.y));
-                controls.target.z = Math.max(cameraBounds.min.z, Math.min(cameraBounds.max.z, target.z));
-                
-                // Debug: Log when bounds are actually clamping (only occasionally to avoid spam)
-                if (frameCount % 60 === 0) { // Every 60 frames (~1 second at 60fps)
-                  const posClamped = !oldPos.equals(camera.position);
-                  const targetClamped = !oldTarget.equals(controls.target);
-                  if (posClamped || targetClamped) {
-                    console.log('[WebExport] Camera bounds applied:', {
-                      posClamped,
-                      targetClamped,
-                      bounds: { min: cameraBounds.min, max: cameraBounds.max },
-                      position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-                      target: { x: controls.target.x, y: controls.target.y, z: controls.target.z }
-                    });
-                  }
-                }
-              }
+            if (CONFIG.cameraBounds && CONFIG.cameraBounds.enabled) {
+              syncOrbitControlsLimits(controls, CONFIG.cameraBounds);
+              applyOrbitCameraBounds(camera, controls, CONFIG.cameraBounds);
             }
             
             renderer.render(scene, camera);
@@ -8178,8 +8148,12 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
     // Camera Bounds Settings
     cameraBounds: {
       enabled: store.cameraBoundsEnabled,
+      mode: store.cameraBoundsMode,
       min: store.cameraBoundsMin,
-      max: store.cameraBoundsMax
+      max: store.cameraBoundsMax,
+      centerX: store.cameraBoundsCenterX,
+      centerZ: store.cameraBoundsCenterZ,
+      discRadius: store.cameraBoundsDiscRadius
     },
     
     // Lighting Settings
