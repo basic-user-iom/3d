@@ -6,7 +6,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { WebGLPathTracer, BlurredEnvMapGenerator, GradientEquirectTexture } from 'three-gpu-pathtracer'
 import { PathTracerDemo } from './viewer/pathTracer/PathTracerDemo'
 import './PathTracerMinimalTest.css'
 

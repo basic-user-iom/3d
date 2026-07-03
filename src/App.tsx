@@ -167,7 +167,6 @@ function App() {
   
 
   const { 
-    streetsGLGroundEnabled,
     showGrid, 
     showAxes,
     showLightHelpers,
@@ -227,13 +226,7 @@ function App() {
     sceneRevision,
     canUndo,
     canRedo,
-    redo,
-    hdrEnabled,
-    hdrUrl,
-    hdrIntensity,
-    setHdrEnabled,
-    setHdrUrl,
-    setHdrIntensity
+    redo
   } = useAppStore()
 
   // Pin ViewerCanvas once weather effects need it — prevents full remount/freeze in city mode
@@ -271,7 +264,7 @@ function App() {
     // This ensures the viewer is available immediately when files are loaded
     try {
       // Expose viewer to window for debugging (shadow diagnostics)
-      ;(window as any).__viewer = viewerInstance
+      (window as any).__viewer = viewerInstance
       ;(window as any).runShadowDiagnostics = () => {
         if (viewerInstance?.runShadowDiagnostics) {
           return viewerInstance.runShadowDiagnostics()

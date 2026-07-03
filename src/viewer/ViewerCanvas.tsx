@@ -5827,7 +5827,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       const lightConfig = lightsConfig.find((l) => l.id === lightId)
       if (!lightConfig) return
 
-      const isPointLight = (light as THREE.PointLight).isPointLight
+      const isPointLight = light instanceof THREE.PointLight
       const shouldCastShadow = isPointLight
         ? resolvePointLightCastShadow({
             mode: lightingMode,
@@ -6640,19 +6640,19 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             shadow.camera.top = 2000
             shadow.camera.bottom = -2000
             // Shadow camera bounds will be updated at the end via updateAllShadowCameraBounds
-          } else if ((light as any).isPointLight) {
+          } else if (light instanceof THREE.PointLight) {
             shadow.camera.near = 0.01
             shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
-            applyPhysicalOmnidirectionalShadowDefaults(light as THREE.PointLight)
+            applyPhysicalOmnidirectionalShadowDefaults(light)
             applyPointLightShadowIntensity(
-              light as THREE.PointLight,
+              light,
               config.intensity ?? 1,
               diminishPointShadows
             )
-          } else if ((light as any).isSpotLight) {
+          } else if (light instanceof THREE.SpotLight) {
             shadow.camera.near = 0.01
             shadow.camera.far = PHYSICAL_OMNI_SHADOW_FAR_INITIAL
-            applyPhysicalSpotShadowDefaults(light as THREE.SpotLight)
+            applyPhysicalSpotShadowDefaults(light)
           }
           
           // Shadow bounds will be updated at the end
