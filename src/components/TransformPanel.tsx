@@ -150,7 +150,7 @@ export default function TransformPanel() {
     if (viewer?.transformControls) {
       const attachedObj = (viewer.transformControls as any)?.object as THREE.Object3D | undefined
       if (attachedObj && possibleTargets.some((target) => target === attachedObj)) {
-        viewer.transformControls.updateMatrixWorld(true)
+        ;(viewer.transformControls.updateMatrixWorld as (force?: boolean) => void)(true)
       }
     }
     wakeViewerRender(viewer)
