@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer, syncProjectObjectTransformToStreetsGL, shouldSyncTransformToStreetsGL, getStreetsGLObjectId } from '../viewer/useViewer'
+import { wakeViewerRender } from '../viewer/utils/wakeViewerRender'
 import NumberInput from './NumberInput'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
@@ -144,6 +145,17 @@ export default function TransformPanel() {
     }
   }
 
+  /** Reposition the gizmo when attached and wake the render loop (idle pause may be active). */
+  const syncTransformControlsAndRender = (...possibleTargets: THREE.Object3D[]) => {
+    if (viewer?.transformControls) {
+      const attachedObj = (viewer.transformControls as any)?.object as THREE.Object3D | undefined
+      if (attachedObj && possibleTargets.some((target) => target === attachedObj)) {
+        viewer.transformControls.updateMatrixWorld(true)
+      }
+    }
+    wakeViewerRender(viewer)
+  }
+
   const updatePosition = (axis: 'x' | 'y' | 'z', value: number) => {
     if (!selectedObject) return
 
@@ -151,6 +163,7 @@ export default function TransformPanel() {
       selectedObject.position[axis] = value
       selectedObject.updateMatrixWorld()
       syncStreetsGLTransformIfNeeded(selectedObject)
+      wakeViewerRender(viewer)
       setPosition({ ...position, [axis]: value })
       return
     }
@@ -169,10 +182,7 @@ export default function TransformPanel() {
     obj.position[axis] = value
     obj.updateMatrixWorld()
 
-    // Update transform controls if attached
-    const attachedObj = (viewer.transformControls as any)?.object as THREE.Object3D | undefined
-    if (viewer.transformControls && attachedObj === obj) {
-    }
+    syncTransformControlsAndRender(obj)
 
     const newPos = { ...position, [axis]: value }
     setPosition(newPos)
@@ -186,6 +196,7 @@ export default function TransformPanel() {
       selectedObject.rotation[axis] = THREE.MathUtils.degToRad(value)
       selectedObject.updateMatrixWorld()
       syncStreetsGLTransformIfNeeded(selectedObject)
+      wakeViewerRender(viewer)
       setRotation({ ...rotation, [axis]: value })
       return
     }
@@ -204,10 +215,7 @@ export default function TransformPanel() {
     obj.rotation[axis] = THREE.MathUtils.degToRad(value)
     obj.updateMatrixWorld()
 
-    // Update transform controls if attached
-    const attachedObj = (viewer.transformControls as any)?.object as THREE.Object3D | undefined
-    if (viewer.transformControls && attachedObj === obj) {
-    }
+    syncTransformControlsAndRender(obj)
 
     const newRot = { ...rotation, [axis]: value }
     setRotation(newRot)
@@ -221,6 +229,7 @@ export default function TransformPanel() {
       selectedObject.scale[axis] = Math.max(0.01, value)
       selectedObject.updateMatrixWorld()
       syncStreetsGLTransformIfNeeded(selectedObject)
+      wakeViewerRender(viewer)
       setScale({ ...scale, [axis]: value })
       return
     }
@@ -288,15 +297,9 @@ export default function TransformPanel() {
       modelToScale.position.copy(newModelLocalPos)
       modelToScale.updateMatrixWorld()
       
-      // Update transform controls if attached to pivot
-      const attachedObj = (viewer.transformControls as any)?.object as THREE.Object3D | undefined
-      if (viewer.transformControls && attachedObj === pivotGroup) {
-      }
+      syncTransformControlsAndRender(pivotGroup, modelToScale)
     } else {
-      // Update transform controls if attached directly to model
-      const attachedObj = (viewer.transformControls as any)?.object as THREE.Object3D | undefined
-      if (viewer.transformControls && attachedObj === modelToScale) {
-      }
+      syncTransformControlsAndRender(modelToScale)
     }
 
     const newScale = { ...scale, [axis]: value }

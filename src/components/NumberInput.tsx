@@ -80,6 +80,17 @@ export default function NumberInput({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
     setDisplayValue(newValue)
+
+    // Apply valid numbers immediately while typing (not only on blur)
+    const numValue = parseFloat(newValue)
+    if (isNaN(numValue)) return
+
+    let constrained = numValue
+    if (min !== undefined && constrained < min) constrained = min
+    if (max !== undefined && constrained > max) constrained = max
+    if (constrained !== value) {
+      onChange(constrained)
+    }
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
