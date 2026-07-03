@@ -205,6 +205,49 @@ export function resolveFocusTarget(
   return { object: bestWithCoords, descriptor }
 }
 
+/** Walk up to the imported model root that owns projectObjectId / file metadata. */
+export function resolveImportedModelRoot(object: THREE.Object3D): THREE.Object3D {
+  return resolveFocusTarget(object).object
+}
+
+/**
+ * True when the Objects Panel delete action should remove the entire imported model
+ * (registry entry, cache, Streets GL) rather than a single sub-mesh / subcategory.
+ */
+export function isDeletingImportedModelRoot(
+  nodeObject: THREE.Object3D,
+  modelRoot: THREE.Object3D
+): boolean {
+  return nodeObject === modelRoot || !!(nodeObject.userData as any).projectObjectId
+}
+
+/** Scene node to detach when removing a model root (pivot wrapper when the model is gizmo-wrapped). */
+export function getModelSceneRemovalTarget(modelRoot: THREE.Object3D): THREE.Object3D {
+  const parent = modelRoot.parent
+  if (parent?.userData?.isPivotWrapper) {
+    return parent
+  }
+  return modelRoot
+}
+
+/** Clear pivot wrapper back-reference so the Objects tree does not resurrect a removed model. */
+export function detachPivotWrapperReference(modelRoot: THREE.Object3D): void {
+  const parent = modelRoot.parent
+  if (parent?.userData?.isPivotWrapper) {
+    parent.userData.originalModel = null
+  }
+}
+
+/** True when obj is modelRoot or any descendant in the scene graph. */
+export function isObjectInModelSubtree(obj: THREE.Object3D, modelRoot: THREE.Object3D): boolean {
+  let current: THREE.Object3D | null = obj
+  while (current) {
+    if (current === modelRoot) return true
+    current = current.parent
+  }
+  return false
+}
+
 /** Three.js position captured when streetsGLPosition was first assigned (anchor for offsets). */
 export function captureStreetsGLBaseTransform(model: THREE.Object3D): void {
   const ud = model.userData as any

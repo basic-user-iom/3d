@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
-import { useViewer, getStreetsGLObjectId } from '../viewer/useViewer'
+import {
+  useViewer,
+  getStreetsGLObjectId,
+  resolveImportedModelRoot,
+  isDeletingImportedModelRoot,
+  getModelSceneRemovalTarget,
+  detachPivotWrapperReference,
+  isObjectInModelSubtree
+} from '../viewer/useViewer'
+import { fileRegistry } from '../utils/projectPersistence'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { convertToInstancedMesh, convertAllDuplicatesToInstances, groupObjectsByGeometry } from '../utils/objectInstancing'
@@ -260,18 +269,20 @@ export default function ObjectsPanel() {
       
       // Determine if this is a root model object (should appear in the list)
       // Root model = has isModel flag, OR is a direct child of scene with isImportedModel, OR parent doesn't have isModel
-      const isRootModel = obj.userData.isModel === true || 
-                         (obj.userData.isImportedModel === true && (!obj.parent || obj.parent === viewer.scene || !obj.parent.userData.isModel))
+      const isRootModel =
+        !!(obj.userData as any).projectObjectId ||
+        (obj.userData.isModel === true &&
+          !!(obj.userData as any).fileName &&
+          !(obj.parent && (obj.parent.userData as any).fileName))
       
       // Handle pivot wrappers specially - show the original model instead of the pivot wrapper
       if (obj.userData.isPivotWrapper) {
         const originalModel = obj.userData.originalModel as THREE.Object3D | undefined
-        if (originalModel) {
-          // The original model is inside the pivot wrapper
-          // Recursively traverse the original model as if it were at this position in the tree
+        // Only traverse when the model is still attached — after delete the pivot may
+        // retain a stale originalModel reference that must not reappear in the tree.
+        if (originalModel?.parent) {
           traverse(originalModel, parentNodes)
         }
-        // Don't add the pivot wrapper itself - we've replaced it with the original model
         return
       }
       
@@ -948,20 +959,32 @@ export default function ObjectsPanel() {
     const confirmDelete = window.confirm(`Delete "${node.name}"?`)
     if (!confirmDelete) return
 
+    const modelRoot = resolveImportedModelRoot(node.object)
+    const deleteWholeModel = isDeletingImportedModelRoot(node.object, modelRoot)
+    const objectToRemove = deleteWholeModel
+      ? getModelSceneRemovalTarget(modelRoot)
+      : node.object
+    const registryId = deleteWholeModel
+      ? ((modelRoot.userData as any).projectObjectId as string | undefined)
+      : projectObjectId
+
+    if (deleteWholeModel) {
+      detachPivotWrapperReference(modelRoot)
+    }
+
     // Save to undo stack BEFORE removing
-    const parent = node.object.parent
+    const parent = objectToRemove.parent
     addToUndoStack({
       type: 'delete',
-      object: node.object,
+      object: objectToRemove,
       parent: parent || null
     })
 
     // Remove from scene (but DON'T dispose so we can undo)
     if (parent) {
-      parent.remove(node.object)
-    } else if (node.object.parent === null && viewer.scene.children.includes(node.object)) {
-      // Handle case where object is direct child of scene but parent is null
-      viewer.scene.remove(node.object)
+      parent.remove(objectToRemove)
+    } else if (objectToRemove.parent === null && viewer.scene.children.includes(objectToRemove)) {
+      viewer.scene.remove(objectToRemove)
     }
 
     // A Gaussian splat keeps a full-screen iframe overlay mounted in the viewer
@@ -969,21 +992,30 @@ export default function ObjectsPanel() {
     // which would otherwise stay on top of the viewport and hide everything
     // else. Tear it down on delete (the lightweight root group can still be
     // restored via undo).
-    disposeSplatOverlay(node.object)
+    disposeSplatOverlay(deleteWholeModel ? modelRoot : node.object)
 
-    // If this was selected, deselect it
-    if (selectedObject === node.object) {
+    // If this was selected, deselect it (whole-model delete clears any sub-selection)
+    if (
+      selectedObject &&
+      (selectedObject === objectToRemove ||
+        selectedObject === node.object ||
+        (deleteWholeModel && isObjectInModelSubtree(selectedObject, modelRoot)))
+    ) {
       setSelectedObject(null)
     }
 
     // Keep the registry + Streets GL in sync when deleting a project object.
-    if (projectObjectId) {
-      removeProjectObject(projectObjectId)
+    if (registryId) {
+      removeProjectObject(registryId)
       // Preserve GPU resources for undo; cache entry is dropped without disposal.
-      removeCachedImportedModelScene(projectObjectId, false)
-      const streetsGLId = getStreetsGLObjectId(node.object)
+      removeCachedImportedModelScene(registryId, false)
+      const streetsGLId = getStreetsGLObjectId(modelRoot)
       if (streetsGLBridge && streetsGLId) {
         streetsGLBridge.removeObject(streetsGLId).catch(() => {})
+      }
+      const fileName = (modelRoot.userData as any).fileName as string | undefined
+      if (fileName) {
+        fileRegistry.unregisterModelFile(fileName)
       }
     }
 
