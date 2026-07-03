@@ -4454,7 +4454,10 @@ export function createStandaloneViewerHTML(
                 name.includes('helper') ||
                 name === 'grid' ||
                 name === 'axes' ||
-                obj instanceof THREE.AmbientLight
+                obj instanceof THREE.AmbientLight ||
+                userData.isAutoInteriorFill === true ||
+                userData.isIndirectLightingProbe === true ||
+                userData.isSystemLight === true
               );
             };
 
@@ -4723,6 +4726,11 @@ export function createStandaloneViewerHTML(
                 // Check both the instance type and the name (some ambient lights are wrapped in Object3D)
                 if (obj instanceof THREE.AmbientLight || 
                     (obj.name && (obj.name === 'Ambient_Light' || obj.name === 'AmbientLight' || obj.name.toLowerCase().includes('ambient_light')))) {
+                  return;
+                }
+
+                // Skip auto-managed system lights (interior fill, HDR probe, etc.)
+                if (obj.userData && (obj.userData.isAutoInteriorFill || obj.userData.isIndirectLightingProbe || obj.userData.isSystemLight)) {
                   return;
                 }
                 

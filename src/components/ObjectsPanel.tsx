@@ -8,6 +8,7 @@ import { convertToInstancedMesh, convertAllDuplicatesToInstances, groupObjectsBy
 import { streetsGLToLatLon } from '../utils/mapCoordinates'
 import { disposeSplatOverlay } from '../viewer/loaders/disposeSplatOverlay'
 import { removeCachedImportedModelScene, getCachedImportedModelScene } from '../viewer/importedModelCache'
+import { isObjectsPanelSystemLight } from '../utils/objectsPanelSystemLights'
 import './ObjectsPanel.css'
 
 interface SceneNode {
@@ -282,6 +283,11 @@ export default function ObjectsPanel() {
       
       // Skip AmbientLight - it's controlled from Lighting Panel, not Objects Panel
       if (obj instanceof THREE.AmbientLight) {
+        return
+      }
+
+      // Skip auto-managed system lights (interior fill, HDR probe, etc.)
+      if (isObjectsPanelSystemLight(obj)) {
         return
       }
       
@@ -856,7 +862,8 @@ export default function ObjectsPanel() {
             obj.userData.isMoon ||
             obj.type === 'GridHelper' ||
             obj.type === 'AxesHelper' ||
-            obj instanceof THREE.AmbientLight) {
+            obj instanceof THREE.AmbientLight ||
+            isObjectsPanelSystemLight(obj)) {
           return
         }
         // Only add root-level objects (direct children of scene)
@@ -930,6 +937,11 @@ export default function ObjectsPanel() {
 
     // Don't allow deleting helper objects
     if (node.object.userData.isHelper) {
+      return
+    }
+
+    // Don't allow deleting auto-managed system lights
+    if (isObjectsPanelSystemLight(node.object)) {
       return
     }
 
