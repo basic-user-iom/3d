@@ -17,6 +17,32 @@ const HDR_PRESETS = [
   { label: 'Rogland Clear Night (Outdoor 8K)', url: '/files-upload/rogland_clear_night_8k.hdr' }
 ]
 
+/**
+ * Derive camera bounds from the HDR ground projection so the camera stays inside
+ * the projected ground disc. The projection is a dome of the given radius centered
+ * on the origin (offset vertically by positionY). We use a square X/Z box that
+ * inscribes the disc's extent and clamp Y between just under the ground and the
+ * dome height so the camera can't fly outside the projected sphere.
+ */
+function deriveGroundProjectionBounds(
+  radius: number,
+  height: number,
+  positionY: number
+): { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } {
+  const r = Number.isFinite(radius) && radius > 0 ? radius : 100
+  const groundY = Number.isFinite(positionY) ? positionY : 0
+  // Keep a small margin so the camera stops before the visible edge of the disc.
+  const horizontal = r * 0.95
+  // Allow going slightly below ground for near-ground shots, and up to the dome height.
+  const domeHeight = Number.isFinite(height) && height > 0 ? Math.min(height, r) : Math.min(15, r)
+  const minY = groundY - r * 0.05
+  const maxY = groundY + domeHeight
+  return {
+    min: { x: -horizontal, y: minY, z: -horizontal },
+    max: { x: horizontal, y: maxY, z: horizontal }
+  }
+}
+
 export default function LightingPanel() {
   const {
     showLightingPanel,
@@ -1213,7 +1239,28 @@ export default function LightingPanel() {
                       <input
                         type="checkbox"
                         checked={cameraBoundsEnabled}
-                        onChange={(e) => setCameraBoundsEnabled(e.target.checked)}
+                        onChange={(e) => {
+                          const enabled = e.target.checked
+                          if (enabled) {
+                            // Auto-populate sensible bounds from the ground projection when
+                            // the current bounds are unusable (infinite or zero-volume),
+                            // so enabling the checkbox actually restricts the camera.
+                            const isFinite = (v: number) => Number.isFinite(v)
+                            const validX = isFinite(cameraBoundsMin.x) && isFinite(cameraBoundsMax.x) && cameraBoundsMin.x < cameraBoundsMax.x
+                            const validY = isFinite(cameraBoundsMin.y) && isFinite(cameraBoundsMax.y) && cameraBoundsMin.y < cameraBoundsMax.y
+                            const validZ = isFinite(cameraBoundsMin.z) && isFinite(cameraBoundsMax.z) && cameraBoundsMin.z < cameraBoundsMax.z
+                            if (!validX || !validY || !validZ) {
+                              const { min, max } = deriveGroundProjectionBounds(
+                                hdrGroundProjectionRadius,
+                                hdrGroundProjectionHeight,
+                                hdrGroundProjectionPositionY
+                              )
+                              setCameraBoundsMin(min)
+                              setCameraBoundsMax(max)
+                            }
+                          }
+                          setCameraBoundsEnabled(enabled)
+                        }}
                       />
                       <small style={{ display: 'block', color: '#888', marginTop: '4px' }}>
                         Restrict camera movement to prevent going outside the HDR ground projection area
@@ -1222,6 +1269,22 @@ export default function LightingPanel() {
                     
                     {cameraBoundsEnabled && (
                       <>
+                        <button
+                          onClick={() => {
+                            const { min, max } = deriveGroundProjectionBounds(
+                              hdrGroundProjectionRadius,
+                              hdrGroundProjectionHeight,
+                              hdrGroundProjectionPositionY
+                            )
+                            setCameraBoundsMin(min)
+                            setCameraBoundsMax(max)
+                          }}
+                          className="button-secondary"
+                          style={{ marginTop: '12px', width: '100%', fontSize: '12px' }}
+                          title={`Fill bounds from ground projection radius (${hdrGroundProjectionRadius})`}
+                        >
+                          Auto from ground projection (radius {Number(hdrGroundProjectionRadius).toFixed(0)})
+                        </button>
                         <div style={{ marginTop: '12px' }}>
                           <h6 style={{ marginBottom: '8px', fontSize: '12px' }}>Min Bounds</h6>
                           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
