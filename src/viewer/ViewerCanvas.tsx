@@ -105,6 +105,11 @@ import {
   computeHdrAmbientIntensity
 } from '../utils/lightProbeUtils'
 import { wakeViewerRender } from './utils/wakeViewerRender'
+import {
+  hasPendingViewerRenderFrames,
+  consumeViewerRenderFrame,
+  clearViewerRenderFrames
+} from './utils/renderRequestQueue'
 
 interface ViewerCanvasProps {
   onViewerReady?: (viewer: ViewerInstance) => void
@@ -4463,6 +4468,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
 
     const needsViewerRenderUpdates = (): boolean =>
       controlsInteracting ||
+      hasPendingViewerRenderFrames() ||
       hasOrbitControlsDamping(controls) ||
       needsContinuousSceneUpdates(viewerRef.current, controls, getSceneActivity())
 
@@ -4984,6 +4990,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         })
       }
 
+      // A UI-driven render (e.g. Transform panel numeric edit) was serviced by this
+      // frame — consume one queued request so the burst eventually settles.
+      consumeViewerRenderFrame()
+
       const keepAnimating = movedSinceLastFrame || needsViewerRenderUpdates()
       if (keepAnimating) {
         idlePauseEnabled = false
@@ -5064,6 +5074,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         cancelAnimationFrame(animationFrameRef.current)
         animationFrameRef.current = undefined
       }
+      // Drop any queued UI render requests so they don't wedge a re-init.
+      clearViewerRenderFrames()
       
       // Clean up event listeners
       if (cleanupResizeHandler) {

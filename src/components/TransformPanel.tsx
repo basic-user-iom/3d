@@ -161,7 +161,7 @@ export default function TransformPanel() {
 
     if (isCityTransform) {
       selectedObject.position[axis] = value
-      selectedObject.updateMatrixWorld()
+      selectedObject.updateMatrixWorld(true)
       syncStreetsGLTransformIfNeeded(selectedObject)
       wakeViewerRender(viewer)
       setPosition({ ...position, [axis]: value })
@@ -180,7 +180,8 @@ export default function TransformPanel() {
 
     const obj = target || selectedObject
     obj.position[axis] = value
-    obj.updateMatrixWorld()
+    // force=true so pivot-wrapper edits propagate to the inner model's world matrix
+    obj.updateMatrixWorld(true)
 
     syncTransformControlsAndRender(obj)
 
@@ -194,7 +195,7 @@ export default function TransformPanel() {
 
     if (isCityTransform) {
       selectedObject.rotation[axis] = THREE.MathUtils.degToRad(value)
-      selectedObject.updateMatrixWorld()
+      selectedObject.updateMatrixWorld(true)
       syncStreetsGLTransformIfNeeded(selectedObject)
       wakeViewerRender(viewer)
       setRotation({ ...rotation, [axis]: value })
@@ -213,7 +214,8 @@ export default function TransformPanel() {
 
     const obj = target || selectedObject
     obj.rotation[axis] = THREE.MathUtils.degToRad(value)
-    obj.updateMatrixWorld()
+    // force=true so pivot-wrapper edits propagate to the inner model's world matrix
+    obj.updateMatrixWorld(true)
 
     syncTransformControlsAndRender(obj)
 
@@ -227,7 +229,7 @@ export default function TransformPanel() {
 
     if (isCityTransform) {
       selectedObject.scale[axis] = Math.max(0.01, value)
-      selectedObject.updateMatrixWorld()
+      selectedObject.updateMatrixWorld(true)
       syncStreetsGLTransformIfNeeded(selectedObject)
       wakeViewerRender(viewer)
       setScale({ ...scale, [axis]: value })
