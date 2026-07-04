@@ -96,7 +96,10 @@ describe('webExportWeatherRuntime', () => {
     expect(js).toContain('new Sky()')
     expect(js).toContain('sky.frustumCulled = false')
     expect(js).toContain('Weather initialized ✓')
-    expect(js).toContain('Weather diagnostics (once)')
+    expect(js).toContain('function webExportMarkRuntimeWeather')
+    expect(js).toContain('isWebExportRuntimeWeather')
+    expect(js).toContain('Weather already initialized')
+    expect(js).toContain('Weather diagnostics (once) enableStandaloneWeather=')
   })
 
   it('defaults skyExposure to 1.0 to match editor fallback', () => {

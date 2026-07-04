@@ -6546,11 +6546,6 @@ export function createStandaloneViewerHTML(
             console.log('[WebExport] Initializing', CONFIG.hotspots.length, 'hotspots');
             initializeHotspots(CONFIG.hotspots, scene, camera, renderer);
           }
-
-          // Initialize standalone weather (fog, rain, snow, dynamic sky, sun/moon)
-          if (typeof initializeWebExportWeather === 'function') {
-            initializeWebExportWeather({ scene, camera, renderer });
-          }
           
           // Setup hotspot panel click handling (X button and label clicks)
           const raycaster = new THREE.Raycaster();

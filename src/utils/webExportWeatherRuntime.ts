@@ -255,6 +255,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
     function isExportedWeatherMesh(obj) {
       if (!obj) return false;
       const ud = obj.userData || {};
+      if (ud.isWebExportRuntimeWeather === true) return false;
       if (ud.isDynamicSky || ud.isSun || ud.isMoon || ud.isParticleSystem) return true;
       const name = webExportNormalizeObjectName(obj.name);
       if (name.indexOf('dynamic_sky') !== -1 || name === 'dynamicsky') return true;
@@ -410,24 +411,31 @@ export function generateWebExportWeatherRuntimeJs(): string {
       if (window.__webExportWeatherDiagnosticsLogged) return;
       window.__webExportWeatherDiagnosticsLogged = true;
       let skyMeshInScene = false;
+      let skyParentName = 'none';
       scene.traverse(function(obj) {
-        if (obj && obj.userData && obj.userData.isDynamicSky) skyMeshInScene = true;
+        if (obj && obj.userData && obj.userData.isDynamicSky && obj.userData.isWebExportRuntimeWeather) {
+          skyMeshInScene = true;
+          skyParentName = obj.parent ? (obj.parent.name || obj.parent.type || 'unnamed') : 'detached';
+        }
       });
       const bg = scene.background;
       const bgLabel = !bg ? 'null' : (bg.isColor ? 'color' : 'texture');
-      console.log('[WebExport] Weather diagnostics (once):', {
-        'CONFIG.weather': weather,
-        enableStandaloneWeather: weather.enableStandaloneWeather,
-        useStandaloneSky: state.useStandaloneSky,
-        skyMeshInScene: skyMeshInScene,
-        hasSkyRef: !!state.sky,
-        skyFrustumCulled: state.sky ? state.sky.frustumCulled : null,
-        'scene.background': bgLabel,
-        hasEnvironment: !!scene.environment,
-        toneMappingExposure: renderer ? renderer.toneMappingExposure : null,
-        cameraFar: camera ? camera.far : null,
-        hdrLoaded: !!window.__hdrTextureLoaded
-      });
+      const sunPos = state.sky && state.sky.material && state.sky.material.uniforms && state.sky.material.uniforms.sunPosition
+        ? state.sky.material.uniforms.sunPosition.value
+        : null;
+      console.log('[WebExport] Weather diagnostics (once) enableStandaloneWeather=' + weather.enableStandaloneWeather);
+      console.log('[WebExport] Weather diagnostics (once) useStandaloneSky=' + state.useStandaloneSky);
+      console.log('[WebExport] Weather diagnostics (once) skyMeshInScene=' + skyMeshInScene + ' skyParent=' + skyParentName);
+      console.log('[WebExport] Weather diagnostics (once) hasSkyRef=' + !!state.sky + ' skyInSceneGraph=' + !!(state.sky && state.sky.parent));
+      console.log('[WebExport] Weather diagnostics (once) skyFrustumCulled=' + (state.sky ? state.sky.frustumCulled : 'n/a'));
+      console.log('[WebExport] Weather diagnostics (once) scene.background=' + bgLabel + ' hasEnvironment=' + !!scene.environment);
+      console.log('[WebExport] Weather diagnostics (once) toneMappingExposure=' + (renderer ? renderer.toneMappingExposure : 'n/a'));
+      console.log('[WebExport] Weather diagnostics (once) cameraFar=' + (camera ? camera.far : 'n/a') + ' hdrLoaded=' + !!window.__hdrTextureLoaded);
+      console.log('[WebExport] Weather diagnostics (once) preset=' + (weather.preset || 'clear') + ' timeOfDay=' + weather.timeOfDay);
+      console.log('[WebExport] Weather diagnostics (once) fog=' + weather.fogDensity + ' rain=' + weather.rainIntensity + ' snow=' + weather.snowIntensity + ' clouds=' + weather.cloudDensity);
+      if (sunPos) {
+        console.log('[WebExport] Weather diagnostics (once) sunPosition=' + sunPos.x.toFixed(3) + ',' + sunPos.y.toFixed(3) + ',' + sunPos.z.toFixed(3));
+      }
     }
 
     function webExportTimeOfDayToSkyAngles(timeOfDay, northOffset) {
@@ -590,6 +598,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
       const points = new THREE.Points(geometry, material);
       points.userData.isParticleSystem = true;
       points.userData.excludeFromFog = true;
+      webExportMarkRuntimeWeather(points);
       points.userData.particleType = type;
       points.userData.velocities = velocities;
       points.userData.speedMul = speedMul;
@@ -699,7 +708,19 @@ export function generateWebExportWeatherRuntimeJs(): string {
       lastTime: performance.now()
     };
 
+    function webExportMarkRuntimeWeather(obj) {
+      if (!obj) return;
+      if (!obj.userData) obj.userData = {};
+      obj.userData.isWebExportRuntimeWeather = true;
+    }
+
     function initializeWebExportWeather(ctx) {
+      const state = window.__webExportWeather;
+      if (state.initialized) {
+        console.log('[WebExport] Weather already initialized — skipping duplicate init');
+        return;
+      }
+
       const weather = normalizeWebExportWeatherConfig(CONFIG.weather || {});
       CONFIG.weather = weather;
       if (!isWebExportWeatherActive(weather)) {
@@ -714,7 +735,6 @@ export function generateWebExportWeatherRuntimeJs(): string {
       const hdrActive = hdrConfig.enabled !== false && (hdrConfig.enabled === true || !!window.__hdrTextureLoaded);
       const useStandaloneSky = webExportIsStandaloneSkyActive(weather, hdrConfig);
 
-      const state = window.__webExportWeather;
       webExportApplyFog(scene, weather);
 
       if (weather.rainIntensity > 0 && !state.rain) {
@@ -733,6 +753,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
           sky.scale.setScalar(WEB_EXPORT_SKY_SPHERE_RADIUS);
           sky.userData.isDynamicSky = true;
           sky.userData.excludeFromFog = true;
+          webExportMarkRuntimeWeather(sky);
           sky.renderOrder = -1000;
           sky.frustumCulled = false;
           scene.add(sky);
@@ -746,6 +767,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
           const sunMesh = new THREE.Mesh(sunGeo, sunMat);
           sunMesh.userData.isSun = true;
           sunMesh.userData.excludeFromFog = true;
+          webExportMarkRuntimeWeather(sunMesh);
           sunMesh.renderOrder = -900;
           sunMesh.frustumCulled = false;
           scene.add(sunMesh);
@@ -757,6 +779,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
           const moonMesh = new THREE.Mesh(moonGeo, moonMat);
           moonMesh.userData.isMoon = true;
           moonMesh.userData.excludeFromFog = true;
+          webExportMarkRuntimeWeather(moonMesh);
           moonMesh.renderOrder = -900;
           moonMesh.frustumCulled = false;
           scene.add(moonMesh);
@@ -789,24 +812,19 @@ export function generateWebExportWeatherRuntimeJs(): string {
       state.weather = weather;
       state.useStandaloneSky = useStandaloneSky;
       webExportLogWeatherDiagnostics(scene, camera, renderer, weather, state);
-      console.log('[WebExport] Weather initialized ✓', {
-        preset: weather.preset,
-        enableStandaloneWeather: weather.enableStandaloneWeather,
-        useStandaloneSky: useStandaloneSky,
-        hdrActive: hdrActive,
-        hdrBackgroundVisible: hdrConfig.backgroundVisible !== false,
-        background: scene.background ? 'texture' : 'null (sky dome)',
-        hasEnvironment: !!scene.environment,
-        timeOfDay: weather.timeOfDay,
-        fogDensity: weather.fogDensity,
-        rainIntensity: weather.rainIntensity,
-        snowIntensity: weather.snowIntensity,
-        cloudDensity: weather.cloudDensity,
-        skyExposure: weather.skyExposure,
-        toneMappingExposure: renderer ? renderer.toneMappingExposure : null,
-        cameraFar: camera ? camera.far : null,
-        skySphereRadius: useStandaloneSky ? WEB_EXPORT_SKY_SPHERE_RADIUS : null
-      });
+      console.log('[WebExport] Weather initialized ✓ preset=' + (weather.preset || 'clear') +
+        ' enableStandaloneWeather=' + weather.enableStandaloneWeather +
+        ' useStandaloneSky=' + useStandaloneSky +
+        ' background=' + (scene.background ? 'texture' : 'null (sky dome)') +
+        ' hasEnvironment=' + !!scene.environment +
+        ' timeOfDay=' + weather.timeOfDay +
+        ' fog=' + weather.fogDensity + ' rain=' + weather.rainIntensity +
+        ' snow=' + weather.snowIntensity + ' clouds=' + weather.cloudDensity +
+        ' skyExposure=' + weather.skyExposure +
+        ' toneMappingExposure=' + (renderer ? renderer.toneMappingExposure : 'n/a') +
+        ' cameraFar=' + (camera ? camera.far : 'n/a') +
+        ' skyInScene=' + !!(state.sky && state.sky.parent) +
+        (useStandaloneSky ? ' skyRadius=' + WEB_EXPORT_SKY_SPHERE_RADIUS : ''));
     }
 
     function updateWebExportWeather(scene, camera, renderer) {
