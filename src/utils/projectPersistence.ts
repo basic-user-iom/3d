@@ -430,6 +430,7 @@ export interface SavedProject {
         faceCamera?: boolean
       }
       faceCamera?: boolean
+      frozenRotation?: { x: number; y: number; z: number; w: number }
       // Panel border styling
       panelBorder?: {
         width?: number

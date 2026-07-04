@@ -172,6 +172,13 @@ export function createHotspotLabelTexture(
   return texture
 }
 
+export type FrozenRotation = {
+  x: number
+  y: number
+  z: number
+  w: number
+}
+
 export type HotspotLabelOptions = {
   fontSize?: number
   fontFamily?: string
@@ -184,6 +191,40 @@ export type HotspotLabelOptions = {
   borderRadius?: number
   scale?: number
   faceCamera?: boolean
+  frozenRotation?: FrozenRotation
+}
+
+/** World quaternion for a plane at `position` facing `cameraPosition`. */
+export function computeBillboardQuaternion(
+  position: THREE.Vector3,
+  cameraPosition: THREE.Vector3
+): THREE.Quaternion {
+  const helper = new THREE.Object3D()
+  helper.position.copy(position)
+  helper.lookAt(cameraPosition)
+  return helper.quaternion.clone()
+}
+
+export function quaternionToFrozen(q: THREE.Quaternion): FrozenRotation {
+  return { x: q.x, y: q.y, z: q.z, w: q.w }
+}
+
+export function frozenToQuaternion(frozen: FrozenRotation): THREE.Quaternion {
+  return new THREE.Quaternion(frozen.x, frozen.y, frozen.z, frozen.w)
+}
+
+/** Apply stored frozen rotation, or billboard toward camera when none is stored. */
+export function applyFrozenOrientation(
+  object: THREE.Object3D,
+  frozen: FrozenRotation | undefined,
+  objectPosition: THREE.Vector3,
+  cameraPosition: THREE.Vector3
+): void {
+  const quaternion = frozen
+    ? frozenToQuaternion(frozen)
+    : computeBillboardQuaternion(objectPosition, cameraPosition)
+  object.quaternion.copy(quaternion)
+  object.updateMatrixWorld(true)
 }
 
 function applyHotspotLabelScale(
@@ -257,6 +298,10 @@ export function createHotspotLabelMesh(
   mesh.userData.faceCamera = false
   mesh.userData.labelText = text
   mesh.visible = true
+
+  if (options.frozenRotation) {
+    mesh.quaternion.copy(frozenToQuaternion(options.frozenRotation))
+  }
 
   return mesh
 }
@@ -389,3 +434,15 @@ export function updateHotspotLabelTexture(
   return newTexture
 }
 
+/** Apply the same frozen orientation to label and content panel meshes. */
+export function applyHotspotFrozenOrientation(
+  label: THREE.Object3D | null | undefined,
+  panel: THREE.Object3D | null | undefined,
+  frozen: FrozenRotation | undefined,
+  labelPosition: THREE.Vector3,
+  panelPosition: THREE.Vector3,
+  cameraPosition: THREE.Vector3
+): void {
+  if (label) applyFrozenOrientation(label, frozen, labelPosition, cameraPosition)
+  if (panel) applyFrozenOrientation(panel, frozen, panelPosition, cameraPosition)
+}

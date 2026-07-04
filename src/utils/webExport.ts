@@ -2570,6 +2570,22 @@ export function createStandaloneViewerHTML(
       lines.push(currentLine);
       return lines;
     }
+
+    function computeBillboardQuaternion(position, cameraPosition) {
+      const helper = new THREE.Object3D();
+      helper.position.copy(position);
+      helper.lookAt(cameraPosition);
+      return helper.quaternion.clone();
+    }
+
+    function applyHotspotFrozenOrientation(object, frozen, objectPosition, cameraPosition) {
+      if (frozen) {
+        object.quaternion.set(frozen.x, frozen.y, frozen.z, frozen.w);
+      } else if (cameraPosition) {
+        object.quaternion.copy(computeBillboardQuaternion(objectPosition, cameraPosition));
+      }
+      object.updateMatrixWorld(true);
+    }
     
     // Create hotspot panel (matches main 3D viewer implementation)
     function createHotspotPanel(hotspot, position, scene) {
@@ -2789,6 +2805,13 @@ export function createStandaloneViewerHTML(
           }
           
           scene.add(css3dObject);
+          if (hotspot.faceCamera !== false) {
+            if (typeof camera !== 'undefined' && camera) {
+              css3dObject.lookAt(camera.position);
+            }
+          } else if (typeof camera !== 'undefined' && camera) {
+            applyHotspotFrozenOrientation(css3dObject, hotspot.frozenRotation, css3dObject.position, camera.position);
+          }
           console.log('[WebExport] Created CSS3D panel for YouTube video:', hotspot.id, 'videoId:', videoId, 'visible:', isOpen);
         } else {
           console.warn('[WebExport] Could not extract YouTube video ID from:', contentData);
@@ -3144,10 +3167,12 @@ export function createStandaloneViewerHTML(
         
         scene.add(panel);
         
-        // Make panel face the camera initially (billboard effect)
-        // Note: The animation loop will continue to update this
-        if (typeof camera !== 'undefined' && camera) {
-          panel.lookAt(camera.position);
+        if (hotspot.faceCamera !== false) {
+          if (typeof camera !== 'undefined' && camera) {
+            panel.lookAt(camera.position);
+          }
+        } else if (typeof camera !== 'undefined' && camera) {
+          applyHotspotFrozenOrientation(panel, hotspot.frozenRotation, panel.position, camera.position);
         }
         
         console.log('[WebExport] Created canvas panel for hotspot:', hotspot.id, 'visible:', isOpen);
@@ -3342,6 +3367,13 @@ export function createStandaloneViewerHTML(
             labelObject.userData.hotspotId = hotspot.id;
             labelObject.userData.labelText = hotspot.label.text;
             labelObject.userData.canClickToOpen = true;
+            if (labelFaceCamera) {
+              if (typeof camera !== 'undefined' && camera) {
+                labelObject.lookAt(camera.position);
+              }
+            } else if (typeof camera !== 'undefined' && camera) {
+              applyHotspotFrozenOrientation(labelObject, hotspot.frozenRotation, labelObject.position, camera.position);
+            }
             scene.add(labelObject);
           }
           

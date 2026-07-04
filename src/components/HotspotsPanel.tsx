@@ -5,7 +5,14 @@ import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS, resolveHotspotIconForMarker, getHotspotIconKey, createHotspotIconTextureForType, syncHotspotMarkerAppearance } from '../utils/hotspotUtils'
-import { createHotspotLabelObject, updateHotspotLabelTexture } from '../utils/hotspotLabel'
+import {
+  createHotspotLabelObject,
+  updateHotspotLabelTexture,
+  computeBillboardQuaternion,
+  quaternionToFrozen,
+  applyFrozenOrientation,
+  type FrozenRotation
+} from '../utils/hotspotLabel'
 import { createHotspot3DPanel, updateHotspot3DPanelTexture, updateHotspotCSS3DPanelStyle, cleanupVideoResourcesForCanvas, cleanupAllVideoResources, type Hotspot3DPanelConfig } from '../utils/hotspot3DPanel'
 import HotspotPopup from './HotspotPopup'
 import './HotspotsPanel.css'
@@ -90,6 +97,8 @@ export interface Hotspot {
   }
   // When false, floating label and content panel keep fixed world orientation
   faceCamera?: boolean
+  // World quaternion captured when billboard was disabled (label + panel share this)
+  frozenRotation?: FrozenRotation
   // Panel border settings
   panelBorder?: {
     width?: number // Panel border width (default: 2)
@@ -328,6 +337,40 @@ export default function HotspotsPanel() {
   const [labelOffsetX, setLabelOffsetX] = useState(0) // Label horizontal offset in 3D units
   const [labelOffsetY, setLabelOffsetY] = useState(0) // Label vertical offset in 3D units
   const [labelFaceCamera, setLabelFaceCamera] = useState(true) // Label/panel billboard toward camera
+
+  const handleLabelFaceCameraChange = useCallback((checked: boolean) => {
+    setLabelFaceCamera(checked)
+    if (!editingHotspotId || !viewer?.camera) return
+
+    setHotspots(prev => prev.map(h => {
+      if (h.id !== editingHotspotId) return h
+
+      const wasFaceCamera = h.faceCamera ?? h.label?.faceCamera ?? true
+      let frozenRotation = h.frozenRotation
+      if (!checked && wasFaceCamera) {
+        const labelPos = new THREE.Vector3(
+          h.position.x + labelOffsetX,
+          h.position.y + labelOffsetY,
+          h.position.z
+        )
+        frozenRotation = quaternionToFrozen(
+          computeBillboardQuaternion(labelPos, viewer.camera!.position)
+        )
+      } else if (checked) {
+        frozenRotation = undefined
+      }
+
+      return {
+        ...h,
+        faceCamera: checked,
+        frozenRotation,
+        label: h.label
+          ? { ...h.label, faceCamera: checked }
+          : h.label
+      }
+    }))
+  }, [editingHotspotId, viewer?.camera, labelOffsetX, labelOffsetY])
+
   // Panel border settings
   const [panelBorderWidth, setPanelBorderWidth] = useState(2)
   const [panelBorderColor, setPanelBorderColor] = useState('#00AAFF')
@@ -422,10 +465,29 @@ export default function HotspotsPanel() {
         const nextLabelText = labelText || nextName
         const nextFaceCamera = labelFaceCamera
         const currentLabel = hotspot.label
+        const wasFaceCamera = hotspot.faceCamera ?? currentLabel?.faceCamera ?? true
+
+        let nextFrozenRotation = hotspot.frozenRotation
+        if (wasFaceCamera && !nextFaceCamera && viewer?.camera) {
+          const labelPos = new THREE.Vector3(
+            hotspot.position.x + labelOffsetX,
+            hotspot.position.y + labelOffsetY,
+            hotspot.position.z
+          )
+          nextFrozenRotation = quaternionToFrozen(
+            computeBillboardQuaternion(labelPos, viewer.camera.position)
+          )
+        } else if (nextFaceCamera) {
+          nextFrozenRotation = undefined
+        }
+
+        const frozenRotationChanged =
+          JSON.stringify(hotspot.frozenRotation ?? null) !== JSON.stringify(nextFrozenRotation ?? null)
 
         const labelChanged =
           hotspot.name !== nextName ||
           hotspot.faceCamera !== nextFaceCamera ||
+          frozenRotationChanged ||
           currentLabel?.text !== nextLabelText ||
           currentLabel?.fontSize !== labelFontSize ||
           currentLabel?.visible !== labelVisible ||
@@ -448,6 +510,7 @@ export default function HotspotsPanel() {
                 ...h,
                 name: nextName,
                 faceCamera: nextFaceCamera,
+                frozenRotation: nextFrozenRotation,
                 label: {
                   text: nextLabelText,
                   visible: labelVisible,
@@ -485,7 +548,10 @@ export default function HotspotsPanel() {
     labelHeightPixels,
     labelOffsetX,
     labelOffsetY,
-    labelFaceCamera
+    labelFaceCamera,
+    viewer?.camera,
+    labelOffsetX,
+    labelOffsetY
   ])
 
   // Real-time preview: sync icon visibility and type while editing
@@ -1179,7 +1245,8 @@ export default function HotspotsPanel() {
                 borderColor: effectiveLabelBorderColor,
                 borderRadius: effectiveLabelBorderRadius,
                 scale: labelScale,
-                faceCamera: effectiveFaceCamera
+                faceCamera: effectiveFaceCamera,
+                frozenRotation: effectiveFaceCamera === false ? hotspot.frozenRotation : undefined
               })
               labelObject.userData.hotspotId = hotspot.id
               labelObject.userData.isHotspotLabel = true
@@ -1194,6 +1261,15 @@ export default function HotspotsPanel() {
               labelObject.userData.offsetY = effectiveLabelOffsetY
               labelObject.userData.faceCamera = effectiveFaceCamera
               labelObject.visible = shouldShowLabel
+              
+              if (effectiveFaceCamera === false && viewer.camera) {
+                applyFrozenOrientation(
+                  labelObject,
+                  hotspot.frozenRotation,
+                  labelObject.position,
+                  viewer.camera.position
+                )
+              }
               
               if (effectiveLabelVisible === 'always') {
                 labelObject.visible = true
@@ -1223,48 +1299,144 @@ export default function HotspotsPanel() {
           if (label) {
             const wantsBillboard = effectiveFaceCamera !== false
             const isSpriteLabel = label instanceof THREE.Sprite
-            if (wantsBillboard !== isSpriteLabel || label.userData.faceCamera !== effectiveFaceCamera) {
-              viewer.scene.remove(label)
-              if (label instanceof THREE.Sprite) {
-                const mat = label.material as THREE.SpriteMaterial
+            const faceCameraModeChanged =
+              wantsBillboard !== isSpriteLabel || label.userData.faceCamera !== effectiveFaceCamera
+
+            const disposeLabel = (target: THREE.Object3D) => {
+              viewer.scene.remove(target)
+              if (target instanceof THREE.Sprite) {
+                const mat = target.material as THREE.SpriteMaterial
                 mat.map?.dispose()
                 mat.dispose()
-              } else if (label instanceof THREE.Mesh) {
-                label.geometry.dispose()
-                const mat = label.material as THREE.MeshBasicMaterial
+              } else if (target instanceof THREE.Mesh) {
+                target.geometry.dispose()
+                const mat = target.material as THREE.MeshBasicMaterial
                 mat.map?.dispose()
                 mat.dispose()
               }
+            }
+
+            const buildLabelScale = () => {
+              const pixelsToWorldUnits = 0.01
+              if (effectiveLabelHeightPixels !== null && effectiveLabelHeightPixels !== undefined) {
+                return effectiveLabelHeightPixels * pixelsToWorldUnits
+              }
+              if (effectiveLabelWidthPixels !== null && effectiveLabelWidthPixels !== undefined) {
+                return (effectiveLabelWidthPixels / 3) * pixelsToWorldUnits
+              }
+              return 80 * pixelsToWorldUnits
+            }
+
+            const createLabelForHotspot = (frozenRotation?: FrozenRotation) => {
+              const labelObject = createHotspotLabelObject(position, effectiveLabelText, {
+                fontSize: effectiveLabelFontSize,
+                color: effectiveLabelColor,
+                backgroundColor: effectiveLabelBackgroundColor,
+                offsetX: effectiveLabelOffsetX,
+                offsetY: effectiveLabelOffsetY,
+                borderWidth: effectiveLabelBorderWidth,
+                borderColor: effectiveLabelBorderColor,
+                borderRadius: effectiveLabelBorderRadius,
+                scale: buildLabelScale(),
+                faceCamera: effectiveFaceCamera,
+                frozenRotation: wantsBillboard ? undefined : frozenRotation
+              })
+              labelObject.userData.hotspotId = hotspot.id
+              labelObject.userData.isHotspotLabel = true
+              labelObject.userData.labelText = effectiveLabelText
+              labelObject.userData.labelFontSize = effectiveLabelFontSize
+              labelObject.userData.labelColor = effectiveLabelColor
+              labelObject.userData.labelBackgroundColor = effectiveLabelBackgroundColor
+              labelObject.userData.labelBorderWidth = effectiveLabelBorderWidth
+              labelObject.userData.labelBorderColor = effectiveLabelBorderColor
+              labelObject.userData.labelBorderRadius = effectiveLabelBorderRadius
+              labelObject.userData.labelWidthPixels = effectiveLabelWidthPixels
+              labelObject.userData.labelHeightPixels = effectiveLabelHeightPixels
+              labelObject.userData.offsetX = effectiveLabelOffsetX
+              labelObject.userData.offsetY = effectiveLabelOffsetY
+              labelObject.userData.faceCamera = effectiveFaceCamera
+              labelObject.visible = effectiveLabelVisible === 'always' ? true : shouldShowLabel
+              if (!wantsBillboard && viewer.camera) {
+                applyFrozenOrientation(
+                  labelObject,
+                  frozenRotation,
+                  labelObject.position,
+                  viewer.camera.position
+                )
+              }
+              viewer.scene.add(labelObject)
+              labelsMap.set(hotspot.id, labelObject)
+              return labelObject
+            }
+
+            if (faceCameraModeChanged) {
+              let frozenRotation = hotspot.frozenRotation
+              if (!wantsBillboard && viewer.camera) {
+                if (!frozenRotation) {
+                  const labelPos = new THREE.Vector3(
+                    position.x + effectiveLabelOffsetX,
+                    position.y + effectiveLabelOffsetY,
+                    position.z
+                  )
+                  frozenRotation = quaternionToFrozen(
+                    computeBillboardQuaternion(labelPos, viewer.camera.position)
+                  )
+                }
+                const panel = panelsMap.get(hotspot.id)
+                if (panel) {
+                  panel.userData.isBillboard = false
+                  applyFrozenOrientation(
+                    panel,
+                    frozenRotation,
+                    panel.position,
+                    viewer.camera.position
+                  )
+                }
+              }
+
+              disposeLabel(label)
               labelsMap.delete(hotspot.id)
+              createLabelForHotspot(frozenRotation)
             } else {
+            const activeLabel = labelsMap.get(hotspot.id)!
             // Use effective offsets from hotspot data (not stored userData which might be stale)
             // Position label at marker position with offsets
-            label.position.set(position.x + effectiveLabelOffsetX, position.y + effectiveLabelOffsetY, position.z)
-            label.updateMatrixWorld(true)
-            label.visible = shouldShowLabel
+            activeLabel.position.set(position.x + effectiveLabelOffsetX, position.y + effectiveLabelOffsetY, position.z)
+            activeLabel.updateMatrixWorld(true)
+            activeLabel.visible = shouldShowLabel
+            activeLabel.userData.faceCamera = effectiveFaceCamera
+
+            if (!wantsBillboard && viewer.camera) {
+              applyFrozenOrientation(
+                activeLabel,
+                hotspot.frozenRotation,
+                activeLabel.position,
+                viewer.camera.position
+              )
+            }
             
             // Update label if text, styling, border, scale, or position changed
             // Use Number() conversion to handle string/number mismatches
-            const storedBorderWidth = label.userData.labelBorderWidth ?? 0
-            const storedBorderRadius = label.userData.labelBorderRadius ?? 0
-            const storedOffsetX = label.userData.offsetX ?? 0
-            const storedOffsetY = label.userData.offsetY ?? 0
+            const storedBorderWidth = activeLabel.userData.labelBorderWidth ?? 0
+            const storedBorderRadius = activeLabel.userData.labelBorderRadius ?? 0
+            const storedOffsetX = activeLabel.userData.offsetX ?? 0
+            const storedOffsetY = activeLabel.userData.offsetY ?? 0
             
             const labelNeedsUpdate = 
-              label.userData.labelText !== effectiveLabelText ||
-              label.userData.labelFontSize !== effectiveLabelFontSize ||
-              label.userData.labelColor !== effectiveLabelColor ||
-              label.userData.labelBackgroundColor !== effectiveLabelBackgroundColor ||
+              activeLabel.userData.labelText !== effectiveLabelText ||
+              activeLabel.userData.labelFontSize !== effectiveLabelFontSize ||
+              activeLabel.userData.labelColor !== effectiveLabelColor ||
+              activeLabel.userData.labelBackgroundColor !== effectiveLabelBackgroundColor ||
               Number(storedBorderWidth) !== Number(effectiveLabelBorderWidth) ||
-              label.userData.labelBorderColor !== effectiveLabelBorderColor ||
+              activeLabel.userData.labelBorderColor !== effectiveLabelBorderColor ||
               Number(storedBorderRadius) !== Number(effectiveLabelBorderRadius) ||
-              label.userData.labelWidthPixels !== effectiveLabelWidthPixels ||
-              label.userData.labelHeightPixels !== effectiveLabelHeightPixels ||
+              activeLabel.userData.labelWidthPixels !== effectiveLabelWidthPixels ||
+              activeLabel.userData.labelHeightPixels !== effectiveLabelHeightPixels ||
               Number(storedOffsetX) !== Number(effectiveLabelOffsetX) ||
               Number(storedOffsetY) !== Number(effectiveLabelOffsetY)
             
             if (labelNeedsUpdate) {
-              updateHotspotLabelTexture(label, effectiveLabelText, {
+              updateHotspotLabelTexture(activeLabel, effectiveLabelText, {
                 fontSize: effectiveLabelFontSize,
                 color: effectiveLabelColor,
                 backgroundColor: effectiveLabelBackgroundColor,
@@ -1275,17 +1447,17 @@ export default function HotspotsPanel() {
                 heightPixels: effectiveLabelHeightPixels
               })
 
-              label.userData.labelText = effectiveLabelText
-              label.userData.labelFontSize = effectiveLabelFontSize
-              label.userData.labelColor = effectiveLabelColor
-              label.userData.labelBackgroundColor = effectiveLabelBackgroundColor
-              label.userData.labelBorderWidth = effectiveLabelBorderWidth
-              label.userData.labelBorderColor = effectiveLabelBorderColor
-              label.userData.labelBorderRadius = effectiveLabelBorderRadius
-              label.userData.labelWidthPixels = effectiveLabelWidthPixels
-              label.userData.labelHeightPixels = effectiveLabelHeightPixels
-              label.userData.offsetX = effectiveLabelOffsetX
-              label.userData.offsetY = effectiveLabelOffsetY
+              activeLabel.userData.labelText = effectiveLabelText
+              activeLabel.userData.labelFontSize = effectiveLabelFontSize
+              activeLabel.userData.labelColor = effectiveLabelColor
+              activeLabel.userData.labelBackgroundColor = effectiveLabelBackgroundColor
+              activeLabel.userData.labelBorderWidth = effectiveLabelBorderWidth
+              activeLabel.userData.labelBorderColor = effectiveLabelBorderColor
+              activeLabel.userData.labelBorderRadius = effectiveLabelBorderRadius
+              activeLabel.userData.labelWidthPixels = effectiveLabelWidthPixels
+              activeLabel.userData.labelHeightPixels = effectiveLabelHeightPixels
+              activeLabel.userData.offsetX = effectiveLabelOffsetX
+              activeLabel.userData.offsetY = effectiveLabelOffsetY
             }
             }
           }
@@ -1424,6 +1596,14 @@ export default function HotspotsPanel() {
           if (panel.userData.isCSS3DPanel) {
             panel.userData.isBillboard = panelFaceCamera
           }
+          if (!panelFaceCamera && viewer.camera) {
+            applyFrozenOrientation(
+              panel,
+              hotspot.frozenRotation,
+              panel.position,
+              viewer.camera.position
+            )
+          }
           
           // Store config in userData immediately to prevent unnecessary recreations
           panel.userData.panelConfig = { ...panelConfig }
@@ -1498,7 +1678,16 @@ export default function HotspotsPanel() {
               // Panel positioned below marker with proper spacing
               panel.position.copy(position.clone().add(new THREE.Vector3(0, -1.2, 0)))
               panel.updateMatrixWorld(true)
-              panel.userData.isBillboard = hotspot.faceCamera !== false
+              const panelFaceCamera = hotspot.faceCamera !== false
+              panel.userData.isBillboard = panelFaceCamera
+              if (!panelFaceCamera && viewer.camera) {
+                applyFrozenOrientation(
+                  panel,
+                  hotspot.frozenRotation,
+                  panel.position,
+                  viewer.camera.position
+                )
+              }
               
               // Only update texture if config actually changed (prevents flickering)
               const currentConfig = panel.userData.panelConfig
@@ -1556,6 +1745,16 @@ export default function HotspotsPanel() {
                   newPanel.userData.hotspotId = hotspot.id
                   newPanel.userData.isHotspotPanel = true
                   newPanel.userData.isDraggable = true
+                  const panelFaceCamera = hotspot.faceCamera !== false
+                  newPanel.userData.isBillboard = panelFaceCamera
+                  if (!panelFaceCamera && viewer.camera) {
+                    applyFrozenOrientation(
+                      newPanel,
+                      hotspot.frozenRotation,
+                      newPanel.position,
+                      viewer.camera.position
+                    )
+                  }
                   // Store config in userData immediately to prevent unnecessary recreations
                   newPanel.userData.panelConfig = { ...panelConfig }
                   
@@ -3731,7 +3930,7 @@ export default function HotspotsPanel() {
                 <input
                   type="checkbox"
                   checked={labelFaceCamera}
-                  onChange={(e) => setLabelFaceCamera(e.target.checked)}
+                  onChange={(e) => handleLabelFaceCameraChange(e.target.checked)}
                 />
                 <span>Label faces camera (billboard)</span>
               </label>
