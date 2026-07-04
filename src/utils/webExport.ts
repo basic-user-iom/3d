@@ -261,7 +261,12 @@ export async function exportModelToGLB(
           child.type === 'PolarGridHelper' ||
           child.userData.isHelper === true ||
           child.userData.skipExport === true ||
-          child.userData.isGroundedSkybox === true // Don't export GroundedSkybox - it will be recreated in the viewer
+          child.userData.isGroundedSkybox === true ||
+          child.userData.isDynamicSky === true ||
+          child.userData.isSun === true ||
+          child.userData.isMoon === true ||
+          child.userData.isParticleSystem === true ||
+          (child.name || '').toLowerCase().replace(/\s+/g, '_').includes('dynamic_sky')
         ) {
           if (child.visible) {
             child.visible = false
@@ -3505,7 +3510,7 @@ export function createStandaloneViewerHTML(
       dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
       loader.setDRACOLoader(dracoLoader);
       
-      const modelUrl = './model.glb';
+      const modelUrl = resolveExportAssetUrl((CONFIG.assets && CONFIG.assets.model) || './model.glb');
       
       try {
         const loadStartTime = performance.now();
@@ -4060,6 +4065,14 @@ export function createStandaloneViewerHTML(
             return;
           }
           
+          // Skip weather / sky domes — runtime weather owns the sky
+          if (typeof isExportedWeatherMesh === 'function' && isExportedWeatherMesh(obj)) {
+            if (obj.children && Array.isArray(obj.children)) {
+              obj.children.forEach(child => restoreModelFlags(child));
+            }
+            return;
+          }
+          
           // Check if this object has geometry (is a mesh or has mesh children)
           // Use recursive check to find meshes at any depth
           const hasGeometry = obj instanceof THREE.Mesh && obj.geometry;
@@ -4123,6 +4136,9 @@ export function createStandaloneViewerHTML(
           }
         };
         
+        // Remove serialized editor weather meshes before restoring model flags / bounds
+        removeExportedWeatherMeshes(gltf.scene);
+        
         // Restore flags for all objects in the loaded GLB
         // Note: restoreModelFlags already processes children recursively, so we only need to call it once
         restoreModelFlags(gltf.scene);
@@ -4153,8 +4169,8 @@ export function createStandaloneViewerHTML(
         
         // MATCH WORKING EXPORT: Don't reposition the models - keep them at their original positions
         // The models should already be positioned correctly in the GLB file
-        // Store reference to scene root for shadow plane positioning (use first model or scene root)
-        const carRoot = gltf.scene.children.length > 0 ? gltf.scene.children[0] : gltf.scene;
+        // Store reference to scene root for shadow plane positioning (first non-weather model)
+        const carRoot = findSubjectRoot(gltf.scene);
         
         // CRITICAL: Store carRoot reference for render loop (needed for shadow plane positioning in standard 360 HDR)
         // Make it accessible to the render loop
@@ -4183,6 +4199,8 @@ export function createStandaloneViewerHTML(
                 userData.isDynamicSky === true ||
                 userData.isSun === true ||
                 userData.isMoon === true ||
+                name.includes('dynamic_sky') ||
+                name.includes('dynamic sky') ||
                 type.includes('Helper') ||
                 name.includes('helper') ||
                 name === 'grid' ||
@@ -4486,6 +4504,9 @@ export function createStandaloneViewerHTML(
                 
                 // Skip weather system objects (sky, sun/moon meshes) - they are visual effects, not scene objects
                 if (!isModel && obj.userData && (obj.userData.isDynamicSky || obj.userData.isSun || obj.userData.isMoon)) {
+                  return;
+                }
+                if (!isModel && typeof isExportedWeatherMesh === 'function' && isExportedWeatherMesh(obj)) {
                   return;
                 }
                 
@@ -5579,12 +5600,12 @@ export function createStandaloneViewerHTML(
         // MATCH WORKING EXPORT: Position shadow plane under car for both ground projection and standard 360 HDR
         // This applies to both existing shadow planes and newly created ones
         if (carRoot && shadowPlane) {
-          const carBox = new THREE.Box3().setFromObject(carRoot);
+          const carBox = computeSubjectBounds(carRoot);
           if (!carBox.isEmpty()) {
             const carCenter = carBox.getCenter(new THREE.Vector3());
             const carSize = carBox.getSize(new THREE.Vector3());
-            const radiusX = carSize.x * 0.75;
-            const radiusZ = carSize.z * 0.75;
+            const radiusX = Math.min(carSize.x * 0.75, WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS);
+            const radiusZ = Math.min(carSize.z * 0.75, WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS);
             
             // Position plane under car center (keep its original Y)
             shadowPlane.position.x = carCenter.x;
@@ -6018,7 +6039,7 @@ export function createStandaloneViewerHTML(
           try {
             hasHDR = true; // We're attempting to load HDR
             const rgbeLoader = new RGBELoader();
-            const hdrUrl = './environment.hdr';
+            const hdrUrl = resolveExportAssetUrl((CONFIG.assets && CONFIG.assets.hdr) || './environment.hdr');
             console.log('Loading HDR from:', hdrUrl);
             hdrProgress = 0;
             updateLoadingProgress();
@@ -7049,15 +7070,7 @@ export function createStandaloneViewerHTML(
                         
                         const currentCarRoot = renderLoopCarRoot;
                         if (currentCarRoot) {
-                          const carBox = new THREE.Box3();
-                          currentCarRoot.traverse((carObj) => {
-                            if (carObj instanceof THREE.Mesh) {
-                              const userData = carObj.userData || {};
-                              if (!userData.isShadowPlane && !userData.isHelper && !userData.isGroundedSkybox) {
-                                carBox.expandByObject(carObj);
-                              }
-                            }
-                          });
+                          const carBox = computeSubjectBounds(currentCarRoot);
                           if (!carBox.isEmpty()) {
                             const center = carBox.getCenter(new THREE.Vector3());
                             const size = carBox.getSize(new THREE.Vector3());
@@ -7071,8 +7084,8 @@ export function createStandaloneViewerHTML(
                         
                         // Position and scale shadow plane based on car bounds
                         if (carFound) {
-                          const radiusX = Math.min(carSizeX * 0.75, 120);
-                          const radiusZ = Math.min(carSizeZ * 0.75, 120);
+                          const radiusX = Math.min(carSizeX * 0.75, WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS);
+                          const radiusZ = Math.min(carSizeZ * 0.75, WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS);
                           const targetScaleX = radiusX / 5;
                           const targetScaleZ = radiusZ / 5;
                           
@@ -7897,6 +7910,12 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
     exportedAt: exportDate,
     exportTimestamp: exportTimestamp, // Add timestamp for cache-busting
     options: defaultOptions,
+
+    assets: {
+      basePath: './',
+      model: modelBlob ? 'model.glb' : undefined,
+      hdr: hdrBlob ? 'environment.hdr' : undefined
+    },
     
     // Model modifications information
     modelModifications: {
@@ -8127,6 +8146,16 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
   
   // Replace file paths with blob URLs in HTML
   let htmlWithBlobUrls = result.html
+
+  const assetUrlMap: Record<string, string> = {}
+  if (modelBlobUrl) {
+    assetUrlMap['model.glb'] = modelBlobUrl
+    assetUrlMap['./model.glb'] = modelBlobUrl
+  }
+  if (hdrBlobUrl) {
+    assetUrlMap['environment.hdr'] = hdrBlobUrl
+    assetUrlMap['./environment.hdr'] = hdrBlobUrl
+  }
   
   if (modelBlobUrl) {
     htmlWithBlobUrls = htmlWithBlobUrls.replace(
@@ -8184,11 +8213,13 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
   // CRITICAL: Clear any cached state from previous previews and add cache-busting
   // Add script to clear cache at the start of the HTML
   const exportTimestamp = Date.now()
+  const assetUrlMapJson = JSON.stringify(assetUrlMap)
   const cacheClearScript = `
     <script>
       // CRITICAL: Clear any cached state from previous previews
       // This ensures each preview uses fresh data, not cached from previous exports
       console.log('[WebExport] Clearing cached state, export timestamp:', ${exportTimestamp});
+      window.__webExportAssetUrls = ${assetUrlMapJson};
       
       if (window.__hdrTextureLoaded) {
         if (window.__hdrTextureLoaded.dispose) {

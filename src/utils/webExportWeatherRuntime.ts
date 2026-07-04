@@ -8,6 +8,84 @@ export const WEB_EXPORT_WEATHER_GROUND_LEVEL = 0
 /** Match editor DynamicSky sphere radius — must fit inside camera far plane */
 export const WEB_EXPORT_SKY_SPHERE_RADIUS = 9000
 export const WEB_EXPORT_MIN_CAMERA_FAR = WEB_EXPORT_SKY_SPHERE_RADIUS * 1.5
+/** Meshes larger than this are treated as sky domes / helpers, not scene subjects */
+export const WEB_EXPORT_MAX_SUBJECT_EXTENT = 500
+export const WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS = 120
+
+function normalizeExportObjectName(name: string | undefined): string {
+  return (name || '').toLowerCase().replace(/\s+/g, '_')
+}
+
+/** Detect editor DynamicSky / weather meshes that must not be exported or used for bounds */
+export function isExportedWeatherMeshLike(obj: {
+  name?: string
+  userData?: Record<string, unknown>
+  scale?: { x?: number; y?: number; z?: number }
+}): boolean {
+  if (!obj) return false
+  const ud = obj.userData || {}
+  if (
+    ud.isDynamicSky === true ||
+    ud.isSun === true ||
+    ud.isMoon === true ||
+    ud.isParticleSystem === true
+  ) {
+    return true
+  }
+  const name = normalizeExportObjectName(obj.name)
+  if (name.includes('dynamic_sky') || name === 'dynamicsky') return true
+  const maxScale = Math.max(
+    Math.abs(obj.scale?.x ?? 1),
+    Math.abs(obj.scale?.y ?? 1),
+    Math.abs(obj.scale?.z ?? 1)
+  )
+  if (maxScale >= WEB_EXPORT_MAX_SUBJECT_EXTENT) return true
+  return false
+}
+
+/** Meshes to skip when computing car / subject bounds for shadow plane */
+export function shouldExcludeFromSubjectBounds(obj: {
+  name?: string
+  userData?: Record<string, unknown>
+  type?: string
+  geometry?: { parameters?: { radius?: number; width?: number; height?: number } }
+}): boolean {
+  if (!obj) return true
+  const ud = obj.userData || {}
+  if (
+    ud.isDynamicSky === true ||
+    ud.isSun === true ||
+    ud.isMoon === true ||
+    ud.isParticleSystem === true ||
+    ud.isShadowPlane === true ||
+    ud.isGroundedSkybox === true ||
+    ud.isHelper === true
+  ) {
+    return true
+  }
+  const name = normalizeExportObjectName(obj.name)
+  if (
+    name.includes('dynamic_sky') ||
+    name.includes('shadow_plane') ||
+    name.includes('shadowplane') ||
+    name.includes('helper') ||
+    name.includes('gizmo')
+  ) {
+    return true
+  }
+  const type = obj.type || ''
+  if (type.includes('Helper')) return true
+  const params = obj.geometry?.parameters
+  if (params && typeof params.radius === 'number' && params.radius > WEB_EXPORT_MAX_SUBJECT_EXTENT) {
+    return true
+  }
+  if (params) {
+    const w = typeof params.width === 'number' ? params.width : 0
+    const h = typeof params.height === 'number' ? params.height : 0
+    if (Math.max(w, h) > WEB_EXPORT_MAX_SUBJECT_EXTENT * 2) return true
+  }
+  return false
+}
 
 export interface WebExportWeatherConfig {
   enableStandaloneWeather?: boolean
@@ -133,6 +211,117 @@ export function generateWebExportWeatherRuntimeJs(): string {
     const WEB_EXPORT_WEATHER_GROUND_LEVEL = ${WEB_EXPORT_WEATHER_GROUND_LEVEL};
     const WEB_EXPORT_SKY_SPHERE_RADIUS = ${WEB_EXPORT_SKY_SPHERE_RADIUS};
     const WEB_EXPORT_MIN_CAMERA_FAR = ${WEB_EXPORT_MIN_CAMERA_FAR};
+    const WEB_EXPORT_MAX_SUBJECT_EXTENT = ${WEB_EXPORT_MAX_SUBJECT_EXTENT};
+    const WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS = ${WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS};
+
+    function resolveExportAssetUrl(relativePath) {
+      if (!relativePath) return relativePath;
+      if (/^(blob:|https?:|data:)/i.test(relativePath)) return relativePath;
+      const assetMap = window.__webExportAssetUrls;
+      if (assetMap) {
+        if (assetMap[relativePath]) return assetMap[relativePath];
+        const stripped = relativePath.replace(/^\\.\\//, '');
+        if (assetMap[stripped]) return assetMap[stripped];
+        if (assetMap['./' + stripped]) return assetMap['./' + stripped];
+      }
+      const configured = CONFIG && CONFIG.assets;
+      if (configured) {
+        if (relativePath.indexOf('environment.hdr') !== -1 && configured.hdrUrl) return configured.hdrUrl;
+        if (relativePath.indexOf('model.glb') !== -1 && configured.modelUrl) return configured.modelUrl;
+      }
+      const base = (configured && configured.basePath) || window.__webExportBaseUrl || document.baseURI || window.location.href;
+      try {
+        return new URL(relativePath, base).href;
+      } catch (e) {
+        console.warn('[WebExport] Failed to resolve asset URL:', relativePath, e);
+        return relativePath;
+      }
+    }
+
+    function webExportNormalizeObjectName(name) {
+      return (name || '').toLowerCase().replace(/\\s+/g, '_');
+    }
+
+    function isExportedWeatherMesh(obj) {
+      if (!obj) return false;
+      const ud = obj.userData || {};
+      if (ud.isDynamicSky || ud.isSun || ud.isMoon || ud.isParticleSystem) return true;
+      const name = webExportNormalizeObjectName(obj.name);
+      if (name.indexOf('dynamic_sky') !== -1 || name === 'dynamicsky') return true;
+      const maxScale = Math.max(Math.abs(obj.scale?.x || 1), Math.abs(obj.scale?.y || 1), Math.abs(obj.scale?.z || 1));
+      if (maxScale >= WEB_EXPORT_MAX_SUBJECT_EXTENT) return true;
+      if (obj instanceof THREE.Mesh && obj.geometry && obj.geometry.parameters) {
+        const radius = obj.geometry.parameters.radius;
+        if (typeof radius === 'number' && radius >= WEB_EXPORT_MAX_SUBJECT_EXTENT) return true;
+      }
+      return false;
+    }
+
+    function shouldExcludeFromSubjectBounds(obj) {
+      if (!obj) return true;
+      if (isExportedWeatherMesh(obj)) return true;
+      const ud = obj.userData || {};
+      if (ud.isShadowPlane || ud.isGroundedSkybox || ud.isHelper) return true;
+      const name = webExportNormalizeObjectName(obj.name);
+      if (name.indexOf('shadow_plane') !== -1 || name.indexOf('shadowplane') !== -1) return true;
+      if (name.indexOf('helper') !== -1 || name.indexOf('gizmo') !== -1) return true;
+      const type = obj.type || '';
+      if (type.indexOf('Helper') !== -1) return true;
+      if (obj instanceof THREE.Mesh && obj.geometry && obj.geometry.parameters) {
+        const params = obj.geometry.parameters;
+        if (typeof params.radius === 'number' && params.radius > WEB_EXPORT_MAX_SUBJECT_EXTENT) return true;
+        const w = typeof params.width === 'number' ? params.width : 0;
+        const h = typeof params.height === 'number' ? params.height : 0;
+        if (Math.max(w, h) > WEB_EXPORT_MAX_SUBJECT_EXTENT * 2) return true;
+      }
+      return false;
+    }
+
+    function removeExportedWeatherMeshes(root) {
+      if (!root) return 0;
+      const toRemove = [];
+      root.traverse(function(obj) {
+        if (isExportedWeatherMesh(obj)) toRemove.push(obj);
+      });
+      toRemove.forEach(function(obj) {
+        if (obj.parent) obj.parent.remove(obj);
+        if (obj.geometry && obj.geometry.dispose) obj.geometry.dispose();
+        const mats = obj.material ? (Array.isArray(obj.material) ? obj.material : [obj.material]) : [];
+        mats.forEach(function(mat) { if (mat && mat.dispose) mat.dispose(); });
+      });
+      if (toRemove.length > 0) {
+        console.log('[WebExport] Removed', toRemove.length, 'exported weather mesh(es) — runtime weather owns the sky');
+      }
+      return toRemove.length;
+    }
+
+    function findSubjectRoot(gltfScene) {
+      if (!gltfScene || !gltfScene.children) return gltfScene;
+      for (let i = 0; i < gltfScene.children.length; i++) {
+        const child = gltfScene.children[i];
+        if (isExportedWeatherMesh(child) || shouldExcludeFromSubjectBounds(child)) continue;
+        return child;
+      }
+      return gltfScene;
+    }
+
+    function computeSubjectBounds(root) {
+      const box = new THREE.Box3();
+      let hasAny = false;
+      if (!root) return box;
+      root.traverse(function(obj) {
+        if (!(obj instanceof THREE.Mesh)) return;
+        if (shouldExcludeFromSubjectBounds(obj)) return;
+        const meshBox = new THREE.Box3().setFromObject(obj);
+        if (meshBox.isEmpty()) return;
+        const size = meshBox.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        if (maxDim > WEB_EXPORT_MAX_SUBJECT_EXTENT * 2) return;
+        if (!hasAny) { box.copy(meshBox); hasAny = true; }
+        else box.union(meshBox);
+      });
+      return box;
+    }
 
     function normalizeWebExportWeatherConfig(raw) {
       if (!raw || typeof raw !== 'object') return {};
@@ -489,6 +678,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
       }
 
       const { scene, camera, renderer } = ctx;
+      removeExportedWeatherMeshes(scene);
       const hdrConfig = CONFIG.hdr || {};
       const groundProjectionEnabled = hdrConfig.groundProjectionEnabled === true;
       const hdrActive = hdrConfig.enabled !== false && (hdrConfig.enabled === true || !!window.__hdrTextureLoaded);

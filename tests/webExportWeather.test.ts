@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   generateWebExportWeatherRuntimeJs,
+  isExportedWeatherMeshLike,
   isWeatherExportActive,
   isWebExportStandaloneSkyActive,
   normalizeWebExportWeatherConfig,
+  shouldExcludeFromSubjectBounds,
   WEB_EXPORT_FOG_DENSITY_SCALE,
+  WEB_EXPORT_MAX_SUBJECT_EXTENT,
   WEB_EXPORT_MIN_CAMERA_FAR,
+  WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS,
   WEB_EXPORT_SKY_SPHERE_RADIUS
 } from '../src/utils/webExportWeatherRuntime'
 
@@ -79,11 +83,37 @@ describe('webExportWeatherRuntime', () => {
     expect(js).toContain(String(WEB_EXPORT_FOG_DENSITY_SCALE))
     expect(js).toContain(String(WEB_EXPORT_SKY_SPHERE_RADIUS))
     expect(js).toContain(String(WEB_EXPORT_MIN_CAMERA_FAR))
+    expect(js).toContain(String(WEB_EXPORT_MAX_SUBJECT_EXTENT))
+    expect(js).toContain(String(WEB_EXPORT_SHADOW_PLANE_MAX_RADIUS))
     expect(js).toContain('function initializeWebExportWeather')
     expect(js).toContain('function updateWebExportWeather')
     expect(js).toContain('function webExportIsStandaloneSkyActive')
+    expect(js).toContain('function resolveExportAssetUrl')
+    expect(js).toContain('function removeExportedWeatherMeshes')
+    expect(js).toContain('function computeSubjectBounds')
     expect(js).toContain('enableStandaloneWeather')
     expect(js).toContain('new Sky()')
     expect(js).toContain('Weather initialized ✓')
+  })
+
+  it('detects exported editor DynamicSky meshes by flag, name, and scale', () => {
+    expect(isExportedWeatherMeshLike({ userData: { isDynamicSky: true } })).toBe(true)
+    expect(isExportedWeatherMeshLike({ name: 'Dynamic Sky' })).toBe(true)
+    expect(isExportedWeatherMeshLike({ name: 'Dynamic_Sky', scale: { x: 1, y: 1, z: 1 } })).toBe(true)
+    expect(isExportedWeatherMeshLike({ name: 'CarBody', scale: { x: 1, y: 1, z: 1 } })).toBe(false)
+    expect(
+      isExportedWeatherMeshLike({ name: 'Sky', scale: { x: WEB_EXPORT_MAX_SUBJECT_EXTENT, y: 1, z: 1 } })
+    ).toBe(true)
+  })
+
+  it('excludes sky domes and helpers from subject bounds', () => {
+    expect(shouldExcludeFromSubjectBounds({ userData: { isDynamicSky: true } })).toBe(true)
+    expect(shouldExcludeFromSubjectBounds({ name: 'Dynamic_Sky' })).toBe(true)
+    expect(
+      shouldExcludeFromSubjectBounds({
+        geometry: { parameters: { radius: WEB_EXPORT_MAX_SUBJECT_EXTENT + 1 } }
+      })
+    ).toBe(true)
+    expect(shouldExcludeFromSubjectBounds({ name: 'Body_Mesh' })).toBe(false)
   })
 })
