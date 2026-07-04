@@ -19,6 +19,7 @@ import { getSharedViewer } from '../viewer/useViewer'
 import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
 import { getCameraBoundsClampSource } from '../viewer/utils/cameraBounds'
 import { ExportWorkerPool } from './webExportWorker'
+import { generateHotspotMarkerRuntimeJs } from './hotspotMarkerRuntime'
 
 export interface WebExportOptions {
   includeModel: boolean
@@ -2548,6 +2549,8 @@ export function createStandaloneViewerHTML(
       return match ? match[1] : null;
     }
     
+    ${generateHotspotMarkerRuntimeJs()}
+
     // Helper function to wrap text (matches main viewer)
     function wrapText(ctx, text, maxWidth) {
       const words = text.split(' ');
@@ -3161,337 +3164,14 @@ export function createStandaloneViewerHTML(
       
       hotspots.forEach((hotspot) => {
         try {
-          // Create hotspot marker (sprite) unless icon is explicitly disabled
+          // Create hotspot marker (shared runtime with editor — fixed screen size)
           const position = new THREE.Vector3(
             hotspot.position.x,
             hotspot.position.y,
             hotspot.position.z
           );
-          
-          // Respect per-hotspot icon visibility flag from editor
           const showIcon = hotspot.showIcon !== false;
-          
-          // Create marker (matches main viewer implementation)
-          let texture;
-          let iconForMarker = null;
-          
-          if (showIcon && hotspot.icon) {
-            if (hotspot.icon.type === 'symbol') {
-              iconForMarker = { type: 'default', value: hotspot.icon.value };
-            } else if (hotspot.icon.type === 'custom-image') {
-              iconForMarker = { type: 'custom-image', value: hotspot.icon.value };
-            } else if (hotspot.icon.type === 'default' || hotspot.icon.type === 'emoji' || hotspot.icon.type === 'custom') {
-              iconForMarker = { type: hotspot.icon.type, value: hotspot.icon.value };
-            }
-          }
-          
-          // Create icon texture based on type (matches main viewer)
-          if (showIcon && iconForMarker) {
-            if (iconForMarker.type === 'emoji') {
-              // Create emoji icon texture (matches main viewer)
-              const size = 256;
-              const canvas = document.createElement('canvas');
-              canvas.width = canvas.height = size;
-              const ctx = canvas.getContext('2d');
-              ctx.clearRect(0, 0, size, size);
-              
-              // Modern gradient circle with enhanced shadow and glow
-              ctx.save();
-              ctx.translate(size / 2, size / 2);
-              
-              // Enhanced shadow with blur
-              ctx.save();
-              ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-              ctx.shadowBlur = size * 0.1;
-              ctx.shadowOffsetX = 0;
-              ctx.shadowOffsetY = size * 0.03;
-              ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-              ctx.beginPath();
-              ctx.arc(0, size * 0.02, size * 0.38, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.restore();
-              
-              // Modern gradient background (glass morphism style)
-              const gradient = ctx.createRadialGradient(-size * 0.2, -size * 0.2, 0, 0, 0, size * 0.4);
-              gradient.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
-              gradient.addColorStop(0.5, 'rgba(245, 245, 250, 0.9)');
-              gradient.addColorStop(1, 'rgba(235, 235, 245, 0.85)');
-              ctx.fillStyle = gradient;
-              ctx.beginPath();
-              ctx.arc(0, 0, size * 0.38, 0, Math.PI * 2);
-              ctx.fill();
-              
-              // Modern subtle border with gradient
-              const borderGradient = ctx.createLinearGradient(-size * 0.4, -size * 0.4, size * 0.4, size * 0.4);
-              borderGradient.addColorStop(0, 'rgba(200, 200, 220, 0.4)');
-              borderGradient.addColorStop(1, 'rgba(180, 180, 200, 0.3)');
-              ctx.strokeStyle = borderGradient;
-              ctx.lineWidth = size * 0.025;
-              ctx.stroke();
-              
-              // Subtle highlight for depth
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-              ctx.beginPath();
-              ctx.arc(-size * 0.1, -size * 0.1, size * 0.15, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.restore();
-              
-              // Draw emoji
-              ctx.save();
-              ctx.translate(size / 2, size / 2);
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.font = 'bold ' + (size * 0.5) + 'px \\"Segoe UI Emoji\\", \\"Apple Color Emoji\\", \\"Noto Color Emoji\\", sans-serif';
-              ctx.fillText(iconForMarker.value, 0, 0);
-              ctx.restore();
-              
-              texture = new THREE.CanvasTexture(canvas);
-              texture.colorSpace = THREE.SRGBColorSpace;
-              texture.generateMipmaps = true;
-              texture.needsUpdate = true;
-            } else if (iconForMarker.type === 'custom-image') {
-              // For custom images, create a simple placeholder for now
-              // In a full implementation, we'd load the image asynchronously
-              const size = 256;
-              const canvas = document.createElement('canvas');
-              canvas.width = canvas.height = size;
-              const ctx = canvas.getContext('2d');
-              ctx.clearRect(0, 0, size, size);
-              
-              // Draw shadow
-              ctx.save();
-              ctx.translate(size / 2, size / 2);
-              ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-              ctx.beginPath();
-              ctx.arc(0, size * 0.02, size * 0.38, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.restore();
-              
-              // Draw placeholder circle
-              ctx.save();
-              ctx.translate(size / 2, size / 2);
-              ctx.fillStyle = '#cccccc';
-              ctx.beginPath();
-              ctx.arc(0, 0, size * 0.38, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.strokeStyle = '#999999';
-              ctx.lineWidth = size * 0.02;
-              ctx.stroke();
-              ctx.restore();
-              
-              texture = new THREE.CanvasTexture(canvas);
-              texture.colorSpace = THREE.SRGBColorSpace;
-              texture.generateMipmaps = true;
-              texture.needsUpdate = true;
-            } else {
-              // Default icon (matches main viewer)
-              const size = 256;
-              const canvas = document.createElement('canvas');
-              canvas.width = canvas.height = size;
-              const ctx = canvas.getContext('2d');
-              ctx.clearRect(0, 0, size, size);
-              
-              const cx = size / 2;
-              const cy = size / 2;
-              const radius = size * 0.35;
-              
-              // Perfect circular shadow below
-              ctx.save();
-              ctx.translate(cx, cy + size * 0.02);
-              const shadowRadius = radius * 1.2;
-              const shadowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, shadowRadius);
-              shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.2)');
-              shadowGradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.1)');
-              shadowGradient.addColorStop(0.8, 'rgba(0, 0, 0, 0.05)');
-              shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-              ctx.fillStyle = shadowGradient;
-              ctx.beginPath();
-              ctx.arc(0, 0, shadowRadius, 0, Math.PI * 2, false);
-              ctx.fill();
-              ctx.restore();
-              
-              // Main circle - modern gradient (blue to cyan)
-              ctx.save();
-              ctx.translate(cx, cy);
-              
-              // Outer glow
-              const glowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.3);
-              glowGradient.addColorStop(0, 'rgba(74, 158, 255, 0.2)');
-              glowGradient.addColorStop(0.6, 'rgba(74, 158, 255, 0.1)');
-              glowGradient.addColorStop(1, 'rgba(74, 158, 255, 0)');
-              ctx.fillStyle = glowGradient;
-              ctx.beginPath();
-              ctx.arc(0, 0, radius * 1.3, 0, Math.PI * 2);
-              ctx.fill();
-              
-              // Main circle with modern gradient
-              const circleGradient = ctx.createRadialGradient(-radius * 0.3, -radius * 0.3, 0, 0, 0, radius);
-              circleGradient.addColorStop(0, '#4a9eff');
-              circleGradient.addColorStop(0.5, '#3d8bf0');
-              circleGradient.addColorStop(1, '#2d6cd9');
-              ctx.fillStyle = circleGradient;
-              ctx.beginPath();
-              ctx.arc(0, 0, radius, 0, Math.PI * 2);
-              ctx.fill();
-              
-              // Subtle border
-              const borderGradient = ctx.createLinearGradient(-radius, -radius, radius, radius);
-              borderGradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
-              borderGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.1)');
-              borderGradient.addColorStop(1, 'rgba(200, 220, 255, 0.2)');
-              ctx.strokeStyle = borderGradient;
-              ctx.lineWidth = size * 0.015;
-              ctx.stroke();
-              
-              // Inner highlight
-              const highlightGradient = ctx.createRadialGradient(-radius * 0.4, -radius * 0.4, 0, -radius * 0.2, -radius * 0.2, radius * 0.5);
-              highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.4)');
-              highlightGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.15)');
-              highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-              ctx.fillStyle = highlightGradient;
-              ctx.beginPath();
-              ctx.arc(-radius * 0.2, -radius * 0.2, radius * 0.5, 0, Math.PI * 2);
-              ctx.fill();
-              
-              // Center dot
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-              ctx.beginPath();
-              ctx.arc(0, 0, radius * 0.15, 0, Math.PI * 2);
-              ctx.fill();
-              
-              ctx.restore();
-              
-              texture = new THREE.CanvasTexture(canvas);
-              texture.colorSpace = THREE.SRGBColorSpace;
-              texture.generateMipmaps = true;
-              texture.needsUpdate = true;
-            }
-          } else {
-            // No icon specified, use default
-            const size = 256;
-            const canvas = document.createElement('canvas');
-            canvas.width = canvas.height = size;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, size, size);
-            
-            const cx = size / 2;
-            const cy = size / 2;
-            const radius = size * 0.35;
-            
-            // Same default icon creation as above
-            ctx.save();
-            ctx.translate(cx, cy + size * 0.02);
-            const shadowRadius = radius * 1.2;
-            const shadowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, shadowRadius);
-            shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.2)');
-            shadowGradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.1)');
-            shadowGradient.addColorStop(0.8, 'rgba(0, 0, 0, 0.05)');
-            shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-            ctx.fillStyle = shadowGradient;
-            ctx.beginPath();
-            ctx.arc(0, 0, shadowRadius, 0, Math.PI * 2, false);
-            ctx.fill();
-            ctx.restore();
-            
-            ctx.save();
-            ctx.translate(cx, cy);
-            const glowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.3);
-            glowGradient.addColorStop(0, 'rgba(74, 158, 255, 0.2)');
-            glowGradient.addColorStop(0.6, 'rgba(74, 158, 255, 0.1)');
-            glowGradient.addColorStop(1, 'rgba(74, 158, 255, 0)');
-            ctx.fillStyle = glowGradient;
-            ctx.beginPath();
-            ctx.arc(0, 0, radius * 1.3, 0, Math.PI * 2);
-            ctx.fill();
-            
-            const circleGradient = ctx.createRadialGradient(-radius * 0.3, -radius * 0.3, 0, 0, 0, radius);
-            circleGradient.addColorStop(0, '#4a9eff');
-            circleGradient.addColorStop(0.5, '#3d8bf0');
-            circleGradient.addColorStop(1, '#2d6cd9');
-            ctx.fillStyle = circleGradient;
-            ctx.beginPath();
-            ctx.arc(0, 0, radius, 0, Math.PI * 2);
-            ctx.fill();
-            
-            const borderGradient = ctx.createLinearGradient(-radius, -radius, radius, radius);
-            borderGradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
-            borderGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.1)');
-            borderGradient.addColorStop(1, 'rgba(200, 220, 255, 0.2)');
-            ctx.strokeStyle = borderGradient;
-            ctx.lineWidth = size * 0.015;
-            ctx.stroke();
-            
-            const highlightGradient = ctx.createRadialGradient(-radius * 0.4, -radius * 0.4, 0, -radius * 0.2, -radius * 0.2, radius * 0.5);
-            highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.4)');
-            highlightGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.15)');
-            highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-            ctx.fillStyle = highlightGradient;
-            ctx.beginPath();
-            ctx.arc(-radius * 0.2, -radius * 0.2, radius * 0.5, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-            ctx.beginPath();
-            ctx.arc(0, 0, radius * 0.15, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-            
-            texture = new THREE.CanvasTexture(canvas);
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.generateMipmaps = true;
-            texture.needsUpdate = true;
-          }
-          
-          // Create sprite material and sprite (matches main viewer)
-          const spriteMaterial = new THREE.SpriteMaterial({
-            map: texture,
-            transparent: true,
-            depthTest: true,
-            depthWrite: false,
-            sizeAttenuation: true,
-            opacity: 1.0
-          });
-          
-          const sprite = new THREE.Sprite(spriteMaterial);
-          sprite.position.set(0, 0, 0); // Relative to group
-          sprite.scale.setScalar(1.2); // Matches main viewer scale
-          sprite.renderOrder = 1000; // Matches main viewer
-          sprite.userData.isHotspot = true;
-          sprite.userData.hotspotId = hotspot.id;
-          sprite.userData.hotspotName = hotspot.name;
-          sprite.userData.baseScale = 1.2;
-          // Hide sprite entirely when showIcon is false (helper sphere still used for interactions)
-          sprite.visible = showIcon;
-          
-          // Create invisible helper sphere for easier clicking (matches main viewer)
-          const helperGeometry = new THREE.SphereGeometry(0.3, 16, 16);
-          const helperMaterial = new THREE.MeshBasicMaterial({
-            visible: false,
-            transparent: true,
-            opacity: 0
-          });
-          const helperSphere = new THREE.Mesh(helperGeometry, helperMaterial);
-          helperSphere.position.set(0, 0, 0); // Relative to group
-          helperSphere.renderOrder = 999;
-          helperSphere.userData.isHotspot = true;
-          helperSphere.userData.hotspotId = hotspot.id;
-          helperSphere.userData.hotspotName = hotspot.name;
-          helperSphere.userData.isHotspotHelper = true;
-          helperSphere.userData.associatedSprite = sprite;
-          sprite.userData.helperSphere = helperSphere;
-          
-          // Create group to hold both sprite and helper (matches main viewer)
-          const group = new THREE.Group();
-          group.add(sprite);
-          group.add(helperSphere);
-          group.position.copy(position);
-          group.userData.isHotspot = true;
-          group.userData.hotspotId = hotspot.id;
-          group.userData.hotspotName = hotspot.name;
-          group.userData.baseScale = 1.2;
-          group.userData.hotspotSprite = sprite;
-          group.userData.hotspotHelper = helperSphere;
-          
+          const group = createHotspotMarkerGroup(hotspot, position, showIcon);
           scene.add(group);
           
           // Create label if hotspot has label (matches main viewer implementation)
@@ -6953,7 +6633,9 @@ export function createStandaloneViewerHTML(
             } else if (obj.userData.isHotspotPanel && obj.userData.isBillboard && !obj.userData.isCSS3DPanel) {
               // Canvas-based hotspot panels (Mesh with isBillboard but not CSS3D)
               canvasPanels.add(obj);
-            } else if (obj instanceof THREE.Sprite && obj.userData.isHotspotMarker) {
+            } else if (obj instanceof THREE.Sprite && obj.userData.isHotspot && obj.userData.isHotspotMarker) {
+              hotspotSprites.add(obj);
+            } else if (obj instanceof THREE.Sprite && obj.userData.isHotspot && !obj.userData.isHotspotLabel && !obj.userData.isHotspotHelper) {
               hotspotSprites.add(obj);
             } else if (obj.userData.isHotspotLabel) {
               hotspotLabels.add(obj);

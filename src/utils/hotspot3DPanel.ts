@@ -1515,7 +1515,7 @@ export function createHotspot3DPanel(
 }
 
 /**
- * Create a custom icon texture for hotspot markers
+ * @deprecated Use createHotspotIconTexture from hotspotUtils instead
  */
 export function createHotspotIconTexture(
   iconType: 'default' | 'custom' | 'symbol',

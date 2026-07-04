@@ -1,9 +1,40 @@
 import * as THREE from 'three'
+import {
+  HOTSPOT_MARKER_SCALE,
+  HOTSPOT_MARKER_SIZE_ATTENUATION,
+  HOTSPOT_HELPER_SPHERE_RADIUS,
+  HOTSPOT_ICON_TEXTURE_SIZE
+} from './hotspotMarkerRuntime'
+
+export {
+  HOTSPOT_MARKER_SCALE,
+  HOTSPOT_MARKER_SIZE_ATTENUATION,
+  HOTSPOT_HELPER_SPHERE_RADIUS,
+  HOTSPOT_ICON_TEXTURE_SIZE
+} from './hotspotMarkerRuntime'
 
 /**
  * Icon types for hotspots
  */
 export type HotspotIconType = 'default' | 'emoji' | 'custom' | 'custom-image'
+
+export type HotspotIconConfig = { type: HotspotIconType; value: string }
+
+export function resolveHotspotIconForMarker(
+  icon?: { type: string; value: string }
+): HotspotIconConfig | undefined {
+  if (!icon) return undefined
+  if (icon.type === 'symbol') return { type: 'default', value: icon.value }
+  if (icon.type === 'custom-image') return { type: 'custom-image', value: icon.value }
+  if (icon.type === 'default' || icon.type === 'emoji' || icon.type === 'custom') {
+    return { type: icon.type, value: icon.value }
+  }
+  return undefined
+}
+
+export function getHotspotIconKey(icon?: HotspotIconConfig): string {
+  return icon ? `${icon.type}:${icon.value}` : 'default'
+}
 
 /**
  * Create a hotspot icon texture from emoji
@@ -283,49 +314,50 @@ export const POPULAR_EMOJIS = [
 /**
  * Create a 3D hotspot marker (sprite that always faces camera with helper sphere for easier clicking)
  */
+export async function createHotspotIconTextureForType(
+  icon?: HotspotIconConfig
+): Promise<THREE.Texture> {
+  if (icon?.type === 'emoji') {
+    return createEmojiIconTexture(icon.value, HOTSPOT_ICON_TEXTURE_SIZE)
+  }
+  if (icon?.type === 'custom-image') {
+    return createCustomImageIconTexture(icon.value, HOTSPOT_ICON_TEXTURE_SIZE)
+  }
+  return createHotspotIconTexture()
+}
+
 export async function createHotspotMarker(
   position: THREE.Vector3,
   id: string,
   name: string,
-  icon?: { type: HotspotIconType; value: string }
+  icon?: HotspotIconConfig,
+  options: { showIcon?: boolean } = {}
 ): Promise<THREE.Group> {
-  let texture: THREE.CanvasTexture | THREE.Texture
-
-  if (icon) {
-    if (icon.type === 'emoji') {
-      texture = createEmojiIconTexture(icon.value)
-    } else if (icon.type === 'custom-image') {
-      texture = await createCustomImageIconTexture(icon.value)
-    } else {
-      // Default or custom (use default for now)
-      texture = createHotspotIconTexture()
-    }
-  } else {
-    texture = createHotspotIconTexture()
-  }
+  const showIcon = options.showIcon !== false
+  const texture = await createHotspotIconTextureForType(icon)
 
   const material = new THREE.SpriteMaterial({
     map: texture,
     transparent: true,
-    depthTest: true, // Changed to true for better visibility
+    depthTest: true,
     depthWrite: false,
-    sizeAttenuation: true,
-    opacity: 1.0 // Increased opacity for better visibility
+    sizeAttenuation: HOTSPOT_MARKER_SIZE_ATTENUATION,
+    opacity: 1.0
   })
 
   const sprite = new THREE.Sprite(material)
-  sprite.position.set(0, 0, 0) // Relative to group (group will be positioned)
-  // Reasonable size to avoid taking too much space
-  sprite.scale.setScalar(1.2) // Adjusted for better spacing
-  sprite.renderOrder = 1000 // Render on top
+  sprite.position.set(0, 0, 0)
+  sprite.scale.setScalar(HOTSPOT_MARKER_SCALE)
+  sprite.renderOrder = 1000
   sprite.userData.isHotspot = true
+  sprite.userData.isHotspotMarker = true
   sprite.userData.hotspotId = id
   sprite.userData.hotspotName = name
-  sprite.userData.baseScale = 1.2 // Store base scale for hover effects
-  sprite.visible = true // Ensure visibility
+  sprite.userData.baseScale = HOTSPOT_MARKER_SCALE
+  sprite.userData.iconKey = getHotspotIconKey(icon)
+  sprite.visible = showIcon
   
-  // Create invisible helper sphere for easier clicking (larger hit area)
-  const helperGeometry = new THREE.SphereGeometry(0.3, 16, 16) // Invisible helper sphere
+  const helperGeometry = new THREE.SphereGeometry(HOTSPOT_HELPER_SPHERE_RADIUS, 16, 16)
   const helperMaterial = new THREE.MeshBasicMaterial({
     visible: false, // Invisible but still clickable
     transparent: true,
@@ -349,11 +381,33 @@ export async function createHotspotMarker(
   group.userData.isHotspot = true
   group.userData.hotspotId = id
   group.userData.hotspotName = name
-  group.userData.baseScale = 1.2
+  group.userData.baseScale = HOTSPOT_MARKER_SCALE
   group.userData.hotspotSprite = sprite
   group.userData.hotspotHelper = helperSphere
 
-  return group as any // Return group instead of sprite for easier interaction
+  return group
+}
+
+/** Apply shared marker scale/material settings to an existing hotspot sprite */
+export function syncHotspotMarkerAppearance(
+  sprite: THREE.Sprite,
+  options: { showIcon?: boolean; iconKey?: string } = {}
+): void {
+  if (options.showIcon !== undefined) {
+    sprite.visible = options.showIcon
+  }
+  const material = sprite.material as THREE.SpriteMaterial
+  if (material.sizeAttenuation !== HOTSPOT_MARKER_SIZE_ATTENUATION) {
+    material.sizeAttenuation = HOTSPOT_MARKER_SIZE_ATTENUATION
+    material.needsUpdate = true
+  }
+  if (Math.abs(sprite.scale.x - HOTSPOT_MARKER_SCALE) > 0.0001) {
+    sprite.scale.setScalar(HOTSPOT_MARKER_SCALE)
+    sprite.userData.baseScale = HOTSPOT_MARKER_SCALE
+  }
+  if (options.iconKey !== undefined) {
+    sprite.userData.iconKey = options.iconKey
+  }
 }
 
 /**

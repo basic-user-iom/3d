@@ -4,9 +4,9 @@ import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
-import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS } from '../utils/hotspotUtils'
+import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS, resolveHotspotIconForMarker, getHotspotIconKey, createHotspotIconTextureForType, syncHotspotMarkerAppearance } from '../utils/hotspotUtils'
 import { createHotspotLabelObject, updateHotspotLabelTexture } from '../utils/hotspotLabel'
-import { createHotspot3DPanel, updateHotspot3DPanelTexture, updateHotspotCSS3DPanelStyle, createHotspotIconTexture, cleanupVideoResourcesForCanvas, cleanupAllVideoResources, type Hotspot3DPanelConfig } from '../utils/hotspot3DPanel'
+import { createHotspot3DPanel, updateHotspot3DPanelTexture, updateHotspotCSS3DPanelStyle, cleanupVideoResourcesForCanvas, cleanupAllVideoResources, type Hotspot3DPanelConfig } from '../utils/hotspot3DPanel'
 import HotspotPopup from './HotspotPopup'
 import './HotspotsPanel.css'
 
@@ -487,7 +487,38 @@ export default function HotspotsPanel() {
     labelOffsetY,
     labelFaceCamera
   ])
-  
+
+  // Real-time preview: sync icon visibility and type while editing
+  useEffect(() => {
+    if (!editingHotspotId) return
+
+    const timeoutId = setTimeout(() => {
+      setHotspots(prev => {
+        const hotspot = prev.find(h => h.id === editingHotspotId)
+        if (!hotspot) return prev
+
+        const nextIcon = iconType !== 'default' ? { type: iconType, value: iconValue } : undefined
+        const iconChanged =
+          hotspot.showIcon !== showHotspotIcon ||
+          JSON.stringify(hotspot.icon) !== JSON.stringify(nextIcon)
+
+        if (!iconChanged) return prev
+
+        return prev.map(h =>
+          h.id === editingHotspotId
+            ? {
+                ...h,
+                showIcon: showHotspotIcon,
+                icon: nextIcon
+              }
+            : h
+        )
+      })
+    }, 100)
+
+    return () => clearTimeout(timeoutId)
+  }, [editingHotspotId, showHotspotIcon, iconType, iconValue])
+
   // Real-time preview: Update hotspot content data when contentData changes
   useEffect(() => {
     if (!editingHotspotId || !contentData) return
@@ -925,44 +956,14 @@ export default function HotspotsPanel() {
           })
           
           if (!finalCheck) {
-            // Convert icon type to match HotspotIconType (convert 'symbol' to 'default', map 'custom-image' to 'custom-image')
-            let iconForMarker: { type: 'default' | 'emoji' | 'custom' | 'custom-image'; value: string } | undefined
-            // If this hotspot is configured to hide its icon, remove any existing marker and skip creation
-            if (hotspot.showIcon === false) {
-              const objectsToRemove: THREE.Object3D[] = []
-              viewer.scene.traverse((obj) => {
-                if (obj.userData?.isHotspot && obj.userData?.hotspotId === hotspot.id) {
-                  objectsToRemove.push(obj)
-                }
-              })
-              objectsToRemove.forEach((obj) => {
-                if (obj.parent) {
-                  obj.parent.remove(obj)
-                } else {
-                  viewer.scene.remove(obj)
-                }
-              })
-              if (markersMap.has(hotspot.id)) {
-                markersMap.delete(hotspot.id)
-              }
-              return markersMap
-            }
-
-            if (hotspot.icon) {
-              if (hotspot.icon.type === 'symbol') {
-                iconForMarker = { type: 'default', value: hotspot.icon.value }
-              } else if (hotspot.icon.type === 'custom-image') {
-                iconForMarker = { type: 'custom-image', value: hotspot.icon.value }
-              } else if (hotspot.icon.type === 'default' || hotspot.icon.type === 'emoji' || hotspot.icon.type === 'custom') {
-                iconForMarker = { type: hotspot.icon.type, value: hotspot.icon.value }
-              }
-            }
+            const iconForMarker = resolveHotspotIconForMarker(hotspot.icon)
             
             const createPromise = createHotspotMarker(
             position,
             hotspot.id,
             hotspot.name,
-            iconForMarker
+            iconForMarker,
+            { showIcon: hotspot.showIcon !== false }
           ).then((markerOrGroup) => {
             // Handle both sprites and groups (new helper system)
             // createHotspotMarker always returns a THREE.Group
@@ -1026,6 +1027,49 @@ export default function HotspotsPanel() {
             markerToUpdate.position.set(position.x, position.y, position.z)
           }
           markerToUpdate.updateMatrixWorld(true)
+
+          const hotspotSprite = marker instanceof THREE.Sprite
+            ? marker
+            : (markerToUpdate instanceof THREE.Group
+              ? markerToUpdate.userData.hotspotSprite as THREE.Sprite | undefined
+              : undefined)
+
+          if (hotspotSprite) {
+            const shouldShowIcon = hotspot.showIcon !== false
+            const iconForMarker = resolveHotspotIconForMarker(hotspot.icon)
+            const iconKey = getHotspotIconKey(iconForMarker)
+            syncHotspotMarkerAppearance(hotspotSprite, { showIcon: shouldShowIcon, iconKey })
+
+            if (shouldShowIcon && hotspotSprite.userData.iconKey !== iconKey) {
+              createHotspotIconTextureForType(iconForMarker).then((texture) => {
+                const material = hotspotSprite.material as THREE.SpriteMaterial
+                if (material.map) material.map.dispose()
+                material.map = texture
+                material.needsUpdate = true
+                hotspotSprite.userData.iconKey = iconKey
+              }).catch((error) => {
+                console.error('[HotspotsPanel] Failed to update hotspot icon texture:', error)
+              })
+            }
+          } else if (hotspot.showIcon !== false) {
+            const iconForMarker = resolveHotspotIconForMarker(hotspot.icon)
+            const recreatePromise = createHotspotMarker(
+              position,
+              hotspot.id,
+              hotspot.name,
+              iconForMarker,
+              { showIcon: true }
+            ).then((markerOrGroup) => {
+              markerOrGroup.position.copy(position)
+              markerOrGroup.updateMatrixWorld(true)
+              viewer.scene.add(markerOrGroup)
+              const sprite = markerOrGroup.userData.hotspotSprite || markerOrGroup
+              markersMap.set(hotspot.id, sprite)
+            }).catch((error) => {
+              console.error('[HotspotsPanel] Failed to recreate hotspot marker:', error)
+            })
+            createPromises.push(recreatePromise)
+          }
           
           // Also update label position if it exists (label at marker position)
           const label = labelsMap.get(hotspot.id)
