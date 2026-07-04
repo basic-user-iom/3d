@@ -3620,16 +3620,10 @@ export default function HotspotsPanel() {
                       <div className="hotspot-details">
                         {/* Endpoint Controls */}
                         {hasEndpoint && (
-                          <div className="endpoint-controls" style={{ 
-                            marginTop: '12px', 
-                            padding: '12px', 
-                            background: '#2a2a2a', 
-                            borderRadius: '6px',
-                            border: '1px solid #3a3a3a'
-                          }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                              <h5 style={{ margin: 0, fontSize: '13px', color: '#fff' }}>Line Endpoint</h5>
-                              <div style={{ display: 'flex', gap: '6px' }}>
+                          <div className="endpoint-controls">
+                            <div className="endpoint-controls-header">
+                              <h5>Line Endpoint</h5>
+                              <div className="endpoint-controls-actions">
                                 <button
                                   onClick={() => toggleEndpointVisibility(hotspot.id)}
                                   className="button-icon"
@@ -3657,60 +3651,36 @@ export default function HotspotsPanel() {
                               </div>
                             </div>
                             
-                            <p style={{ fontSize: '11px', color: '#aaa', marginBottom: '10px', marginTop: '0' }}>
+                            <p className="endpoint-controls-desc">
                               Adjust where the line connects to the target object. You can drag the blue sphere in the viewer or use inputs below.
                             </p>
                             
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                              <label style={{ display: 'flex', flexDirection: 'column', fontSize: '11px' }}>
-                                <span style={{ color: '#aaa', marginBottom: '4px' }}>X</span>
+                            <div className="endpoint-coords-grid">
+                              <label className="endpoint-coord-label">
+                                <span>X</span>
                                 <input
                                   type="number"
                                   step="0.1"
                                   value={endpointPos.x.toFixed(2)}
                                   onChange={(e) => updateEndpointPosition(hotspot.id, 'x', parseFloat(e.target.value) || 0)}
-                                  style={{ 
-                                    padding: '6px', 
-                                    background: '#1a1a1a', 
-                                    border: '1px solid #3a3a3a',
-                                    borderRadius: '4px',
-                                    color: '#fff',
-                                    fontSize: '12px'
-                                  }}
                                 />
                               </label>
-                              <label style={{ display: 'flex', flexDirection: 'column', fontSize: '11px' }}>
-                                <span style={{ color: '#aaa', marginBottom: '4px' }}>Y</span>
+                              <label className="endpoint-coord-label">
+                                <span>Y</span>
                                 <input
                                   type="number"
                                   step="0.1"
                                   value={endpointPos.y.toFixed(2)}
                                   onChange={(e) => updateEndpointPosition(hotspot.id, 'y', parseFloat(e.target.value) || 0)}
-                                  style={{ 
-                                    padding: '6px', 
-                                    background: '#1a1a1a', 
-                                    border: '1px solid #3a3a3a',
-                                    borderRadius: '4px',
-                                    color: '#fff',
-                                    fontSize: '12px'
-                                  }}
                                 />
                               </label>
-                              <label style={{ display: 'flex', flexDirection: 'column', fontSize: '11px' }}>
-                                <span style={{ color: '#aaa', marginBottom: '4px' }}>Z</span>
+                              <label className="endpoint-coord-label">
+                                <span>Z</span>
                                 <input
                                   type="number"
                                   step="0.1"
                                   value={endpointPos.z.toFixed(2)}
                                   onChange={(e) => updateEndpointPosition(hotspot.id, 'z', parseFloat(e.target.value) || 0)}
-                                  style={{ 
-                                    padding: '6px', 
-                                    background: '#1a1a1a', 
-                                    border: '1px solid #3a3a3a',
-                                    borderRadius: '4px',
-                                    color: '#fff',
-                                    fontSize: '12px'
-                                  }}
                                 />
                               </label>
                             </div>
