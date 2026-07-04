@@ -6189,7 +6189,9 @@ export function createStandaloneViewerHTML(
               scene.environment = hdrTexture;
               
               const backgroundVisible = hdrConfig.backgroundVisible !== undefined ? hdrConfig.backgroundVisible : true;
-              if (backgroundVisible) {
+              const standaloneSkyWillActivate = typeof webExportIsStandaloneSkyActive === 'function' &&
+                webExportIsStandaloneSkyActive(CONFIG.weather || {}, hdrConfig);
+              if (backgroundVisible && !standaloneSkyWillActivate) {
                 // CRITICAL: Ensure background uses the same texture reference
                 // For HDR backgrounds, ensure tone mapping is applied correctly
                 // The renderer's tone mapping will handle the HDR to display conversion
@@ -6207,6 +6209,9 @@ export function createStandaloneViewerHTML(
                   'Rotation: ' + (hdrTexture.rotation * 180 / Math.PI).toFixed(1) + '°, ' +
                   'Exposure: ' + renderer.toneMappingExposure.toFixed(2) + ', ' +
                   'ColorSpace: ' + (hdrTexture.colorSpace || 'default'));
+              } else if (standaloneSkyWillActivate) {
+                scene.background = null;
+                console.log('HDR background deferred — standalone weather sky will render instead (IBL kept via scene.environment)');
               } else {
                 scene.background = null;
                 console.log('HDR background disabled');
@@ -6394,7 +6399,9 @@ export function createStandaloneViewerHTML(
               scene.environment = hdrTexture;
               
               const backgroundVisible = hdrConfig.backgroundVisible !== undefined ? hdrConfig.backgroundVisible : true;
-              if (backgroundVisible) {
+              const standaloneSkyWillActivate = typeof webExportIsStandaloneSkyActive === 'function' &&
+                webExportIsStandaloneSkyActive(CONFIG.weather || {}, hdrConfig);
+              if (backgroundVisible && !standaloneSkyWillActivate) {
                 // CRITICAL: Ensure background uses the same texture reference
                 // For HDR backgrounds, ensure tone mapping is applied correctly
                 const hdrExposure = hdrConfig.exposure !== undefined ? hdrConfig.exposure : 1.0;
@@ -6409,6 +6416,9 @@ export function createStandaloneViewerHTML(
                   toneMappingExposure: renderer.toneMappingExposure,
                   colorSpace: hdrTexture.colorSpace
                 });
+              } else if (standaloneSkyWillActivate) {
+                scene.background = null;
+                console.log('Reusing HDR (regular mode) - background deferred for standalone weather sky');
               } else {
                 scene.background = null;
                 console.log('Reusing HDR (regular mode) - background disabled');
@@ -7061,17 +7071,15 @@ export function createStandaloneViewerHTML(
                         
                         // Position and scale shadow plane based on car bounds
                         if (carFound) {
-                          const radiusX = carSizeX * 0.75;
-                          const radiusZ = carSizeZ * 0.75;
-                          // CRITICAL: Don't multiply by current scale - this causes exponential growth!
-                          // Reset scale to 1 first, then apply target scale
+                          const radiusX = Math.min(carSizeX * 0.75, 120);
+                          const radiusZ = Math.min(carSizeZ * 0.75, 120);
                           const targetScaleX = radiusX / 5;
                           const targetScaleZ = radiusZ / 5;
                           
                           // Calculate actual shadow plane size (geometry size * scale)
                           const planeGeometrySize = obj.geometry instanceof THREE.PlaneGeometry 
                             ? Math.max(obj.geometry.parameters.width, obj.geometry.parameters.height) 
-                            : 10000;
+                            : 10;
                           const actualPlaneSizeX = planeGeometrySize * targetScaleX;
                           const actualPlaneSizeZ = planeGeometrySize * targetScaleZ;
                           
@@ -7095,26 +7103,36 @@ export function createStandaloneViewerHTML(
                             }
                           }
                           
-                          // CRITICAL: Verify shadow camera covers the shadow plane
-                          // Check all directional lights and ensure their shadow cameras cover the plane
-                          if (frameCount % 300 === 0) {
-                            scene.traverse((light) => {
-                              if (light instanceof THREE.DirectionalLight && light.castShadow && light.shadow) {
-                                const cam = light.shadow.camera;
-                                if (cam.isOrthographicCamera) {
-                                  const camWidth = (cam.right - cam.left) || 0;
-                                  const camHeight = (cam.top - cam.bottom) || 0;
-                                  const planeHalfWidth = actualPlaneSizeX / 2;
-                                  const planeHalfHeight = actualPlaneSizeZ / 2;
-                                  if (camWidth < planeHalfWidth * 2 || camHeight < planeHalfHeight * 2) {
-                                    console.warn('[WebExport] Standard 360 HDR - Shadow camera too small for shadow plane!', 
-                                      'Camera: ' + camWidth.toFixed(2) + 'x' + camHeight.toFixed(2) + ', ' +
+                          // Verify shadow camera covers the shadow plane (warn once, auto-expand if needed)
+                          scene.traverse((light) => {
+                            if (light instanceof THREE.DirectionalLight && light.castShadow && light.shadow) {
+                              const cam = light.shadow.camera;
+                              if (cam.isOrthographicCamera) {
+                                const camWidth = (cam.right - cam.left) || 0;
+                                const camHeight = (cam.top - cam.bottom) || 0;
+                                const planeHalfWidth = actualPlaneSizeX / 2;
+                                const planeHalfHeight = actualPlaneSizeZ / 2;
+                                if (camWidth < planeHalfWidth * 2 || camHeight < planeHalfHeight * 2) {
+                                  const requiredExtent = Math.max(planeHalfWidth, planeHalfHeight) * 1.1;
+                                  if (cam.left !== -requiredExtent || cam.right !== requiredExtent ||
+                                      cam.top !== requiredExtent || cam.bottom !== -requiredExtent) {
+                                    cam.left = -requiredExtent;
+                                    cam.right = requiredExtent;
+                                    cam.top = requiredExtent;
+                                    cam.bottom = -requiredExtent;
+                                    cam.updateProjectionMatrix();
+                                    light.shadow.needsUpdate = true;
+                                  }
+                                  if (!light.userData.__shadowCamWarned) {
+                                    light.userData.__shadowCamWarned = true;
+                                    console.warn('[WebExport] Standard 360 HDR - Expanded shadow camera to cover shadow plane',
+                                      'Camera: ' + (cam.right - cam.left).toFixed(2) + 'x' + (cam.top - cam.bottom).toFixed(2) + ', ' +
                                       'Plane: ' + actualPlaneSizeX.toFixed(2) + 'x' + actualPlaneSizeZ.toFixed(2));
                                   }
                                 }
                               }
-                            });
-                          }
+                            }
+                          });
                         } else {
                           // CRITICAL: Don't reset position if car not found - keep existing position
                           // Only log warning, don't reset to (0,0) as this breaks shadows
@@ -7195,12 +7213,12 @@ export function createStandaloneViewerHTML(
                         obj.updateMatrixWorld(true);
                       }
                       
-                      // Ensure large geometry (10000x10000) - only check every 60 frames
+                      // Keep shadow plane geometry modest (default 10x10) — avoid inflating to 10000
                       if (obj.geometry instanceof THREE.PlaneGeometry && frameCount % 60 === 0) {
                         const currentSize = Math.max(obj.geometry.parameters.width, obj.geometry.parameters.height);
-                        if (currentSize < 10000) {
+                        if (currentSize > 50) {
                           obj.geometry.dispose();
-                          obj.geometry = new THREE.PlaneGeometry(10000, 10000);
+                          obj.geometry = new THREE.PlaneGeometry(10, 10);
                         }
                       }
                     }
@@ -7455,7 +7473,13 @@ export function createStandaloneViewerHTML(
               // Don't create in render loop - it should already exist from initial setup
               // The render loop should only ensure visibility, not create new objects
             } else {
-              // Regular mode: background should be HDR texture if visible
+              // Regular mode: background should be HDR texture if visible (unless standalone weather sky is active)
+              const weatherState = window.__webExportWeather;
+              const weatherConfig = weatherState && weatherState.weather;
+              const standaloneSkyActive = weatherState && weatherState.initialized && weatherConfig &&
+                typeof webExportIsStandaloneSkyActive === 'function' &&
+                webExportIsStandaloneSkyActive(weatherConfig, hdrConfig);
+
               // CRITICAL: Remove ALL GroundedSkybox objects in regular mode
               const skyboxesToRemove = [];
               scene.traverse((obj) => {
@@ -7471,21 +7495,28 @@ export function createStandaloneViewerHTML(
                 });
                 console.log('[WebExport] Removed', skyboxesToRemove.length, 'GroundedSkybox object(s) in render loop (regular mode)');
               }
-              
-              const backgroundVisible = hdrConfig.backgroundVisible !== undefined ? hdrConfig.backgroundVisible : true;
-              if (backgroundVisible && window.__hdrTextureLoaded) {
-                // CRITICAL: Ensure background texture is properly configured
-                const hdrTex = window.__hdrTextureLoaded;
-                if (hdrTex.mapping !== THREE.EquirectangularReflectionMapping) {
-                  hdrTex.mapping = THREE.EquirectangularReflectionMapping;
-                  hdrTex.needsUpdate = true;
+
+              if (standaloneSkyActive) {
+                // Match editor: procedural sky replaces HDR background; keep environment for IBL
+                if (scene.background !== null) {
+                  scene.background = null;
                 }
-                if (scene.background !== hdrTex) {
-                  scene.background = hdrTex;
-                  console.log('[WebExport] Render loop: Set regular 360 HDR background');
+              } else {
+                const backgroundVisible = hdrConfig.backgroundVisible !== undefined ? hdrConfig.backgroundVisible : true;
+                if (backgroundVisible && window.__hdrTextureLoaded) {
+                  // CRITICAL: Ensure background texture is properly configured
+                  const hdrTex = window.__hdrTextureLoaded;
+                  if (hdrTex.mapping !== THREE.EquirectangularReflectionMapping) {
+                    hdrTex.mapping = THREE.EquirectangularReflectionMapping;
+                    hdrTex.needsUpdate = true;
+                  }
+                  if (scene.background !== hdrTex) {
+                    scene.background = hdrTex;
+                    console.log('[WebExport] Render loop: Set regular 360 HDR background');
+                  }
+                } else if (!backgroundVisible && scene.background !== null) {
+                  scene.background = null;
                 }
-              } else if (!backgroundVisible && scene.background !== null) {
-                scene.background = null;
               }
             }
             // Safety: ensure controls stay enabled outside of camera transitions

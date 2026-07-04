@@ -5,6 +5,9 @@
 
 export const WEB_EXPORT_FOG_DENSITY_SCALE = 0.015
 export const WEB_EXPORT_WEATHER_GROUND_LEVEL = 0
+/** Match editor DynamicSky sphere radius — must fit inside camera far plane */
+export const WEB_EXPORT_SKY_SPHERE_RADIUS = 9000
+export const WEB_EXPORT_MIN_CAMERA_FAR = WEB_EXPORT_SKY_SPHERE_RADIUS * 1.5
 
 export interface WebExportWeatherConfig {
   enableStandaloneWeather?: boolean
@@ -43,6 +46,18 @@ export interface WebExportWeatherConfig {
   snowParticleSpeed?: number
   snowCollisionEnabled?: boolean
   windGustsEnabled?: boolean
+}
+
+/** True when export should use procedural sky dome instead of HDR background (matches editor). */
+export function isWebExportStandaloneSkyActive(
+  weather: WebExportWeatherConfig | null | undefined,
+  hdrConfig: { groundProjectionEnabled?: boolean } | null | undefined
+): boolean {
+  if (!weather || !isWeatherExportActive(weather)) return false
+  if (weather.enableStandaloneWeather !== true) return false
+  if (weather.dynamicSkyEnabled === false) return false
+  if (hdrConfig?.groundProjectionEnabled === true) return false
+  return true
 }
 
 /** True when export should initialize any weather visuals from CONFIG.weather */
@@ -116,6 +131,8 @@ export function generateWebExportWeatherRuntimeJs(): string {
   return `
     const WEB_EXPORT_FOG_DENSITY_SCALE = ${WEB_EXPORT_FOG_DENSITY_SCALE};
     const WEB_EXPORT_WEATHER_GROUND_LEVEL = ${WEB_EXPORT_WEATHER_GROUND_LEVEL};
+    const WEB_EXPORT_SKY_SPHERE_RADIUS = ${WEB_EXPORT_SKY_SPHERE_RADIUS};
+    const WEB_EXPORT_MIN_CAMERA_FAR = ${WEB_EXPORT_MIN_CAMERA_FAR};
 
     function normalizeWebExportWeatherConfig(raw) {
       if (!raw || typeof raw !== 'object') return {};
@@ -164,6 +181,34 @@ export function generateWebExportWeatherRuntimeJs(): string {
       if (weather.enableStandaloneWeather) return true;
       return (weather.fogDensity > 0) || (weather.rainIntensity > 0) ||
         (weather.snowIntensity > 0) || (weather.cloudDensity > 0);
+    }
+
+    function webExportIsStandaloneSkyActive(weather, hdrConfig) {
+      if (!weather || !isWebExportWeatherActive(weather)) return false;
+      if (weather.enableStandaloneWeather !== true) return false;
+      if (weather.dynamicSkyEnabled === false) return false;
+      if (hdrConfig && hdrConfig.groundProjectionEnabled === true) return false;
+      return true;
+    }
+
+    function webExportEnsureDynamicSkyCameraFar(camera) {
+      if (!camera || camera.far >= WEB_EXPORT_MIN_CAMERA_FAR) return;
+      const state = window.__webExportWeather;
+      if (state && state.savedCameraFar === undefined) {
+        state.savedCameraFar = camera.far;
+      }
+      camera.far = WEB_EXPORT_MIN_CAMERA_FAR;
+      camera.updateProjectionMatrix();
+    }
+
+    function webExportResolveToneMappingExposure(weather, lighting) {
+      if (weather && typeof weather.skyExposure === 'number') {
+        return weather.skyExposure;
+      }
+      if (lighting && typeof lighting.exposure === 'number') {
+        return lighting.exposure;
+      }
+      return 1.0;
     }
 
     function webExportTimeOfDayToSkyAngles(timeOfDay, northOffset) {
@@ -443,22 +488,11 @@ export function generateWebExportWeatherRuntimeJs(): string {
         return;
       }
 
-      const { scene, renderer } = ctx;
+      const { scene, camera, renderer } = ctx;
       const hdrConfig = CONFIG.hdr || {};
       const groundProjectionEnabled = hdrConfig.groundProjectionEnabled === true;
       const hdrActive = hdrConfig.enabled !== false && (hdrConfig.enabled === true || !!window.__hdrTextureLoaded);
-      const useStandaloneSky = weather.enableStandaloneWeather && weather.dynamicSkyEnabled !== false && !groundProjectionEnabled;
-
-      console.log('[WebExport] Initializing weather:', {
-        preset: weather.preset,
-        enableStandaloneWeather: weather.enableStandaloneWeather,
-        fog: weather.fogDensity,
-        rain: weather.rainIntensity,
-        snow: weather.snowIntensity,
-        clouds: weather.cloudDensity,
-        useStandaloneSky: useStandaloneSky,
-        hdrActive: hdrActive
-      });
+      const useStandaloneSky = webExportIsStandaloneSkyActive(weather, hdrConfig);
 
       const state = window.__webExportWeather;
       webExportApplyFog(scene, weather);
@@ -471,21 +505,17 @@ export function generateWebExportWeatherRuntimeJs(): string {
       }
 
       if (useStandaloneSky) {
+        webExportEnsureDynamicSkyCameraFar(camera);
+        // Match editor: DynamicSky replaces HDR background; keep HDR as scene.environment for IBL
+        scene.background = null;
         if (!state.sky && typeof Sky !== 'undefined') {
           const sky = new Sky();
-          sky.scale.setScalar(450000);
+          sky.scale.setScalar(WEB_EXPORT_SKY_SPHERE_RADIUS);
           sky.userData.isDynamicSky = true;
           sky.userData.excludeFromFog = true;
           sky.renderOrder = -1000;
           scene.add(sky);
           state.sky = sky;
-          console.log('[WebExport] Dynamic sky (Three.js Sky) created');
-        }
-        if (useStandaloneSky && !hdrActive) {
-          scene.background = null;
-          if (scene.environment && !hdrConfig.enabled) {
-            scene.environment = null;
-          }
         }
         if (!state.sunMesh) {
           const sunGeo = new THREE.SphereGeometry(15, 24, 24);
@@ -523,8 +553,8 @@ export function generateWebExportWeatherRuntimeJs(): string {
         ambientLight.intensity = lighting.ambientIntensity;
         ambientLight.color.set(lighting.ambientColor);
       }
-      if (renderer && typeof lighting.exposure === 'number') {
-        renderer.toneMappingExposure = lighting.exposure;
+      if (renderer) {
+        renderer.toneMappingExposure = webExportResolveToneMappingExposure(weather, lighting);
       }
 
       webExportUpdateSkyUniforms(state, weather, sunPosition);
@@ -532,7 +562,25 @@ export function generateWebExportWeatherRuntimeJs(): string {
 
       state.initialized = true;
       state.weather = weather;
-      console.log('[WebExport] Weather initialized');
+      state.useStandaloneSky = useStandaloneSky;
+      console.log('[WebExport] Weather initialized ✓', {
+        preset: weather.preset,
+        enableStandaloneWeather: weather.enableStandaloneWeather,
+        useStandaloneSky: useStandaloneSky,
+        hdrActive: hdrActive,
+        hdrBackgroundVisible: hdrConfig.backgroundVisible !== false,
+        background: scene.background ? 'texture' : 'null (sky dome)',
+        hasEnvironment: !!scene.environment,
+        timeOfDay: weather.timeOfDay,
+        fogDensity: weather.fogDensity,
+        rainIntensity: weather.rainIntensity,
+        snowIntensity: weather.snowIntensity,
+        cloudDensity: weather.cloudDensity,
+        skyExposure: weather.skyExposure,
+        toneMappingExposure: renderer ? renderer.toneMappingExposure : null,
+        cameraFar: camera ? camera.far : null,
+        skySphereRadius: useStandaloneSky ? WEB_EXPORT_SKY_SPHERE_RADIUS : null
+      });
     }
 
     function updateWebExportWeather(scene, camera, renderer) {
@@ -542,6 +590,10 @@ export function generateWebExportWeatherRuntimeJs(): string {
       const now = performance.now();
       const dt = Math.min(0.05, (now - (state.lastTime || now)) / 1000);
       state.lastTime = now;
+
+      if (state.useStandaloneSky) {
+        webExportEnsureDynamicSkyCameraFar(camera);
+      }
 
       const { sunPosition, elevation } = webExportTimeOfDayToSkyAngles(weather.timeOfDay, weather.northOffset);
       let lighting = webExportComputeSunLighting(elevation);
@@ -562,8 +614,8 @@ export function generateWebExportWeatherRuntimeJs(): string {
         ambientLight.intensity = lighting.ambientIntensity;
         ambientLight.color.set(lighting.ambientColor);
       }
-      if (renderer && typeof lighting.exposure === 'number') {
-        renderer.toneMappingExposure = lighting.exposure;
+      if (renderer) {
+        renderer.toneMappingExposure = webExportResolveToneMappingExposure(weather, lighting);
       }
     }
   `

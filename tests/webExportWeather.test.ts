@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   generateWebExportWeatherRuntimeJs,
   isWeatherExportActive,
+  isWebExportStandaloneSkyActive,
   normalizeWebExportWeatherConfig,
-  WEB_EXPORT_FOG_DENSITY_SCALE
+  WEB_EXPORT_FOG_DENSITY_SCALE,
+  WEB_EXPORT_MIN_CAMERA_FAR,
+  WEB_EXPORT_SKY_SPHERE_RADIUS
 } from '../src/utils/webExportWeatherRuntime'
 
 describe('webExportWeatherRuntime', () => {
@@ -50,12 +53,37 @@ describe('webExportWeatherRuntime', () => {
     expect(config.timeOfDay).toBe(12)
   })
 
+  it('detects standalone sky mode (matches editor DynamicSky path)', () => {
+    expect(
+      isWebExportStandaloneSkyActive(
+        { enableStandaloneWeather: true, dynamicSkyEnabled: true },
+        { groundProjectionEnabled: false }
+      )
+    ).toBe(true)
+    expect(
+      isWebExportStandaloneSkyActive(
+        { enableStandaloneWeather: true, dynamicSkyEnabled: true },
+        { groundProjectionEnabled: true }
+      )
+    ).toBe(false)
+    expect(
+      isWebExportStandaloneSkyActive(
+        { enableStandaloneWeather: false, fogDensity: 0.5 },
+        {}
+      )
+    ).toBe(false)
+  })
+
   it('embeds runtime JS with fog scale and init/update functions', () => {
     const js = generateWebExportWeatherRuntimeJs()
     expect(js).toContain(String(WEB_EXPORT_FOG_DENSITY_SCALE))
+    expect(js).toContain(String(WEB_EXPORT_SKY_SPHERE_RADIUS))
+    expect(js).toContain(String(WEB_EXPORT_MIN_CAMERA_FAR))
     expect(js).toContain('function initializeWebExportWeather')
     expect(js).toContain('function updateWebExportWeather')
+    expect(js).toContain('function webExportIsStandaloneSkyActive')
     expect(js).toContain('enableStandaloneWeather')
     expect(js).toContain('new Sky()')
+    expect(js).toContain('Weather initialized ✓')
   })
 })
