@@ -767,9 +767,15 @@ export default function HotspotsPanel() {
           const label = labelsMap.get(id)
           if (label) {
             viewer.scene.remove(label)
-            label.material.dispose()
-            if (label.material.map) {
-              label.material.map.dispose()
+            if (label instanceof THREE.Sprite) {
+              const mat = label.material as THREE.SpriteMaterial
+              mat.map?.dispose()
+              mat.dispose()
+            } else if (label instanceof THREE.Mesh) {
+              label.geometry.dispose()
+              const mat = label.material as THREE.MeshBasicMaterial
+              mat.map?.dispose()
+              mat.dispose()
             }
             labelsMap.delete(id)
           }
