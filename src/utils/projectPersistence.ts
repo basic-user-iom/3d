@@ -427,7 +427,9 @@ export interface SavedProject {
         heightPixels?: number | null
         offsetX?: number
         offsetY?: number
+        faceCamera?: boolean
       }
+      faceCamera?: boolean
       // Panel border styling
       panelBorder?: {
         width?: number

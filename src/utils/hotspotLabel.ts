@@ -172,24 +172,116 @@ export function createHotspotLabelTexture(
   return texture
 }
 
+export type HotspotLabelOptions = {
+  fontSize?: number
+  fontFamily?: string
+  color?: string
+  backgroundColor?: string
+  offsetX?: number
+  offsetY?: number
+  borderWidth?: number
+  borderColor?: string
+  borderRadius?: number
+  scale?: number
+  faceCamera?: boolean
+}
+
+function applyHotspotLabelScale(
+  object: THREE.Object3D,
+  texture: THREE.CanvasTexture,
+  scale: number
+): void {
+  const baseWidth = (texture.image as HTMLCanvasElement & { __baseWidth?: number }).__baseWidth || texture.image.width
+  const baseHeight = (texture.image as HTMLCanvasElement & { __baseHeight?: number }).__baseHeight || texture.image.height
+  const aspectRatio = baseWidth / baseHeight
+  object.userData.labelScale = scale
+  if (object instanceof THREE.Mesh) {
+    object.geometry.dispose()
+    object.geometry = new THREE.PlaneGeometry(scale * aspectRatio, scale)
+    object.scale.set(1, 1, 1)
+  } else {
+    object.scale.set(scale * aspectRatio, scale, 1)
+  }
+}
+
+/**
+ * Create a fixed-orientation mesh label (does not auto-billboard)
+ */
+export function createHotspotLabelMesh(
+  position: THREE.Vector3,
+  text: string,
+  options: HotspotLabelOptions = {}
+): THREE.Mesh {
+  const {
+    fontSize = 16,
+    fontFamily = 'Arial',
+    color = '#ffffff',
+    backgroundColor = 'rgba(25, 25, 30, 0.95)',
+    offsetX = 0,
+    offsetY = 0,
+    borderWidth = 2,
+    borderColor = '#00AAFF',
+    borderRadius = 6,
+    scale = 0.4
+  } = options
+
+  const texture = createHotspotLabelTexture(text, {
+    fontSize,
+    fontFamily,
+    color,
+    backgroundColor,
+    borderWidth,
+    borderColor,
+    borderRadius
+  })
+
+  const baseWidth = (texture.image as HTMLCanvasElement & { __baseWidth?: number }).__baseWidth || texture.image.width
+  const baseHeight = (texture.image as HTMLCanvasElement & { __baseHeight?: number }).__baseHeight || texture.image.height
+  const aspectRatio = baseWidth / baseHeight
+  const geometry = new THREE.PlaneGeometry(scale * aspectRatio, scale)
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.DoubleSide
+  })
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.position.copy(position)
+  mesh.position.x += offsetX
+  mesh.position.y += offsetY
+  mesh.userData.labelScale = scale
+  mesh.renderOrder = 1001
+  mesh.userData.isHotspotLabel = true
+  mesh.userData.faceCamera = false
+  mesh.userData.labelText = text
+  mesh.visible = true
+
+  return mesh
+}
+
+/**
+ * Create floating label as sprite (billboard) or mesh (fixed orientation)
+ */
+export function createHotspotLabelObject(
+  position: THREE.Vector3,
+  text: string,
+  options: HotspotLabelOptions = {}
+): THREE.Object3D {
+  if (options.faceCamera === false) {
+    return createHotspotLabelMesh(position, text, options)
+  }
+  return createHotspotLabelSprite(position, text, options)
+}
+
 /**
  * Create a 3D sprite with text label that always faces camera
  */
 export function createHotspotLabelSprite(
   position: THREE.Vector3,
   text: string,
-  options: {
-    fontSize?: number
-    fontFamily?: string
-    color?: string
-    backgroundColor?: string
-    offsetX?: number
-    offsetY?: number
-    borderWidth?: number
-    borderColor?: string
-    borderRadius?: number
-    scale?: number // Label scale in 3D world units
-  } = {}
+  options: HotspotLabelOptions = {}
 ): THREE.Sprite {
   const {
     fontSize = 16,
@@ -228,27 +320,72 @@ export function createHotspotLabelSprite(
   sprite.position.x += offsetX // Horizontal offset relative to hotspot icon
   sprite.position.y += offsetY // Vertical offset relative to hotspot icon
   
-  // Calculate proper scale based on base texture dimensions to prevent stretching
-  // Use stored base dimensions (before device pixel ratio scaling)
-  const baseWidth = (texture.image as any).__baseWidth || texture.image.width
-  const baseHeight = (texture.image as any).__baseHeight || texture.image.height
-  const aspectRatio = baseWidth / baseHeight
-  
-  // Use provided scale or default
-  const baseScale = scale // World units for label height
-  
-  // Set scale maintaining aspect ratio to prevent stretching
-  // X scale = height * aspect ratio, Y scale = height
-  sprite.scale.set(baseScale * aspectRatio, baseScale, 1)
-  
-  // Store scale in userData for updates
-  sprite.userData.labelScale = baseScale
+  applyHotspotLabelScale(sprite, texture, scale)
   
   sprite.renderOrder = 1001 // Render above hotspot icons
   sprite.userData.isHotspotLabel = true
+  sprite.userData.faceCamera = true
   sprite.userData.labelText = text
   sprite.visible = true
 
   return sprite
+}
+
+/**
+ * Update an existing hotspot label texture (sprite or mesh)
+ */
+export function updateHotspotLabelTexture(
+  label: THREE.Object3D,
+  text: string,
+  options: {
+    fontSize?: number
+    color?: string
+    backgroundColor?: string
+    borderWidth?: number
+    borderColor?: string
+    borderRadius?: number
+    widthPixels?: number | null
+    heightPixels?: number | null
+  }
+): THREE.CanvasTexture {
+  const newTexture = createHotspotLabelTexture(text, {
+    fontSize: options.fontSize,
+    color: options.color,
+    backgroundColor: options.backgroundColor,
+    borderWidth: options.borderWidth,
+    borderColor: options.borderColor,
+    borderRadius: options.borderRadius
+  })
+
+  const material = label instanceof THREE.Sprite
+    ? label.material as THREE.SpriteMaterial
+    : (label as THREE.Mesh).material as THREE.MeshBasicMaterial
+
+  const oldTexture = material.map
+  material.map = newTexture
+  material.needsUpdate = true
+  if (oldTexture) oldTexture.dispose()
+
+  const dimensionsChanged =
+    label.userData.labelWidthPixels !== options.widthPixels ||
+    label.userData.labelHeightPixels !== options.heightPixels
+
+  if (dimensionsChanged) {
+    const pixelsToWorldUnits = 0.01
+    let labelScale: number
+    if (options.heightPixels !== null && options.heightPixels !== undefined) {
+      labelScale = options.heightPixels * pixelsToWorldUnits
+    } else if (options.widthPixels !== null && options.widthPixels !== undefined) {
+      labelScale = (options.widthPixels / 3) * pixelsToWorldUnits
+    } else {
+      labelScale = 80 * pixelsToWorldUnits
+    }
+    applyHotspotLabelScale(label, newTexture, labelScale)
+  } else {
+    const preservedScale = label.userData.labelScale || label.scale.y
+    applyHotspotLabelScale(label, newTexture, preservedScale)
+  }
+
+  return newTexture
 }
 

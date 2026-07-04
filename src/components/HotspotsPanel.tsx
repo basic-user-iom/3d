@@ -5,7 +5,7 @@ import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS } from '../utils/hotspotUtils'
-import { createHotspotLabelSprite, createHotspotLabelTexture } from '../utils/hotspotLabel'
+import { createHotspotLabelObject, updateHotspotLabelTexture } from '../utils/hotspotLabel'
 import { createHotspot3DPanel, updateHotspot3DPanelTexture, updateHotspotCSS3DPanelStyle, createHotspotIconTexture, cleanupVideoResourcesForCanvas, cleanupAllVideoResources, type Hotspot3DPanelConfig } from '../utils/hotspot3DPanel'
 import HotspotPopup from './HotspotPopup'
 import './HotspotsPanel.css'
@@ -86,7 +86,10 @@ export interface Hotspot {
     heightPixels?: number | null // Label height in pixels (null = auto based on text)
     offsetX?: number // Horizontal offset in 3D units (default: 0)
     offsetY?: number // Vertical offset in 3D units (default: 0)
+    faceCamera?: boolean // When true (default), label billboards toward camera
   }
+  // When false, floating label and content panel keep fixed world orientation
+  faceCamera?: boolean
   // Panel border settings
   panelBorder?: {
     width?: number // Panel border width (default: 2)
@@ -295,7 +298,7 @@ export default function HotspotsPanel() {
     saveHotspotsToStorage(hotspots)
   }, [hotspots, saveHotspotsToStorage])
   const [hotspotMarkers, setHotspotMarkers] = useState<Map<string, THREE.Sprite>>(new Map())
-  const [hotspotLabels, setHotspotLabels] = useState<Map<string, THREE.Sprite>>(new Map())
+  const [hotspotLabels, setHotspotLabels] = useState<Map<string, THREE.Object3D>>(new Map())
   const [hotspotPanels, setHotspotPanels] = useState<Map<string, THREE.Object3D>>(new Map()) // 3D floating panels
   const [hotspotLines, setHotspotLines] = useState<Map<string, THREE.Line>>(new Map())
   const [hotspotEndpoints, setHotspotEndpoints] = useState<Map<string, THREE.Mesh>>(new Map()) // Draggable endpoint handles
@@ -324,6 +327,7 @@ export default function HotspotsPanel() {
   const [labelHeightPixels, setLabelHeightPixels] = useState<number | null>(null) // Label height in pixels (null = auto)
   const [labelOffsetX, setLabelOffsetX] = useState(0) // Label horizontal offset in 3D units
   const [labelOffsetY, setLabelOffsetY] = useState(0) // Label vertical offset in 3D units
+  const [labelFaceCamera, setLabelFaceCamera] = useState(true) // Label/panel billboard toward camera
   // Panel border settings
   const [panelBorderWidth, setPanelBorderWidth] = useState(2)
   const [panelBorderColor, setPanelBorderColor] = useState('#00AAFF')
@@ -404,6 +408,85 @@ export default function HotspotsPanel() {
     
     return () => clearTimeout(timeoutId)
   }, [editingHotspotId, textFormatting])
+
+  // Real-time preview: update hotspot name and floating label while editing
+  useEffect(() => {
+    if (!editingHotspotId) return
+
+    const timeoutId = setTimeout(() => {
+      setHotspots(prev => {
+        const hotspot = prev.find(h => h.id === editingHotspotId)
+        if (!hotspot) return prev
+
+        const nextName = hotspotName || 'Untitled Hotspot'
+        const nextLabelText = labelText || nextName
+        const nextFaceCamera = labelFaceCamera
+        const currentLabel = hotspot.label
+
+        const labelChanged =
+          hotspot.name !== nextName ||
+          hotspot.faceCamera !== nextFaceCamera ||
+          currentLabel?.text !== nextLabelText ||
+          currentLabel?.fontSize !== labelFontSize ||
+          currentLabel?.visible !== labelVisible ||
+          currentLabel?.color !== labelColor ||
+          currentLabel?.backgroundColor !== labelBackgroundColor ||
+          currentLabel?.borderWidth !== labelBorderWidth ||
+          currentLabel?.borderColor !== labelBorderColor ||
+          currentLabel?.borderRadius !== labelBorderRadius ||
+          currentLabel?.widthPixels !== labelWidthPixels ||
+          currentLabel?.heightPixels !== labelHeightPixels ||
+          currentLabel?.offsetX !== labelOffsetX ||
+          currentLabel?.offsetY !== labelOffsetY ||
+          currentLabel?.faceCamera !== nextFaceCamera
+
+        if (!labelChanged) return prev
+
+        return prev.map(h =>
+          h.id === editingHotspotId
+            ? {
+                ...h,
+                name: nextName,
+                faceCamera: nextFaceCamera,
+                label: {
+                  text: nextLabelText,
+                  visible: labelVisible,
+                  fontSize: labelFontSize,
+                  color: labelColor,
+                  backgroundColor: labelBackgroundColor,
+                  borderWidth: labelBorderWidth,
+                  borderColor: labelBorderColor,
+                  borderRadius: labelBorderRadius,
+                  widthPixels: labelWidthPixels,
+                  heightPixels: labelHeightPixels,
+                  offsetX: labelOffsetX,
+                  offsetY: labelOffsetY,
+                  faceCamera: nextFaceCamera
+                }
+              }
+            : h
+        )
+      })
+    }, 100)
+
+    return () => clearTimeout(timeoutId)
+  }, [
+    editingHotspotId,
+    hotspotName,
+    labelText,
+    labelFontSize,
+    labelVisible,
+    labelColor,
+    labelBackgroundColor,
+    labelBorderWidth,
+    labelBorderColor,
+    labelBorderRadius,
+    labelWidthPixels,
+    labelHeightPixels,
+    labelOffsetX,
+    labelOffsetY,
+    labelFaceCamera
+  ])
   
   // Real-time preview: Update hotspot content data when contentData changes
   useEffect(() => {
@@ -540,10 +623,9 @@ export default function HotspotsPanel() {
       // Also check scene for existing labels to prevent duplicates
       // First, remove any duplicate labels from scene (keep only one per hotspot)
       const labelCounts = new Map<string, number>()
-      const duplicateLabels: THREE.Sprite[] = []
+      const duplicateLabels: THREE.Object3D[] = []
       viewer.scene.traverse((obj) => {
-        if (obj instanceof THREE.Sprite && 
-            obj.userData.hotspotId && 
+        if (obj.userData.hotspotId && 
             obj.userData.isHotspotLabel) {
           const count = labelCounts.get(obj.userData.hotspotId) || 0
           labelCounts.set(obj.userData.hotspotId, count + 1)
@@ -565,8 +647,13 @@ export default function HotspotsPanel() {
           } else {
             viewer.scene.remove(label)
           }
-          if (label.material) {
+          if (label instanceof THREE.Sprite) {
             const mat = label.material as THREE.SpriteMaterial
+            if (mat.map) mat.map.dispose()
+            mat.dispose()
+          } else if (label instanceof THREE.Mesh) {
+            label.geometry.dispose()
+            const mat = label.material as THREE.MeshBasicMaterial
             if (mat.map) mat.map.dispose()
             mat.dispose()
           }
@@ -978,7 +1065,7 @@ export default function HotspotsPanel() {
         const effectiveLabelBorderRadius = hotspot.label?.borderRadius ?? labelBorderRadius
         const effectiveLabelWidthPixels = hotspot.label?.widthPixels ?? labelWidthPixels
         const effectiveLabelHeightPixels = hotspot.label?.heightPixels ?? labelHeightPixels
-        // effectiveLabelOffsetX and effectiveLabelOffsetY are already calculated above
+        const effectiveFaceCamera = hotspot.label?.faceCamera ?? hotspot.faceCamera ?? labelFaceCamera
         // Panel border settings
         const effectivePanelBorderWidth = hotspot.panelBorder?.width ?? panelBorderWidth
         const effectivePanelBorderColor = hotspot.panelBorder?.color || panelBorderColor
@@ -997,10 +1084,9 @@ export default function HotspotsPanel() {
           // Check both the map and the scene to prevent duplicates
           const existingLabelInMap = labelsMap.get(hotspot.id)
           // Use traverse to find labels that might be nested or anywhere in scene
-          let existingLabelInScene: THREE.Sprite | undefined
+          let existingLabelInScene: THREE.Object3D | undefined
           viewer.scene.traverse((obj) => {
-            if (obj instanceof THREE.Sprite && 
-                obj.userData.hotspotId === hotspot.id &&
+            if (obj.userData.hotspotId === hotspot.id &&
                 obj.userData.isHotspotLabel &&
                 !existingLabelInScene) {
               existingLabelInScene = obj
@@ -1009,10 +1095,9 @@ export default function HotspotsPanel() {
           
           if (!existingLabelInMap && !existingLabelInScene) {
             // Double-check scene one more time right before creating (race condition protection)
-            let finalCheck: THREE.Sprite | undefined
+            let finalCheck: THREE.Object3D | undefined
             viewer.scene.traverse((obj) => {
-              if (obj instanceof THREE.Sprite && 
-                  obj.userData.hotspotId === hotspot.id &&
+              if (obj.userData.hotspotId === hotspot.id &&
                   obj.userData.isHotspotLabel &&
                   !finalCheck) {
                 finalCheck = obj
@@ -1034,40 +1119,38 @@ export default function HotspotsPanel() {
                 labelScale = 80 * pixelsToWorldUnits
               }
               
-              const labelSprite = createHotspotLabelSprite(position, effectiveLabelText, {
+              const labelObject = createHotspotLabelObject(position, effectiveLabelText, {
                 fontSize: effectiveLabelFontSize,
                 color: effectiveLabelColor,
                 backgroundColor: effectiveLabelBackgroundColor,
-                offsetX: effectiveLabelOffsetX, // Horizontal offset
-                offsetY: effectiveLabelOffsetY, // Vertical offset
+                offsetX: effectiveLabelOffsetX,
+                offsetY: effectiveLabelOffsetY,
                 borderWidth: effectiveLabelBorderWidth,
                 borderColor: effectiveLabelBorderColor,
                 borderRadius: effectiveLabelBorderRadius,
-                scale: labelScale
+                scale: labelScale,
+                faceCamera: effectiveFaceCamera
               })
-              // Store hotspot ID in label for hover/click detection
-              labelSprite.userData.hotspotId = hotspot.id
-              labelSprite.userData.isHotspotLabel = true // Mark as hotspot label for scene traversal
-              // Store all label properties for change detection
-              labelSprite.userData.labelText = effectiveLabelText
-              labelSprite.userData.labelFontSize = effectiveLabelFontSize
-              labelSprite.userData.labelColor = effectiveLabelColor
-              labelSprite.userData.labelBackgroundColor = effectiveLabelBackgroundColor
-              labelSprite.userData.labelBorderWidth = effectiveLabelBorderWidth
-              labelSprite.userData.labelBorderColor = effectiveLabelBorderColor
-              labelSprite.userData.labelBorderRadius = effectiveLabelBorderRadius
-              labelSprite.userData.offsetX = effectiveLabelOffsetX // Store offset for consistent updates
-              labelSprite.userData.offsetY = effectiveLabelOffsetY // Store offset for consistent updates
-              // Scale is set in createHotspotLabelSprite for optimal quality
-              labelSprite.visible = shouldShowLabel
+              labelObject.userData.hotspotId = hotspot.id
+              labelObject.userData.isHotspotLabel = true
+              labelObject.userData.labelText = effectiveLabelText
+              labelObject.userData.labelFontSize = effectiveLabelFontSize
+              labelObject.userData.labelColor = effectiveLabelColor
+              labelObject.userData.labelBackgroundColor = effectiveLabelBackgroundColor
+              labelObject.userData.labelBorderWidth = effectiveLabelBorderWidth
+              labelObject.userData.labelBorderColor = effectiveLabelBorderColor
+              labelObject.userData.labelBorderRadius = effectiveLabelBorderRadius
+              labelObject.userData.offsetX = effectiveLabelOffsetX
+              labelObject.userData.offsetY = effectiveLabelOffsetY
+              labelObject.userData.faceCamera = effectiveFaceCamera
+              labelObject.visible = shouldShowLabel
               
-              // Ensure label is always visible if visibility is set to 'always'
               if (effectiveLabelVisible === 'always') {
-                labelSprite.visible = true
+                labelObject.visible = true
               }
               
-              viewer.scene.add(labelSprite)
-              labelsMap.set(hotspot.id, labelSprite)
+              viewer.scene.add(labelObject)
+              labelsMap.set(hotspot.id, labelObject)
               console.log('[HotspotsPanel] Created label for hotspot:', hotspot.id, 'text:', effectiveLabelText)
               // Batch state update at the end to avoid infinite loops
             } else {
@@ -1088,6 +1171,22 @@ export default function HotspotsPanel() {
           // Update existing label visibility and position (whether from map or scene)
           const label = labelsMap.get(hotspot.id)
           if (label) {
+            const wantsBillboard = effectiveFaceCamera !== false
+            const isSpriteLabel = label instanceof THREE.Sprite
+            if (wantsBillboard !== isSpriteLabel || label.userData.faceCamera !== effectiveFaceCamera) {
+              viewer.scene.remove(label)
+              if (label instanceof THREE.Sprite) {
+                const mat = label.material as THREE.SpriteMaterial
+                mat.map?.dispose()
+                mat.dispose()
+              } else if (label instanceof THREE.Mesh) {
+                label.geometry.dispose()
+                const mat = label.material as THREE.MeshBasicMaterial
+                mat.map?.dispose()
+                mat.dispose()
+              }
+              labelsMap.delete(hotspot.id)
+            } else {
             // Use effective offsets from hotspot data (not stored userData which might be stale)
             // Position label at marker position with offsets
             label.position.set(position.x + effectiveLabelOffsetX, position.y + effectiveLabelOffsetY, position.z)
@@ -1115,90 +1214,17 @@ export default function HotspotsPanel() {
               Number(storedOffsetY) !== Number(effectiveLabelOffsetY)
             
             if (labelNeedsUpdate) {
-              console.log('[HotspotsPanel] Label texture update triggered:', {
-                hotspotId: hotspot.id,
-                reason: {
-                  text: label.userData.labelText !== effectiveLabelText,
-                  fontSize: label.userData.labelFontSize !== effectiveLabelFontSize,
-                  color: label.userData.labelColor !== effectiveLabelColor,
-                  bgColor: label.userData.labelBackgroundColor !== effectiveLabelBackgroundColor,
-                  borderWidth: Number(storedBorderWidth) !== Number(effectiveLabelBorderWidth),
-                  borderColor: label.userData.labelBorderColor !== effectiveLabelBorderColor,
-                  borderRadius: Number(storedBorderRadius) !== Number(effectiveLabelBorderRadius),
-                  widthPixels: label.userData.labelWidthPixels !== effectiveLabelWidthPixels,
-                  heightPixels: label.userData.labelHeightPixels !== effectiveLabelHeightPixels,
-                  offsetX: Number(storedOffsetX) !== Number(effectiveLabelOffsetX),
-                  offsetY: Number(storedOffsetY) !== Number(effectiveLabelOffsetY)
-                },
-                stored: {
-                  borderWidth: storedBorderWidth,
-                  borderColor: label.userData.labelBorderColor,
-                  borderRadius: storedBorderRadius,
-                  offsetX: storedOffsetX,
-                  offsetY: storedOffsetY
-                },
-                effective: {
-                  borderWidth: effectiveLabelBorderWidth,
-                  borderColor: effectiveLabelBorderColor,
-                  borderRadius: effectiveLabelBorderRadius,
-                  offsetX: effectiveLabelOffsetX,
-                  offsetY: effectiveLabelOffsetY
-                }
-              })
-              const oldMaterial = label.material as THREE.SpriteMaterial
-              const oldTexture = oldMaterial.map
-              
-              const newTexture = createHotspotLabelTexture(effectiveLabelText, {
+              updateHotspotLabelTexture(label, effectiveLabelText, {
                 fontSize: effectiveLabelFontSize,
                 color: effectiveLabelColor,
                 backgroundColor: effectiveLabelBackgroundColor,
                 borderWidth: effectiveLabelBorderWidth,
                 borderColor: effectiveLabelBorderColor,
-                borderRadius: effectiveLabelBorderRadius
+                borderRadius: effectiveLabelBorderRadius,
+                widthPixels: effectiveLabelWidthPixels,
+                heightPixels: effectiveLabelHeightPixels
               })
-              
-              // Only recalculate scale if dimensions actually changed
-              // Preserve existing scale to prevent unwanted growth
-              const dimensionsChanged = 
-                label.userData.labelWidthPixels !== effectiveLabelWidthPixels ||
-                label.userData.labelHeightPixels !== effectiveLabelHeightPixels
-              
-              if (dimensionsChanged) {
-                // Convert pixels to world units for label scale (1 pixel = 0.01 world units)
-                const pixelsToWorldUnits = 0.01
-                let labelScale: number
-                if (effectiveLabelHeightPixels !== null && effectiveLabelHeightPixels !== undefined) {
-                  labelScale = effectiveLabelHeightPixels * pixelsToWorldUnits
-                } else if (effectiveLabelWidthPixels !== null && effectiveLabelWidthPixels !== undefined) {
-                  // If only width is provided, estimate height from width (approximate 3:1 ratio for text labels)
-                  const estimatedHeight = effectiveLabelWidthPixels / 3
-                  labelScale = estimatedHeight * pixelsToWorldUnits
-                } else {
-                  // Default: 80 pixels = 0.8 world units
-                  labelScale = 80 * pixelsToWorldUnits
-                }
-                
-                // Update label scale only when dimensions changed
-                const baseWidth = (newTexture.image as any).__baseWidth || newTexture.image.width
-                const baseHeight = (newTexture.image as any).__baseHeight || newTexture.image.height
-                const aspectRatio = baseWidth / baseHeight
-                label.scale.set(labelScale * aspectRatio, labelScale, 1)
-                
-                // Store the scale for future reference
-                label.userData.labelScale = labelScale
-              } else {
-                // Dimensions haven't changed - preserve existing scale
-                // Just update aspect ratio if texture size changed (due to border changes)
-                const baseWidth = (newTexture.image as any).__baseWidth || newTexture.image.width
-                const baseHeight = (newTexture.image as any).__baseHeight || newTexture.image.height
-                const aspectRatio = baseWidth / baseHeight
-                
-                // Use stored scale or current Y scale
-                const preservedScale = label.userData.labelScale || label.scale.y
-                label.scale.set(preservedScale * aspectRatio, preservedScale, 1)
-              }
-              
-              // Store current values for next comparison
+
               label.userData.labelText = effectiveLabelText
               label.userData.labelFontSize = effectiveLabelFontSize
               label.userData.labelColor = effectiveLabelColor
@@ -1210,23 +1236,7 @@ export default function HotspotsPanel() {
               label.userData.labelHeightPixels = effectiveLabelHeightPixels
               label.userData.offsetX = effectiveLabelOffsetX
               label.userData.offsetY = effectiveLabelOffsetY
-              
-              oldMaterial.map = newTexture
-              oldMaterial.needsUpdate = true
-              
-              // Dispose old texture
-              if (oldTexture) {
-                oldTexture.dispose()
-              }
-              
-              console.log('[HotspotsPanel] Label texture updated:', {
-                hotspotId: hotspot.id,
-                borderWidth: effectiveLabelBorderWidth,
-                borderColor: effectiveLabelBorderColor,
-                borderRadius: effectiveLabelBorderRadius,
-                offsetX: effectiveLabelOffsetX,
-                offsetY: effectiveLabelOffsetY
-              })
+            }
             }
           }
         } else {
@@ -1234,9 +1244,15 @@ export default function HotspotsPanel() {
           const label = labelsMap.get(hotspot.id)
           if (label) {
             viewer.scene.remove(label)
-            label.material.dispose()
-            if (label.material.map) {
-              label.material.map.dispose()
+            if (label instanceof THREE.Sprite) {
+              const mat = label.material as THREE.SpriteMaterial
+              mat.map?.dispose()
+              mat.dispose()
+            } else if (label instanceof THREE.Mesh) {
+              label.geometry.dispose()
+              const mat = label.material as THREE.MeshBasicMaterial
+              mat.map?.dispose()
+              mat.dispose()
             }
             labelsMap.delete(hotspot.id)
             setHotspotLabels(prev => {
@@ -1353,9 +1369,10 @@ export default function HotspotsPanel() {
           // Set panel visibility based on state
           panel.visible = panelState === 'open'
           
-          // For CSS3D panels, also mark as billboard so they face camera
+          const panelFaceCamera = hotspot.faceCamera !== false
+          panel.userData.isBillboard = panelFaceCamera
           if (panel.userData.isCSS3DPanel) {
-            panel.userData.isBillboard = true
+            panel.userData.isBillboard = panelFaceCamera
           }
           
           // Store config in userData immediately to prevent unnecessary recreations
@@ -1431,6 +1448,7 @@ export default function HotspotsPanel() {
               // Panel positioned below marker with proper spacing
               panel.position.copy(position.clone().add(new THREE.Vector3(0, -1.2, 0)))
               panel.updateMatrixWorld(true)
+              panel.userData.isBillboard = hotspot.faceCamera !== false
               
               // Only update texture if config actually changed (prevents flickering)
               const currentConfig = panel.userData.panelConfig
@@ -2154,8 +2172,12 @@ export default function HotspotsPanel() {
               borderColor: labelBorderColor,
               borderRadius: labelBorderRadius,
               widthPixels: labelWidthPixels,
-              heightPixels: labelHeightPixels
+              heightPixels: labelHeightPixels,
+              offsetX: labelOffsetX,
+              offsetY: labelOffsetY,
+              faceCamera: labelFaceCamera
             },
+            faceCamera: labelFaceCamera,
             panelBorder: {
               width: panelBorderWidth,
               color: panelBorderColor,
@@ -2203,6 +2225,9 @@ export default function HotspotsPanel() {
                 setLabelBorderWidth(placedHotspot.label?.borderWidth || 2)
                 setLabelBorderColor(placedHotspot.label?.borderColor || '#00AAFF')
                 setLabelBorderRadius(placedHotspot.label?.borderRadius || 6)
+                setLabelOffsetX(placedHotspot.label?.offsetX ?? 0)
+                setLabelOffsetY(placedHotspot.label?.offsetY ?? 0)
+                setLabelFaceCamera(placedHotspot.label?.faceCamera ?? placedHotspot.faceCamera ?? true)
                 setPanelBorderWidth(placedHotspot.panelBorder?.width || 2)
                 setPanelBorderColor(placedHotspot.panelBorder?.color || '#00AAFF')
                 setPanelBorderRadius(placedHotspot.panelBorder?.borderRadius || 12)
@@ -2553,6 +2578,7 @@ export default function HotspotsPanel() {
     setHotspotName('')
     setContentData('')
     setLabelText('')
+    setLabelFaceCamera(true)
     setIconType('default')
     setIconValue('📍')
     setShowHotspotIcon(true)
@@ -2605,6 +2631,7 @@ export default function HotspotsPanel() {
     // Load label position offsets
     setLabelOffsetX(hotspot.label?.offsetX ?? 0)
     setLabelOffsetY(hotspot.label?.offsetY ?? 0)
+    setLabelFaceCamera(hotspot.label?.faceCamera ?? hotspot.faceCamera ?? true)
     // Load panel border settings
     setPanelBorderWidth(hotspot.panelBorder?.width ?? 2)
     setPanelBorderColor(hotspot.panelBorder?.color || '#00AAFF')
@@ -2671,12 +2698,13 @@ export default function HotspotsPanel() {
               ...h,
               name: hotspotName || 'Untitled Hotspot',
               showIcon: showHotspotIcon,
+              faceCamera: labelFaceCamera,
               icon: iconType !== 'default' ? {
                 type: iconType,
                 value: iconValue
               } : undefined,
-              label: labelText ? {
-                text: labelText,
+              label: {
+                text: labelText || hotspotName || 'Untitled Hotspot',
                 visible: labelVisible,
                 fontSize: labelFontSize,
                 color: labelColor,
@@ -2687,8 +2715,9 @@ export default function HotspotsPanel() {
                 widthPixels: labelWidthPixels,
                 heightPixels: labelHeightPixels,
                 offsetX: labelOffsetX,
-                offsetY: labelOffsetY
-              } : undefined,
+                offsetY: labelOffsetY,
+                faceCamera: labelFaceCamera
+              },
               panelBorder: {
                 width: panelBorderWidth,
                 color: panelBorderColor,
@@ -2870,8 +2899,12 @@ export default function HotspotsPanel() {
         backgroundColor: labelBackgroundColor,
         borderWidth: labelBorderWidth,
         borderColor: labelBorderColor,
-        borderRadius: labelBorderRadius
+        borderRadius: labelBorderRadius,
+        offsetX: labelOffsetX,
+        offsetY: labelOffsetY,
+        faceCamera: labelFaceCamera
       },
+      faceCamera: labelFaceCamera,
       panelBorder: {
         width: panelBorderWidth,
         color: panelBorderColor,
@@ -3644,6 +3677,17 @@ export default function HotspotsPanel() {
                 <option value="hover">Show on Hover</option>
                 <option value="click">Show on Click</option>
               </select>
+              <label className="checkbox-label" style={{ marginTop: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={labelFaceCamera}
+                  onChange={(e) => setLabelFaceCamera(e.target.checked)}
+                />
+                <span>Label faces camera (billboard)</span>
+              </label>
+              <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#888' }}>
+                Uncheck for fixed orientation in 3D space. Applies to floating label and content panel.
+              </p>
               <div className="label-formatting" style={{ marginTop: '8px' }}>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
                   <label className="formatting-label" style={{ minWidth: '80px' }}>

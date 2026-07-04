@@ -4602,11 +4602,15 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         viewerRef.current.dynamicSky.update(camera)
       }
       
-      // Update hotspot panels to always face camera (billboard effect)
+      // Update hotspot panels and labels to face camera when billboard mode is enabled
       scene.traverse((obj) => {
         if (obj.userData.isHotspotPanel && obj.userData.isBillboard) {
-          // Make panel always face camera
           obj.lookAt(camera.position)
+        }
+        if (obj.userData.isHotspotLabel && obj.userData.faceCamera !== false && obj.visible) {
+          if (obj instanceof THREE.Sprite || obj instanceof THREE.Mesh) {
+            obj.lookAt(camera.position)
+          }
         }
       })
       

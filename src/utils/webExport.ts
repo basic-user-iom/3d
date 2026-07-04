@@ -2768,7 +2768,7 @@ export function createStandaloneViewerHTML(
           css3dObject.userData.isCSS3DPanel = true;
           css3dObject.userData.isHotspotPanel = true;
           css3dObject.userData.hotspotId = hotspot.id;
-          css3dObject.userData.isBillboard = true;
+          css3dObject.userData.isBillboard = hotspot.faceCamera !== false;
           css3dObject.userData.css3dScale = scale;
           css3dObject.userData.panelHeightPixels = panelHeight;
           css3dObject.userData.panelWidthPixels = panelWidth;
@@ -3130,7 +3130,7 @@ export function createStandaloneViewerHTML(
         panel.renderOrder = 0;
         panel.userData.isHotspotPanel = true;
         panel.userData.hotspotId = hotspot.id;
-        panel.userData.isBillboard = true;
+        panel.userData.isBillboard = hotspot.faceCamera !== false;
         panel.userData.actualWidth = actualPanelWidth;
         panel.userData.actualHeight = actualPanelHeight;
         panel.userData.isVisible = isOpen; // Track panel visibility (matches main viewer panelState)
@@ -3618,36 +3618,51 @@ export function createStandaloneViewerHTML(
             labelTexture.image.__baseWidth = baseWidth;
             labelTexture.image.__baseHeight = baseHeight;
             
-            const labelMaterial = new THREE.SpriteMaterial({ 
-              map: labelTexture, 
-              transparent: true,
-              depthTest: true,
-              depthWrite: false,
-              sizeAttenuation: true,
-              opacity: 1.0
-            });
-            const labelSprite = new THREE.Sprite(labelMaterial);
-            
-            // Position label above marker (matches main viewer)
+            const labelFaceCamera = hotspot.label.faceCamera ?? hotspot.faceCamera ?? true;
+            const aspectRatio = baseWidth / baseHeight;
+            const baseScale = 0.4;
             const labelOffsetY = hotspot.label.offsetY || 0;
             const labelOffsetX = hotspot.label.offsetX || 0;
-            labelSprite.position.set(
+            const labelPosition = new THREE.Vector3(
               position.x + labelOffsetX,
               position.y + 0.3 + labelOffsetY,
               position.z
             );
-            
-            // Calculate proper scale (matches main viewer)
-            const aspectRatio = baseWidth / baseHeight;
-            const baseScale = 0.4; // World units for label height - smaller to fit better with content panel
-            labelSprite.scale.set(baseScale * aspectRatio, baseScale, 1);
-            
-            labelSprite.renderOrder = 1001;
-            labelSprite.userData.isHotspotLabel = true;
-            labelSprite.userData.hotspotId = hotspot.id;
-            labelSprite.userData.labelText = hotspot.label.text;
-            labelSprite.userData.canClickToOpen = true; // Mark label as clickable to open panel
-            scene.add(labelSprite);
+
+            let labelObject;
+            if (labelFaceCamera) {
+              const labelMaterial = new THREE.SpriteMaterial({ 
+                map: labelTexture, 
+                transparent: true,
+                depthTest: true,
+                depthWrite: false,
+                sizeAttenuation: true,
+                opacity: 1.0
+              });
+              labelObject = new THREE.Sprite(labelMaterial);
+              labelObject.scale.set(baseScale * aspectRatio, baseScale, 1);
+            } else {
+              const labelMaterial = new THREE.MeshBasicMaterial({
+                map: labelTexture,
+                transparent: true,
+                depthTest: true,
+                depthWrite: false,
+                side: THREE.DoubleSide
+              });
+              labelObject = new THREE.Mesh(
+                new THREE.PlaneGeometry(baseScale * aspectRatio, baseScale),
+                labelMaterial
+              );
+            }
+
+            labelObject.position.copy(labelPosition);
+            labelObject.renderOrder = 1001;
+            labelObject.userData.isHotspotLabel = true;
+            labelObject.userData.faceCamera = labelFaceCamera;
+            labelObject.userData.hotspotId = hotspot.id;
+            labelObject.userData.labelText = hotspot.label.text;
+            labelObject.userData.canClickToOpen = true;
+            scene.add(labelObject);
           }
           
           // Create connecting line if target position exists
@@ -6940,7 +6955,7 @@ export function createStandaloneViewerHTML(
               canvasPanels.add(obj);
             } else if (obj instanceof THREE.Sprite && obj.userData.isHotspotMarker) {
               hotspotSprites.add(obj);
-            } else if (obj instanceof THREE.Sprite && obj.userData.isHotspotLabel) {
+            } else if (obj.userData.isHotspotLabel) {
               hotspotLabels.add(obj);
             }
           });
@@ -6991,7 +7006,8 @@ export function createStandaloneViewerHTML(
             
             hotspotLabels.forEach((label) => {
               try {
-                if (label instanceof THREE.Sprite && label.visible) {
+                if (label.userData.faceCamera === false || !label.visible) return;
+                if (label instanceof THREE.Sprite || label instanceof THREE.Mesh) {
                   label.lookAt(camera.position);
                 }
               } catch (e) {
