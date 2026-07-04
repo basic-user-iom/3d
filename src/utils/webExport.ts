@@ -20,6 +20,7 @@ import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
 import { getCameraBoundsClampSource } from '../viewer/utils/cameraBounds'
 import { ExportWorkerPool } from './webExportWorker'
 import { generateHotspotMarkerRuntimeJs } from './hotspotMarkerRuntime'
+import { generateWebExportWeatherRuntimeJs } from './webExportWeatherRuntime'
 
 export interface WebExportOptions {
   includeModel: boolean
@@ -1499,6 +1500,7 @@ export function createStandaloneViewerHTML(
     import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
     import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
     import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
+    import { Sky } from 'three/addons/objects/Sky.js';
     import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
     
     // Load MeshoptSimplifier dynamically (it's a large library)
@@ -1537,6 +1539,9 @@ export function createStandaloneViewerHTML(
     if (!CONFIG.lighting.sceneLights || !Array.isArray(CONFIG.lighting.sceneLights)) {
       CONFIG.lighting.sceneLights = [];
     }
+
+    // Ensure weather config is normalized (standalone weather + fog/rain/snow/clouds)
+    CONFIG.weather = normalizeWebExportWeatherConfig(CONFIG.weather || {});
     
     // Ensure camera bounds are initialized
     if (!CONFIG.cameraBounds) {
@@ -2550,6 +2555,7 @@ export function createStandaloneViewerHTML(
     }
     
     ${generateHotspotMarkerRuntimeJs()}
+    ${generateWebExportWeatherRuntimeJs()}
 
     // Helper function to wrap text (matches main viewer)
     function wrapText(ctx, text, maxWidth) {
@@ -6497,6 +6503,11 @@ export function createStandaloneViewerHTML(
             console.log('[WebExport] Initializing', CONFIG.hotspots.length, 'hotspots');
             initializeHotspots(CONFIG.hotspots, scene, camera, renderer);
           }
+
+          // Initialize standalone weather (fog, rain, snow, dynamic sky, sun/moon)
+          if (typeof initializeWebExportWeather === 'function') {
+            initializeWebExportWeather({ scene, camera, renderer });
+          }
           
           // Setup hotspot panel click handling (X button and label clicks)
           const raycaster = new THREE.Raycaster();
@@ -7487,6 +7498,11 @@ export function createStandaloneViewerHTML(
               syncOrbitControlsLimits(controls, CONFIG.cameraBounds);
               applyOrbitCameraBounds(camera, controls, CONFIG.cameraBounds);
             }
+
+            // Update weather particles, sky, and sun/moon
+            if (typeof updateWebExportWeather === 'function') {
+              updateWebExportWeather(scene, camera, renderer);
+            }
             
             renderer.render(scene, camera);
           }
@@ -7927,6 +7943,7 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
     
     // Weather Settings
     weather: {
+      enableStandaloneWeather: store.enableStandaloneWeather,
       preset: store.weatherPreset,
       timeOfDay: store.timeOfDay,
       northOffset: store.northOffset,

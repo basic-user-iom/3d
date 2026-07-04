@@ -263,6 +263,7 @@ export interface SavedProject {
       serialization: HdrSerialized
     }
     weather: {
+      enableStandaloneWeather?: boolean
       weatherPreset: string
       cloudDensity: number
       cloudThickness: number
@@ -1563,6 +1564,7 @@ export async function createProjectSnapshot(onProgress?: (progress: number, mess
         serialization: hdrSerialization
       },
       weather: {
+        enableStandaloneWeather: store.enableStandaloneWeather,
         weatherPreset: store.weatherPreset,
         cloudDensity: store.cloudDensity,
         cloudThickness: store.cloudThickness,
@@ -2060,6 +2062,7 @@ const applyRendering = (snapshot: SavedProject['store']['rendering']) => {
 
 const applyWeather = (snapshot: SavedProject['store']['weather']) => {
   useAppStore.setState({
+    enableStandaloneWeather: snapshot.enableStandaloneWeather ?? false,
     weatherPreset: snapshot.weatherPreset,
     cloudDensity: snapshot.cloudDensity,
     cloudThickness: snapshot.cloudThickness,
