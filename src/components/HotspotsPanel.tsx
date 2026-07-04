@@ -549,9 +549,7 @@ export default function HotspotsPanel() {
     labelOffsetX,
     labelOffsetY,
     labelFaceCamera,
-    viewer?.camera,
-    labelOffsetX,
-    labelOffsetY
+    viewer?.camera
   ])
 
   // Real-time preview: sync icon visibility and type while editing
