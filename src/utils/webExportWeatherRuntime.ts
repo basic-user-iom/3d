@@ -190,7 +190,7 @@ export function normalizeWebExportWeatherConfig(
     skyRayleigh: typeof raw.skyRayleigh === 'number' ? raw.skyRayleigh : 3,
     skyMieCoefficient: typeof raw.skyMieCoefficient === 'number' ? raw.skyMieCoefficient : 0.005,
     skyMieDirectionalG: typeof raw.skyMieDirectionalG === 'number' ? raw.skyMieDirectionalG : 0.7,
-    skyExposure: typeof raw.skyExposure === 'number' ? raw.skyExposure : 0.5,
+    skyExposure: typeof raw.skyExposure === 'number' ? raw.skyExposure : 1.0,
     rainParticleScale: typeof raw.rainParticleScale === 'number' ? raw.rainParticleScale : 1,
     rainParticleSpeed: typeof raw.rainParticleSpeed === 'number' ? raw.rainParticleSpeed : 1,
     rainCollisionEnabled: raw.rainCollisionEnabled !== false,
@@ -226,8 +226,18 @@ export function generateWebExportWeatherRuntimeJs(): string {
       }
       const configured = CONFIG && CONFIG.assets;
       if (configured) {
-        if (relativePath.indexOf('environment.hdr') !== -1 && configured.hdrUrl) return configured.hdrUrl;
-        if (relativePath.indexOf('model.glb') !== -1 && configured.modelUrl) return configured.modelUrl;
+        if (relativePath.indexOf('environment.hdr') !== -1) {
+          if (configured.hdrUrl) return configured.hdrUrl;
+          const hdrKey = configured.hdr || 'environment.hdr';
+          if (assetMap && assetMap[hdrKey]) return assetMap[hdrKey];
+          if (assetMap && assetMap['./' + hdrKey]) return assetMap['./' + hdrKey];
+        }
+        if (relativePath.indexOf('model.glb') !== -1) {
+          if (configured.modelUrl) return configured.modelUrl;
+          const modelKey = configured.model || 'model.glb';
+          if (assetMap && assetMap[modelKey]) return assetMap[modelKey];
+          if (assetMap && assetMap['./' + modelKey]) return assetMap['./' + modelKey];
+        }
       }
       const base = (configured && configured.basePath) || window.__webExportBaseUrl || document.baseURI || window.location.href;
       try {
@@ -354,7 +364,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
         skyRayleigh: typeof raw.skyRayleigh === 'number' ? raw.skyRayleigh : 3,
         skyMieCoefficient: typeof raw.skyMieCoefficient === 'number' ? raw.skyMieCoefficient : 0.005,
         skyMieDirectionalG: typeof raw.skyMieDirectionalG === 'number' ? raw.skyMieDirectionalG : 0.7,
-        skyExposure: typeof raw.skyExposure === 'number' ? raw.skyExposure : 0.5,
+        skyExposure: typeof raw.skyExposure === 'number' ? raw.skyExposure : 1.0,
         rainParticleScale: typeof raw.rainParticleScale === 'number' ? raw.rainParticleScale : 1,
         rainParticleSpeed: typeof raw.rainParticleSpeed === 'number' ? raw.rainParticleSpeed : 1,
         rainCollisionEnabled: raw.rainCollisionEnabled !== false,
@@ -391,13 +401,33 @@ export function generateWebExportWeatherRuntimeJs(): string {
     }
 
     function webExportResolveToneMappingExposure(weather, lighting) {
-      if (weather && typeof weather.skyExposure === 'number') {
-        return weather.skyExposure;
-      }
-      if (lighting && typeof lighting.exposure === 'number') {
-        return lighting.exposure;
-      }
-      return 1.0;
+      const skyExp = weather && typeof weather.skyExposure === 'number' ? weather.skyExposure : 1.0;
+      const lightExp = lighting && typeof lighting.exposure === 'number' ? lighting.exposure : 1.0;
+      return Math.max(skyExp, lightExp, 0.85);
+    }
+
+    function webExportLogWeatherDiagnostics(scene, camera, renderer, weather, state) {
+      if (window.__webExportWeatherDiagnosticsLogged) return;
+      window.__webExportWeatherDiagnosticsLogged = true;
+      let skyMeshInScene = false;
+      scene.traverse(function(obj) {
+        if (obj && obj.userData && obj.userData.isDynamicSky) skyMeshInScene = true;
+      });
+      const bg = scene.background;
+      const bgLabel = !bg ? 'null' : (bg.isColor ? 'color' : 'texture');
+      console.log('[WebExport] Weather diagnostics (once):', {
+        'CONFIG.weather': weather,
+        enableStandaloneWeather: weather.enableStandaloneWeather,
+        useStandaloneSky: state.useStandaloneSky,
+        skyMeshInScene: skyMeshInScene,
+        hasSkyRef: !!state.sky,
+        skyFrustumCulled: state.sky ? state.sky.frustumCulled : null,
+        'scene.background': bgLabel,
+        hasEnvironment: !!scene.environment,
+        toneMappingExposure: renderer ? renderer.toneMappingExposure : null,
+        cameraFar: camera ? camera.far : null,
+        hdrLoaded: !!window.__hdrTextureLoaded
+      });
     }
 
     function webExportTimeOfDayToSkyAngles(timeOfDay, northOffset) {
@@ -704,8 +734,11 @@ export function generateWebExportWeatherRuntimeJs(): string {
           sky.userData.isDynamicSky = true;
           sky.userData.excludeFromFog = true;
           sky.renderOrder = -1000;
+          sky.frustumCulled = false;
           scene.add(sky);
           state.sky = sky;
+        } else if (!state.sky) {
+          console.warn('[WebExport] Three.js Sky addon unavailable — procedural sky not created');
         }
         if (!state.sunMesh) {
           const sunGeo = new THREE.SphereGeometry(15, 24, 24);
@@ -714,6 +747,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
           sunMesh.userData.isSun = true;
           sunMesh.userData.excludeFromFog = true;
           sunMesh.renderOrder = -900;
+          sunMesh.frustumCulled = false;
           scene.add(sunMesh);
           state.sunMesh = sunMesh;
         }
@@ -724,6 +758,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
           moonMesh.userData.isMoon = true;
           moonMesh.userData.excludeFromFog = true;
           moonMesh.renderOrder = -900;
+          moonMesh.frustumCulled = false;
           scene.add(moonMesh);
           state.moonMesh = moonMesh;
         }
@@ -753,6 +788,7 @@ export function generateWebExportWeatherRuntimeJs(): string {
       state.initialized = true;
       state.weather = weather;
       state.useStandaloneSky = useStandaloneSky;
+      webExportLogWeatherDiagnostics(scene, camera, renderer, weather, state);
       console.log('[WebExport] Weather initialized ✓', {
         preset: weather.preset,
         enableStandaloneWeather: weather.enableStandaloneWeather,

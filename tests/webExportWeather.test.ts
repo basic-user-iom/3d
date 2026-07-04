@@ -88,12 +88,20 @@ describe('webExportWeatherRuntime', () => {
     expect(js).toContain('function initializeWebExportWeather')
     expect(js).toContain('function updateWebExportWeather')
     expect(js).toContain('function webExportIsStandaloneSkyActive')
+    expect(js).toContain('function webExportLogWeatherDiagnostics')
     expect(js).toContain('function resolveExportAssetUrl')
     expect(js).toContain('function removeExportedWeatherMeshes')
     expect(js).toContain('function computeSubjectBounds')
     expect(js).toContain('enableStandaloneWeather')
     expect(js).toContain('new Sky()')
+    expect(js).toContain('sky.frustumCulled = false')
     expect(js).toContain('Weather initialized ✓')
+    expect(js).toContain('Weather diagnostics (once)')
+  })
+
+  it('defaults skyExposure to 1.0 to match editor fallback', () => {
+    const config = normalizeWebExportWeatherConfig({ enableStandaloneWeather: true })
+    expect(config.skyExposure).toBe(1.0)
   })
 
   it('detects exported editor DynamicSky meshes by flag, name, and scale', () => {

@@ -6322,8 +6322,15 @@ export function createStandaloneViewerHTML(
             }
           } catch (e) {
             console.error('HDR loading failed:', e);
-            // Set a default background color if HDR fails
-            scene.background = new THREE.Color(0x1a1a1a);
+            const hdrCfg = CONFIG.hdr || {};
+            const weatherSkyPending = typeof webExportIsStandaloneSkyActive === 'function' &&
+              webExportIsStandaloneSkyActive(CONFIG.weather || {}, hdrCfg);
+            if (weatherSkyPending) {
+              scene.background = null;
+              console.log('[WebExport] HDR failed — standalone weather sky will provide background');
+            } else {
+              scene.background = new THREE.Color(0x1a1a1a);
+            }
           }
         } else {
           // HDR already loaded, reuse it
@@ -6483,6 +6490,11 @@ export function createStandaloneViewerHTML(
         if (isStandard360HDR) {
           // Force render to update shadow maps and ensure camera view is correct
           renderer.render(scene, camera);
+        }
+
+        // Initialize weather immediately after HDR + camera (before render loop)
+        if (typeof initializeWebExportWeather === 'function') {
+          initializeWebExportWeather({ scene, camera, renderer });
         }
         
         // Configure shadows on ALL meshes (including interior surfaces like car interiors)
@@ -7487,11 +7499,8 @@ export function createStandaloneViewerHTML(
               // The render loop should only ensure visibility, not create new objects
             } else {
               // Regular mode: background should be HDR texture if visible (unless standalone weather sky is active)
-              const weatherState = window.__webExportWeather;
-              const weatherConfig = weatherState && weatherState.weather;
-              const standaloneSkyActive = weatherState && weatherState.initialized && weatherConfig &&
-                typeof webExportIsStandaloneSkyActive === 'function' &&
-                webExportIsStandaloneSkyActive(weatherConfig, hdrConfig);
+              const standaloneSkyActive = typeof webExportIsStandaloneSkyActive === 'function' &&
+                webExportIsStandaloneSkyActive(CONFIG.weather || {}, hdrConfig);
 
               // CRITICAL: Remove ALL GroundedSkybox objects in regular mode
               const skyboxesToRemove = [];
@@ -8053,8 +8062,12 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
   }
 
   // Create HTML (pass config so template can use settings)
+  const htmlOptions: WebExportOptions = {
+    ...defaultOptions,
+    includeHDR: defaultOptions.includeHDR && !!hdrBlob
+  }
   const html = createStandaloneViewerHTML(
-    defaultOptions,
+    htmlOptions,
     defaultOptions.includeCameraViews ? cameraViews : [],
     thumbnails,
     config
@@ -8220,6 +8233,11 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
       // This ensures each preview uses fresh data, not cached from previous exports
       console.log('[WebExport] Clearing cached state, export timestamp:', ${exportTimestamp});
       window.__webExportAssetUrls = ${assetUrlMapJson};
+      
+      if (window.__webExportWeather) {
+        window.__webExportWeather = null;
+      }
+      window.__webExportWeatherDiagnosticsLogged = false;
       
       if (window.__hdrTextureLoaded) {
         if (window.__hdrTextureLoaded.dispose) {
