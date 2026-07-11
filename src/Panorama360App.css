@@ -10,22 +10,35 @@
 }
 
 .panorama-360-header {
-  padding: 20px;
+  padding: 14px 20px;
   background: rgba(0, 0, 0, 0.5);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
 }
 
-.panorama-360-header h1 {
-  margin: 0 0 8px 0;
-  font-size: 24px;
+.panorama-360-header-main h1 {
+  margin: 0 0 4px 0;
+  font-size: 20px;
   font-weight: 600;
 }
 
-.panorama-360-header p {
-  margin: 0 0 16px 0;
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.7);
+.panorama-360-header-main p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.panorama-360-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
 }
 
 .panorama-360-actions {
@@ -53,10 +66,20 @@
   background: #2a7edf;
 }
 
+.panorama-360-button.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.panorama-360-button.secondary:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .panorama-360-content {
   flex: 1;
   position: relative;
   overflow: hidden;
+  min-width: 0;
 }
 
 .panorama-360-content.drag-active {
@@ -134,6 +157,103 @@
   left: 0;
   color: #4a9eff;
   font-weight: bold;
+}
+
+.panorama-360-button.preview {
+  background: rgba(120, 220, 140, 0.18);
+  border: 1px solid rgba(120, 220, 140, 0.45);
+  color: #9ef0ad;
+}
+
+.panorama-360-button.preview:hover:not(:disabled) {
+  background: rgba(120, 220, 140, 0.28);
+}
+
+.panorama-360-button.preview:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.panorama-360-app.preview-mode .panorama-360-header {
+  display: none;
+}
+
+.panorama-360-preview-bar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  max-width: calc(100% - 32px);
+}
+
+.panorama-360-preview-bar-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.panorama-360-preview-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ef0ad;
+  background: rgba(120, 220, 140, 0.15);
+  border: 1px solid rgba(120, 220, 140, 0.35);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.panorama-360-preview-scene {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panorama-360-preview-bar-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.panorama-360-preview-btn {
+  background: #4a9eff;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.panorama-360-preview-btn:hover {
+  background: #3a8eef;
+}
+
+.panorama-360-preview-btn.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.panorama-360-preview-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 

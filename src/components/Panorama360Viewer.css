@@ -15,6 +15,17 @@
   display: block;
   width: 100%;
   height: 100%;
+  background: #000;
+}
+
+.panorama-360-transition-overlay {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 15;
+  will-change: opacity;
 }
 
 .panorama-360-loading {
@@ -100,6 +111,431 @@
 
 .panorama-360-controls-hint p {
   margin: 0;
+}
+
+.panorama-360-viewer.edit-mode .panorama-360-container {
+  cursor: crosshair;
+}
+
+.panorama-360-viewer.dragging-hotspot .panorama-360-container,
+.panorama-360-viewer.dragging-hotspot .panorama-hotspot-marker.editable,
+.panorama-360-viewer.dragging-popup .panorama-360-container {
+  cursor: grabbing;
+}
+
+.panorama-hotspot-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 20;
+  color: white;
+  border: 2px solid white;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.panorama-360-viewer.dragging-hotspot .panorama-hotspot-marker {
+  transition: none;
+}
+
+.panorama-hotspot-marker.shape-square {
+  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+}
+
+.panorama-hotspot-marker.shape-pin {
+  border-radius: 50% 50% 50% 0;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -75%) rotate(-45deg);
+}
+
+.panorama-hotspot-marker.shape-pin .panorama-hotspot-pulse {
+  border-radius: 50% 50% 50% 0;
+}
+
+.panorama-hotspot-marker.shape-pin .panorama-hotspot-label {
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.panorama-hotspot-marker:hover,
+.panorama-hotspot-marker.highlighted,
+.panorama-hotspot-marker.selected {
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--hotspot-color, #4a9eff) 60%, transparent);
+}
+
+.panorama-hotspot-marker.shape-circle:hover,
+.panorama-hotspot-marker.shape-circle.highlighted,
+.panorama-hotspot-marker.shape-circle.selected,
+.panorama-hotspot-marker.shape-square:hover,
+.panorama-hotspot-marker.shape-square.highlighted,
+.panorama-hotspot-marker.shape-square.selected {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.panorama-hotspot-marker.shape-pin:hover,
+.panorama-hotspot-marker.shape-pin.highlighted,
+.panorama-hotspot-marker.shape-pin.selected {
+  transform: translate(-50%, -75%) rotate(-45deg) scale(1.15);
+}
+
+.panorama-hotspot-marker.editable {
+  cursor: grab;
+}
+
+.panorama-hotspot-marker.editable:active,
+.panorama-hotspot-marker.selected.editable {
+  cursor: grabbing;
+}
+
+.panorama-hotspot-marker.selected {
+  outline: 2px dashed rgba(255, 255, 255, 0.85);
+  outline-offset: 4px;
+}
+
+.panorama-hotspot-marker.draft {
+  opacity: 0.85;
+  border: 2px dashed rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+.panorama-hotspot-marker.draft .panorama-hotspot-pulse {
+  animation: none;
+  opacity: 0.45;
+}
+
+.panorama-hotspot-marker.type-link,
+.panorama-hotspot-marker.type-info,
+.panorama-hotspot-marker.type-url {
+  /* Color applied via inline style from hotspot.color */
+}
+
+.panorama-hotspot-pulse {
+  position: absolute;
+  inset: -6px;
+  border-radius: inherit;
+  border: 2px solid var(--hotspot-color, currentColor);
+  opacity: 0.5;
+  animation: hotspot-pulse 2s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes hotspot-pulse {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.panorama-hotspot-label {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.panorama-hotspot-marker:hover .panorama-hotspot-label {
+  opacity: 1;
+}
+
+.panorama-hotspot-info-popup {
+  position: absolute;
+  background: rgba(16, 16, 24, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 20px 24px;
+  z-index: 30;
+  color: white;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+}
+
+.panorama-hotspot-info-popup.edit-preview {
+  border-color: rgba(255, 180, 60, 0.35);
+}
+
+.panorama-hotspot-info-popup.view-only {
+  pointer-events: none;
+  z-index: 40;
+}
+
+.panorama-hotspot-info-popup.view-only .panorama-hotspot-info-close {
+  pointer-events: auto;
+}
+
+.panorama-hotspot-info-drag-handle {
+  cursor: grab;
+  margin: -20px -24px 10px;
+  padding: 20px 44px 0 24px;
+  user-select: none;
+  touch-action: none;
+}
+
+.panorama-hotspot-info-popup.dragging .panorama-hotspot-info-drag-handle {
+  cursor: grabbing;
+}
+
+.panorama-hotspot-info-popup h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.panorama-hotspot-info-popup p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.panorama-hotspot-info-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.panorama-hotspot-info-close:hover {
+  color: white;
+}
+
+.panorama-url-iframe-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: auto;
+}
+
+.panorama-url-iframe-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.panorama-url-iframe-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  height: min(80vh, 720px);
+  background: rgba(16, 16, 24, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.panorama-url-iframe-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.panorama-url-iframe-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.panorama-url-iframe-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: white;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panorama-url-iframe-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.panorama-url-iframe-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.panorama-url-iframe-open-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border-radius: 6px;
+  background: #4a9eff;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.panorama-url-iframe-open-btn:hover {
+  background: #3a8eef;
+  text-decoration: none;
+}
+
+.panorama-url-iframe-open-btn-lg {
+  padding: 10px 20px;
+  font-size: 14px;
+}
+
+.panorama-url-iframe-open-btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.panorama-url-iframe-close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.panorama-url-iframe-close:hover {
+  color: white;
+}
+
+.panorama-url-iframe-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panorama-url-iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: white;
+}
+
+.panorama-url-iframe-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(16, 16, 24, 0.92);
+  color: rgba(255, 255, 255, 0.85);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.panorama-url-iframe-loading p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.panorama-url-iframe-trouble {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(16, 16, 24, 0.94);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 2;
+}
+
+.panorama-url-iframe-trouble p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.panorama-url-iframe-footer {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: center;
+}
+
+.panorama-url-iframe-footer strong {
+  color: rgba(255, 255, 255, 0.65);
+  font-weight: 600;
+}
+
+.panorama-url-iframe-blocked {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.panorama-url-iframe-blocked-icon {
+  font-size: 36px;
+  line-height: 1;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+
+.panorama-url-iframe-blocked-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: white;
+  max-width: 28em;
+}
+
+.panorama-url-iframe-blocked-detail {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.6);
+  max-width: 32em;
 }
 
 
