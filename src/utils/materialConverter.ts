@@ -72,39 +72,44 @@ export function convertSceneBasicMaterials(
 
   const skipSystemObjects = options?.skipSystemObjects ?? true
 
-  scene.traverse((object) => {
-    // Skip system objects if requested
-    if (skipSystemObjects) {
-      // CRITICAL: Check userData flags first (most reliable)
-      const meshName = (object.name || '').toLowerCase()
+  const isUnderSkippedAncestor = (object: THREE.Object3D): boolean => {
+    let current: THREE.Object3D | null = object
+    while (current) {
+      const ud = current.userData || {}
+      const meshName = (current.name || '').toLowerCase()
+      const objType = current.constructor?.name || current.type || ''
       if (
-        object.userData.isShadowPlane ||
+        ud.isShadowPlane ||
         meshName === 'shadow plane' ||
-        object.userData.isGridHelper ||
-        object.userData.isAxesHelper ||
-        object.userData.isLightGizmo ||
-        object.userData.isLightHelper ||
-        object.userData.isGroundedSkybox ||
-        object.userData.isDynamicSky ||
-        object.userData.isSun ||
-        object.userData.isMoon ||
-        (object as any).isSystemObject ||
-        (object.userData && object.userData.isSystemObject)
-      ) {
-        return
-      }
-      
-      // Also check object type names (fallback)
-      const objType = object.constructor?.name || ''
-      if (
+        ud.isGridHelper ||
+        ud.isAxesHelper ||
+        ud.isLightGizmo ||
+        ud.isLightHelper ||
+        ud.isTransformControls ||
+        ud.isHelper ||
+        ud.ignoreShadowWarnings ||
+        ud.isGroundedSkybox ||
+        ud.isDynamicSky ||
+        ud.isSun ||
+        ud.isMoon ||
+        ud.isSystemObject ||
         objType.includes('Controls') ||
         objType.includes('Helper') ||
         objType.includes('Gizmo') ||
-        object instanceof THREE.Light ||
-        object instanceof THREE.Camera
+        current instanceof THREE.Light ||
+        current instanceof THREE.Camera
       ) {
-        return
+        return true
       }
+      current = current.parent
+    }
+    return false
+  }
+
+  scene.traverse((object) => {
+    // Skip system objects if requested (including descendants of light gizmos/helpers)
+    if (skipSystemObjects && isUnderSkippedAncestor(object)) {
+      return
     }
 
     if (object instanceof THREE.Mesh && object.material) {

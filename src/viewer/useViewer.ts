@@ -10,8 +10,8 @@ import type { ProjectObject, RoomInfo } from '../store/useAppStore'
 import { StreetsGLBridge } from '../utils/streetsGLBridge'
 import { fileRegistry } from '../utils/projectPersistence'
 import { calculateMaterialIntensity } from './utils/materialIntensityHelper'
-import { cacheImportedModelScene } from './importedModelCache'
-import { descriptorFromImportedModel } from './objectRegistry'
+import { cacheImportedModelScene, getCachedImportedModelScene } from './importedModelCache'
+import { buildMeshFromDescriptor, descriptorFromImportedModel } from './objectRegistry'
 import { attachModelAnimations } from './utils/modelAnimations'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { refreshHdrGroundShadowState, resolveGroundProjectionActive } from './utils/hdrGroundShadowCatcher'
@@ -53,18 +53,62 @@ const _streetsGLTargetWorld = new THREE.Vector3()
 const _streetsGLLocalPos = new THREE.Vector3()
 
 /**
+ * True when this object (or its registry/cached mesh) is authored for iframe display
+ * while the Three.js root may be hidden (city/hybrid).
+ */
+export function isStreetsGLIframeRenderable(
+  obj: THREE.Object3D,
+  descriptor?: ProjectObject
+): boolean {
+  const ud = obj.userData as any
+  const descUd = descriptor?.userData as any
+  if (ud.renderInStreetsGL === true || descUd?.renderInStreetsGL === true) return true
+  if (ud.streetsGLVisible !== undefined || descUd?.streetsGLVisible !== undefined) return true
+  const projectId = (ud.projectObjectId as string | undefined) || descriptor?.id
+  if (projectId) {
+    const cached = getCachedImportedModelScene(projectId)
+    if ((cached?.userData as any)?.renderInStreetsGL === true) return true
+  }
+  // City registry proxies often omit renderInStreetsGL but still represent iframe objects.
+  if (descUd?.streetsGLAdded === true || ud.streetsGLAdded === true) return true
+  return false
+}
+
+/**
  * Resolve whether an object should render in the Streets GL iframe.
  * Hybrid/city imports hide the Three.js root (visible=false) while still expecting
  * iframe rendering — do not propagate that flag to bridge updates.
+ *
+ * Registry descriptors used to record visible=false from that Three.js hide; treat
+ * panel/iframe visibility via streetsGLVisible (and descriptor.visible only when the
+ * object is not an iframe-renderable import).
  */
 export function getStreetsGLVisibleFromObject(
   obj: THREE.Object3D,
   descriptor?: ProjectObject
 ): boolean {
   const ud = obj.userData as any
-  if (ud.renderInStreetsGL === true) {
-    return ud.streetsGLVisible !== false
+  const descUd = descriptor?.userData as any
+
+  if (isStreetsGLIframeRenderable(obj, descriptor)) {
+    if (ud.streetsGLVisible === false || descUd?.streetsGLVisible === false) return false
+    // Objects Panel hide for city proxies sets descriptor.visible / proxy.visible without
+    // always setting streetsGLVisible — honor an explicit panel hide when present.
+    if (descriptor?.visible === false && ud.streetsGLVisible === undefined && descUd?.streetsGLVisible === undefined) {
+      // Distinguish import pollution (Three.js hide copied into descriptor) from a real
+      // panel hide: polluted imports also have renderInStreetsGL on the cached mesh and
+      // never got an explicit streetsGLVisible=false from the user.
+      const projectId = (ud.projectObjectId as string | undefined) || descriptor?.id
+      const cached = projectId ? getCachedImportedModelScene(projectId) : null
+      const cachedHiddenForIframe = (cached?.userData as any)?.renderInStreetsGL === true
+      if (cachedHiddenForIframe || ud.renderInStreetsGL === true || descUd?.renderInStreetsGL === true) {
+        return true
+      }
+      return false
+    }
+    return true
   }
+
   const descriptorVisible = descriptor?.visible
   if (descriptorVisible === false) return false
   return obj.visible !== false
@@ -145,6 +189,51 @@ export function getStreetsGLRegistryRotationFromObject(obj: THREE.Object3D): Vec
   _streetsGLBakeMatrix.decompose(_streetsGLBakePos, _streetsGLBakeQuat, _streetsGLBakeScale)
   _streetsGLWorldEuler.setFromQuaternion(_streetsGLBakeQuat, obj.rotation.order)
   return { x: _streetsGLWorldEuler.x, y: _streetsGLWorldEuler.y, z: _streetsGLWorldEuler.z }
+}
+
+/** True when obj is reachable from scene via parent chain (required for TransformControls.attach). */
+export function isObjectInSceneGraph(obj: THREE.Object3D, scene: THREE.Scene): boolean {
+  let current: THREE.Object3D | null = obj
+  while (current) {
+    if (current === scene) return true
+    current = current.parent
+  }
+  return false
+}
+
+/**
+ * Attach TransformControls only when the target is in the live scene graph.
+ * Prevents "The attached 3D object must be a part of the scene graph" spam.
+ */
+export function safeAttachTransformControls(
+  transformControls: { attach: (object: THREE.Object3D) => unknown; detach: () => unknown } | null | undefined,
+  object: THREE.Object3D | null | undefined,
+  scene: THREE.Scene
+): boolean {
+  if (!transformControls || !object) return false
+  const tc = transformControls as { attach: (o: THREE.Object3D) => unknown; detach: () => unknown; object?: THREE.Object3D }
+  if (!isObjectInSceneGraph(object, scene)) {
+    if (tc.object === object) {
+      try {
+        tc.detach()
+      } catch {
+        /* ignore */
+      }
+    }
+    return false
+  }
+  try {
+    tc.attach(object)
+    return true
+  } catch (error) {
+    console.warn('[TransformControls] Failed to attach:', error)
+    try {
+      tc.detach()
+    } catch {
+      /* ignore */
+    }
+    return false
+  }
 }
 
 /** Resolve the Streets GL bridge object id from a mesh or registry proxy. */
@@ -263,6 +352,19 @@ export function captureStreetsGLBaseTransform(model: THREE.Object3D): void {
       x: _streetsGLWorldPos.x,
       y: _streetsGLWorldPos.y,
       z: _streetsGLWorldPos.z
+    }
+  }
+}
+
+/**
+ * Ensure base-transform anchor exists without inventing placementWorld after a gizmo move.
+ * Capturing getWorldPosition() post-move as placementWorld zeroes Mercator deltas on sync.
+ */
+function ensureStreetsGLBaseTransformOnly(obj: THREE.Object3D): void {
+  const ud = obj.userData as any
+  if (!ud.streetsGLBaseTransform) {
+    ud.streetsGLBaseTransform = {
+      position: { x: obj.position.x, y: obj.position.y, z: obj.position.z }
     }
   }
 }
@@ -466,8 +568,12 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
   if (!objectId) return
 
   const descriptor = projectId ? store.projectObjects.find((p) => p.id === projectId) : undefined
-  // Backfill placement anchor fields when missing (legacy projects saved before placementWorld existed).
-  captureStreetsGLBaseTransform(obj)
+  // Backfill base only. Never invent placementWorld here — capturing post-gizmo world
+  // pose as placementWorld zeroes Mercator deltas (object appears stuck / jumps away).
+  ensureStreetsGLBaseTransformOnly(obj)
+  const placementWorld =
+    (ud.streetsGLPlacementWorldPosition as Vec3 | undefined) ??
+    (descriptor?.userData?.streetsGLPlacementWorldPosition as Vec3 | undefined)
 
   ud.streetsGLPosition = ud.streetsGLPosition ?? descriptor?.userData?.streetsGLPosition
   const rawPosition = computeStreetsGLPositionFromObject(obj, descriptor)
@@ -475,7 +581,15 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
     objectId,
     source: 'syncProjectObjectTransformToStreetsGL'
   })
-  if (!position) return
+  if (!position) {
+    console.warn('[StreetsGLSync] Transform sync skipped — invalid Mercator position:', {
+      objectId,
+      rawPosition,
+      hasPlacementWorld: !!placementWorld,
+      hasStreetsGLPosition: !!ud.streetsGLPosition
+    })
+    return
+  }
 
   const rotation = getStreetsGLWorldRotationFromObject(obj)
   const registryRotation = getStreetsGLRegistryRotationFromObject(obj)
@@ -484,6 +598,8 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
     y: obj.scale.y * STREETS_GL_OBJECT_SCALE,
     z: obj.scale.z * STREETS_GL_OBJECT_SCALE
   }
+
+  const streetsGLVisible = getStreetsGLVisibleFromObject(obj, descriptor)
 
   let gps: { lat: number; lon: number } | undefined = descriptor?.gps
   try {
@@ -498,7 +614,12 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
   }
 
   if (projectId) {
+    const renderInStreetsGL =
+      ud.renderInStreetsGL === true || descriptor?.userData?.renderInStreetsGL === true
     store.updateProjectObject(projectId, {
+      // Keep registry panel visibility aligned with iframe visibility for hybrid/city imports
+      // (descriptor.visible was historically polluted by Three.js hide).
+      visible: renderInStreetsGL ? streetsGLVisible : descriptor?.visible,
       transform: {
         position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
         rotation: registryRotation,
@@ -507,20 +628,37 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
       gps,
       userData: {
         ...(descriptor?.userData || {}),
+        ...(renderInStreetsGL ? { renderInStreetsGL: true } : {}),
         streetsGLBaseTransform: ud.streetsGLBaseTransform ?? descriptor?.userData?.streetsGLBaseTransform,
         streetsGLPlacementWorldPosition:
-          ud.streetsGLPlacementWorldPosition ?? descriptor?.userData?.streetsGLPlacementWorldPosition,
+          placementWorld ?? descriptor?.userData?.streetsGLPlacementWorldPosition,
+        streetsGLPosition: ud.streetsGLPosition ?? descriptor?.userData?.streetsGLPosition,
         streetsGLAdded: true
       }
     })
   }
+
+  streetsGLDebugLog('[StreetsGLSync] Transform sync → Streets GL:', {
+    objectId,
+    position,
+    visible: streetsGLVisible,
+    scale
+  })
 
   bridge
     .updateObject(objectId, {
       position,
       rotation,
       scale,
-      visible: getStreetsGLVisibleFromObject(obj, descriptor)
+      visible: streetsGLVisible
+    })
+    .then((success) => {
+      if (!success) {
+        console.warn(
+          '[StreetsGLSync] Transform update failed (object missing in iframe?) — will not hide object:',
+          objectId
+        )
+      }
     })
     .catch((err) => console.warn('[CityTransform] Failed to sync transform to Streets GL:', err))
 }
@@ -589,6 +727,79 @@ export async function mergeStreetsGLObjectsIntoRegistry(
     streetsGLDebugLog('[StreetsGLSync] Merged pre-existing iframe objects into registry:', merged)
   }
   return merged
+}
+
+/**
+ * After an iframe reload the bridge starts empty while the registry still lists objects as added.
+ * Re-sync any registry objects that are missing from the live iframe scene.
+ */
+export async function resyncRegistryObjectsAfterBridgeReload(
+  bridge: StreetsGLBridge
+): Promise<number> {
+  if (!bridge.isReady) return 0
+
+  const iframeObjects = await bridge.getObjects()
+  const iframeIds = new Set(iframeObjects.map((o) => o.id))
+  const store = useAppStore.getState()
+  let resynced = 0
+
+  for (const descriptor of store.projectObjects) {
+    const streetsId = descriptor.streetsGLObjectId || descriptor.id
+    const shouldBeInStreetsGL =
+      descriptor.userData?.streetsGLAdded === true ||
+      descriptor.userData?.streetsGLPending === true ||
+      !!descriptor.streetsGLObjectId
+
+    if (!shouldBeInStreetsGL) continue
+    if (iframeIds.has(streetsId)) continue
+
+    let mesh: THREE.Object3D | null = null
+    if (descriptor.kind === 'imported') {
+      mesh = getCachedImportedModelScene(descriptor.id) ?? null
+    } else {
+      mesh = buildMeshFromDescriptor(descriptor)
+    }
+    if (!mesh) continue
+
+    mesh.userData.streetsGLObjectId = streetsId
+    mesh.userData.streetsGLAdded = false
+
+    if (descriptor.gps) {
+      try {
+        mesh.userData.streetsGLPosition = latLonToStreetsGL(
+          descriptor.gps.lat,
+          descriptor.gps.lon,
+          1.5
+        )
+      } catch {
+        /* syncModelToStreetsGL falls back to map center */
+      }
+    }
+
+    try {
+      await syncModelToStreetsGL(mesh, bridge)
+      const ud = mesh.userData as any
+      store.updateProjectObject(descriptor.id, {
+        streetsGLObjectId: ud.streetsGLObjectId || streetsId,
+        userData: {
+          streetsGLAdded: true,
+          streetsGLPending: false,
+          streetsGLPosition: ud.streetsGLPosition,
+          streetsGLBaseTransform: ud.streetsGLBaseTransform,
+          streetsGLPlacementWorldPosition: ud.streetsGLPlacementWorldPosition
+        }
+      })
+      resynced++
+    } catch (err) {
+      console.warn('[StreetsGLSync] Failed to re-sync after iframe reload:', descriptor.id, err)
+    }
+  }
+
+  if (resynced > 0) {
+    store.markSceneRevision()
+    streetsGLDebugLog('[StreetsGLSync] Re-synced registry objects after iframe reload:', resynced)
+  }
+  return resynced
 }
 
 /** Mirror Streets GL placement (GPS, transform) from a loaded model back into the registry. */
@@ -1297,14 +1508,16 @@ function syncObjectToStreetsGLInternal(
       position: streetsGLObject.position,
       rotation: streetsGLObject.rotation,
       scale: streetsGLObject.scale,
-      visible: streetsGLObject.visible
+      visible: getStreetsGLVisibleFromObject(model)
     }).then((success) => {
       if (success) {
         streetsGLDebugLog('[StreetsGLSync] ✅ Object successfully updated in Streets GL:', objectId)
         if (resolve) resolve()
       } else {
-        console.warn('[StreetsGLSync] Failed to update object in Streets GL:', objectId)
-        if (reject) reject(new Error('Update failed'))
+        // Iframe may have reloaded and dropped objects — fall back to add.
+        console.warn('[StreetsGLSync] Update failed (object missing in iframe?) — re-adding:', objectId)
+        model.userData.streetsGLAdded = false
+        syncObjectToStreetsGLInternal(model, bridge, streetsGLObject, objectId, false, resolve, reject)
       }
     }).catch((error) => {
       console.error('[StreetsGLSync] Error updating object in Streets GL:', error)

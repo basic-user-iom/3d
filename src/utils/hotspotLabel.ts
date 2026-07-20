@@ -434,6 +434,21 @@ export function updateHotspotLabelTexture(
   return newTexture
 }
 
+/**
+ * Resolve a shared frozen rotation for label + panel when billboard is off.
+ * Always anchors to the same position so top/bottom stay in sync.
+ */
+export function resolveSharedFrozenRotation(
+  faceCamera: boolean,
+  existing: FrozenRotation | undefined,
+  anchorPosition: THREE.Vector3,
+  cameraPosition: THREE.Vector3
+): FrozenRotation | undefined {
+  if (faceCamera) return undefined
+  if (existing) return existing
+  return quaternionToFrozen(computeBillboardQuaternion(anchorPosition, cameraPosition))
+}
+
 /** Apply the same frozen orientation to label and content panel meshes. */
 export function applyHotspotFrozenOrientation(
   label: THREE.Object3D | null | undefined,
@@ -443,6 +458,13 @@ export function applyHotspotFrozenOrientation(
   panelPosition: THREE.Vector3,
   cameraPosition: THREE.Vector3
 ): void {
-  if (label) applyFrozenOrientation(label, frozen, labelPosition, cameraPosition)
-  if (panel) applyFrozenOrientation(panel, frozen, panelPosition, cameraPosition)
+  // Use label position as the shared anchor when freezing so both objects get the same quaternion
+  // even if `frozen` is missing (avoids top/bottom desync from per-object lookAt).
+  const shared = frozen ?? (
+    label || panel
+      ? quaternionToFrozen(computeBillboardQuaternion(labelPosition, cameraPosition))
+      : undefined
+  )
+  if (label) applyFrozenOrientation(label, shared, labelPosition, cameraPosition)
+  if (panel) applyFrozenOrientation(panel, shared, panelPosition, cameraPosition)
 }

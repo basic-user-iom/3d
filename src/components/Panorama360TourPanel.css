@@ -30,6 +30,168 @@
   min-width: 0;
 }
 
+.panorama-tour-section-header-collapsed {
+  margin-bottom: 0;
+}
+
+.panorama-tour-section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.panorama-tour-section-toggle:hover h2 {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.panorama-tour-section-chevron {
+  flex-shrink: 0;
+  width: 10px;
+  font-size: 10px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.panorama-guided-tour-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.panorama-guided-tour-toolbar select,
+.panorama-guided-tour-name input {
+  width: 100%;
+}
+
+.panorama-guided-tour-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.panorama-guided-steps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.panorama-guided-steps-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.panorama-guided-steps-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panorama-guided-step-item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panorama-guided-step-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.panorama-guided-step-item.active {
+  border-color: rgba(74, 158, 255, 0.55);
+  background: rgba(74, 158, 255, 0.12);
+}
+
+.panorama-guided-step-item.playing {
+  border-color: rgba(80, 200, 120, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(80, 200, 120, 0.25);
+}
+
+.panorama-guided-step-index {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.panorama-guided-step-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.panorama-guided-step-meta strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.panorama-guided-step-meta span {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panorama-guided-step-editor {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panorama-guided-step-move {
+  display: flex;
+  gap: 4px;
+}
+
+.panorama-guided-check {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.panorama-guided-check input {
+  width: auto !important;
+}
+
 .panorama-tour-section-header-stacked {
   flex-direction: column;
   align-items: stretch;
@@ -111,6 +273,12 @@
 .panorama-tour-add-btn:hover,
 .panorama-tour-edit-btn:hover {
   background: rgba(74, 158, 255, 0.28);
+}
+
+.panorama-tour-add-btn.active {
+  background: #4a9eff;
+  color: white;
+  border-color: #4a9eff;
 }
 
 .panorama-tour-edit-btn.active {
@@ -516,24 +684,178 @@
   margin-top: 10px;
 }
 
-.panorama-tour-initial-view-actions button {
+.panorama-tour-initial-view-actions button,
+.panorama-tour-initial-view-actions button.primary {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 8px 10px;
   border-radius: 4px;
-  border: 1px solid rgba(74, 158, 255, 0.45);
-  background: rgba(74, 158, 255, 0.15);
-  color: #8ec5ff;
+  border: 1px solid rgba(74, 158, 255, 0.55);
+  background: rgba(74, 158, 255, 0.22);
+  color: #b6dbff;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.panorama-tour-initial-view-actions button:hover {
-  background: rgba(74, 158, 255, 0.25);
+.panorama-tour-initial-view-actions button:hover,
+.panorama-tour-initial-view-actions button.primary:hover {
+  background: rgba(74, 158, 255, 0.34);
 }
 
 .panorama-tour-initial-view-actions button.secondary {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.15);
   color: rgba(255, 255, 255, 0.75);
+  font-weight: 500;
+}
+
+.panorama-tour-flock-position {
+  border: 1px solid rgba(74, 158, 255, 0.55);
+  border-color: rgba(74, 158, 255, 0.55);
+  background: rgba(74, 158, 255, 0.1);
+  padding: 12px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  box-shadow: inset 0 0 0 1px rgba(74, 158, 255, 0.12);
+}
+
+.panorama-tour-flock-position legend {
+  color: #8ec5ff;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.panorama-tour-flock-position-banner {
+  color: rgba(190, 220, 255, 0.92) !important;
+  margin-bottom: 8px;
+}
+
+.panorama-tour-pin-birds-btn {
+  font-weight: 700 !important;
+  min-height: 34px;
+}
+
+.panorama-tour-effects-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.panorama-tour-effects-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.panorama-tour-effects-tab:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.panorama-tour-effects-tab.active {
+  border-color: rgba(74, 158, 255, 0.55);
+  background: rgba(74, 158, 255, 0.16);
+  color: #eaf4ff;
+}
+
+.panorama-tour-effects-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.panorama-tour-effects-tab.enabled .panorama-tour-effects-tab-dot {
+  background: #5dff9a;
+  box-shadow: 0 0 6px rgba(93, 255, 154, 0.55);
+}
+
+.panorama-tour-effects-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panorama-tour-effects-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.panorama-tour-effects-panel-header .panorama-tour-checkbox {
+  margin: 0;
+}
+
+.panorama-tour-effects-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.panorama-tour-effects-controls > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.panorama-tour-effects-controls input[type='range'] {
+  width: 100%;
+  accent-color: #4a9eff;
+}
+
+.panorama-tour-effects-controls input[type='color'] {
+  width: 100%;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.panorama-tour-effects-controls select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f0f0f5;
+  font-size: 12px;
+}
+
+.panorama-tour-range-value {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.panorama-tour-effects-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 96, 96, 0.4);
+  background: rgba(255, 64, 64, 0.12);
+  color: #ffc9c9;
+  font-size: 12px;
+  line-height: 1.4;
 }

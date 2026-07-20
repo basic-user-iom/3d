@@ -5,6 +5,7 @@ import {
   parsePanoramaProjectJson,
   PANORAMA_PROJECT_FILE_KIND,
   PANORAMA_PROJECT_FILE_VERSION,
+  resolvePanoramaProjectAssetUrl,
   serializePanoramaProject,
   type PanoramaProjectFile
 } from '../src/panorama/panoramaProjectFile'
@@ -115,6 +116,46 @@ describe('serializePanoramaProject', () => {
     })
     expect((project.panoramas[0].source as { dataUrl: string }).dataUrl).toMatch(/^data:image\/jpeg;base64,/)
   })
+
+  it('round-trips guided tours', async () => {
+    const state: PanoramaTourState = {
+      ...sampleState,
+      guidedTours: [
+        {
+          id: 'gt-1',
+          name: 'Intro',
+          steps: [
+            {
+              id: 'gts-1',
+              label: 'Look left',
+              durationSec: 2,
+              camera: { yaw: 0.4, pitch: -0.1, fov: 50 },
+              cameraDurationSec: 1.5,
+              easing: 'easeInOut',
+              hotspotActions: [
+                { hotspotId: 'hs-1', visible: true, openPopup: true, popupDurationSec: 3 }
+              ],
+              effects: { birds: true },
+              targetPanoramaId: 'pano-2'
+            }
+          ]
+        }
+      ]
+    }
+
+    const project = await serializePanoramaProject(state)
+    expect(project.version).toBe(PANORAMA_PROJECT_FILE_VERSION)
+    expect(project.guidedTours?.[0].steps[0]).toMatchObject({
+      label: 'Look left',
+      camera: { yaw: 0.4, pitch: -0.1, fov: 50 },
+      effects: { birds: true },
+      targetPanoramaId: 'pano-2'
+    })
+
+    const restored = deserializePanoramaProject(project)
+    expect(restored.guidedTours?.[0].name).toBe('Intro')
+    expect(restored.guidedTours?.[0].steps[0].hotspotActions?.[0].popupDurationSec).toBe(3)
+  })
 })
 
 describe('deserializePanoramaProject', () => {
@@ -145,6 +186,12 @@ describe('deserializePanoramaProject', () => {
     expect(restored.activePanoramaId).toBe('pano-1')
   })
 
+  it('loads v1 projects without guidedTours', () => {
+    const project = makeProject({ version: 1, guidedTours: undefined })
+    const restored = deserializePanoramaProject(project)
+    expect(restored.guidedTours).toBeUndefined()
+  })
+
   it('preserves info and url hotspot fields including openInIframe', () => {
     const project = makeProject({
       panoramas: [
@@ -163,7 +210,8 @@ describe('deserializePanoramaProject', () => {
               popupWidth: 420,
               popupAnchor: 'below',
               popupOffsetX: 12,
-              popupOffsetY: -4
+              popupOffsetY: -4,
+              popupBorderColor: '#ff00aa'
             },
             {
               id: 'hs-url',
@@ -185,7 +233,8 @@ describe('deserializePanoramaProject', () => {
       popupWidth: 420,
       popupAnchor: 'below',
       popupOffsetX: 12,
-      popupOffsetY: -4
+      popupOffsetY: -4,
+      popupBorderColor: '#ff00aa'
     })
     expect(restored.panoramas[0].hotspots[1]).toMatchObject({
       url: 'https://example.com',
@@ -226,5 +275,25 @@ describe('parsePanoramaProjectJson validation', () => {
     })
 
     expect(() => deserializePanoramaProject(project)).toThrow(/invalid yaw\/pitch/)
+  })
+})
+
+describe('resolvePanoramaProjectAssetUrl', () => {
+  it('prefixes relative paths with the demo base URL', () => {
+    expect(resolvePanoramaProjectAssetUrl('panoramas/foo.jpeg', '/demos/panorama-360/')).toBe(
+      '/demos/panorama-360/panoramas/foo.jpeg'
+    )
+  })
+
+  it('leaves absolute, remote, and data URLs unchanged', () => {
+    expect(resolvePanoramaProjectAssetUrl('/demos/panorama-360/panoramas/a.jpeg', '/x/')).toBe(
+      '/demos/panorama-360/panoramas/a.jpeg'
+    )
+    expect(resolvePanoramaProjectAssetUrl('https://cdn.example/a.jpg', '/x/')).toBe(
+      'https://cdn.example/a.jpg'
+    )
+    expect(resolvePanoramaProjectAssetUrl('data:image/jpeg;base64,aa', '/x/')).toBe(
+      'data:image/jpeg;base64,aa'
+    )
   })
 })

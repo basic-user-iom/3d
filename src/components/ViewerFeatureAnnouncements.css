@@ -1,0 +1,128 @@
+.viewer-feature-announcements {
+  --vfa-bg: #12121a;
+  --vfa-bg-elevated: #101014;
+  --vfa-border: rgba(255, 255, 255, 0.08);
+  --vfa-border-accent: rgba(0, 229, 255, 0.25);
+  --vfa-text: #ececf2;
+  --vfa-text-muted: #8b8b9a;
+  --vfa-accent: #00e5ff;
+  --vfa-accent-glow: rgba(0, 229, 255, 0.15);
+
+  position: fixed;
+  top: 58px;
+  right: 14px;
+  z-index: 998;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  pointer-events: none;
+  max-width: min(96vw, 920px);
+}
+
+.viewer-feature-announcements > * {
+  pointer-events: auto;
+}
+
+/* Coming Soon compact card */
+.vfa-coming-soon {
+  width: 148px;
+  min-height: 108px;
+  position: relative;
+  background: var(--vfa-bg);
+  border: 1px solid var(--vfa-border);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  animation: vfa-fade-in 0.45s ease both;
+}
+
+@keyframes vfa-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.vfa-coming-soon-blur {
+  position: absolute;
+  inset: 0;
+  filter: blur(5px);
+  transform: scale(1.04);
+  background:
+    linear-gradient(135deg, rgba(0, 229, 255, 0.08), transparent 55%),
+    var(--vfa-bg-elevated);
+}
+
+.vfa-coming-soon-overlay {
+  position: relative;
+  z-index: 1;
+  inset: 0;
+  height: 100%;
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 0.75rem 0.5rem;
+  background: rgba(8, 8, 10, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.vfa-coming-soon-label {
+  font-family: ui-monospace, monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--vfa-accent);
+  text-shadow: 0 0 20px var(--vfa-accent-glow);
+}
+
+.vfa-coming-soon-countdown {
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--vfa-text);
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--vfa-border-accent);
+  border-radius: 2px;
+  background: rgba(0, 229, 255, 0.06);
+}
+
+.vfa-coming-soon-note {
+  margin: 0;
+  font-size: 0.52rem;
+  text-align: center;
+  line-height: 1.35;
+  color: var(--vfa-text-muted);
+}
+
+@media (max-width: 1100px) {
+  .viewer-feature-announcements {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: calc(100vw - 20px);
+  }
+}
+
+@media (max-width: 768px) {
+  .viewer-feature-announcements {
+    top: auto;
+    bottom: 72px;
+    right: 8px;
+    left: 8px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .vfa-coming-soon {
+    width: 100%;
+  }
+}

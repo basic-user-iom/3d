@@ -103,6 +103,10 @@ export function descriptorFromImportedModel(
     typeof ud.gpsLat === 'number' && typeof ud.gpsLon === 'number'
       ? { lat: ud.gpsLat as number, lon: ud.gpsLon as number }
       : undefined
+  // City/hybrid hide the Three.js root (visible=false + renderInStreetsGL) so only the
+  // iframe draws the model. Registry `visible` is the Objects Panel / Streets GL toggle —
+  // never copy that Three.js hide into the descriptor or gizmo sync will send visible:false.
+  const renderInStreetsGL = ud.renderInStreetsGL === true
   return {
     id: opts.id,
     name: scene.name || opts.fileName,
@@ -113,12 +117,13 @@ export function descriptorFromImportedModel(
       scale: { x: scene.scale.x, y: scene.scale.y, z: scene.scale.z }
     },
     gps,
-    visible: scene.visible !== false,
+    visible: renderInStreetsGL ? true : scene.visible !== false,
     threeObjectId: scene.id,
     streetsGLObjectId: ud.streetsGLObjectId || opts.id,
     userData: {
       fileName: opts.fileName,
       fileUrl: opts.fileUrl,
+      ...(renderInStreetsGL ? { renderInStreetsGL: true } : {}),
       ...(opts.extraUserData || {})
     }
   }
@@ -145,7 +150,13 @@ export function buildMeshFromDescriptor(descriptor: ProjectObject): THREE.Mesh |
     cached.position.set(t.position.x, t.position.y, t.position.z)
     cached.rotation.set(t.rotation.x, t.rotation.y, t.rotation.z)
     cached.scale.set(t.scale.x, t.scale.y, t.scale.z)
-    cached.visible = descriptor.visible
+    // Keep iframe-only hide on the Three.js root when restoring hybrid/city imports.
+    if ((cached.userData as any).renderInStreetsGL === true || descriptor.userData?.renderInStreetsGL === true) {
+      cached.visible = false
+      cached.userData.renderInStreetsGL = true
+    } else {
+      cached.visible = descriptor.visible
+    }
     cached.updateMatrixWorld(true)
     // Return first mesh child for API compatibility, or wrap — reconciler uses Object3D add.
     return cached as unknown as THREE.Mesh

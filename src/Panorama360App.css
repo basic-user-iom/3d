@@ -17,8 +17,41 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   flex-shrink: 0;
+}
+
+.panorama-360-back-link {
+  position: static;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+  white-space: nowrap;
+  z-index: 120;
+}
+
+.panorama-360-back-link:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+/* Preview mode has no header — single floating return control */
+.panorama-360-back-link--floating {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+}
+
+.panorama-360-header-main {
+  flex: 1;
+  min-width: 0;
 }
 
 .panorama-360-header-main h1 {
@@ -43,6 +76,7 @@
 
 .panorama-360-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 12px;
 }
 
@@ -255,6 +289,110 @@
 .panorama-360-preview-btn.secondary:hover {
   background: rgba(255, 255, 255, 0.14);
 }
+
+.panorama-360-tour-toggle {
+  display: none;
+}
+
+.panorama-360-tour-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .panorama-360-app {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+
+  .panorama-360-header {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px;
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+
+  .panorama-360-header-main h1 {
+    font-size: 15px;
+    margin: 0;
+  }
+
+  .panorama-360-header-main p {
+    display: none;
+  }
+
+  .panorama-360-actions {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .panorama-360-button {
+    padding: 8px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .panorama-360-tour-toggle {
+    display: inline-flex;
+  }
+
+  .panorama-360-body {
+    position: relative;
+  }
+
+  .panorama-360-tour-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+  }
+
+  .panorama-tour-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100% !important;
+    max-width: none !important;
+    height: min(48vh, 420px);
+    max-height: min(48vh, 420px);
+    z-index: 50;
+    border-right: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px 14px 0 0;
+    transform: translateY(105%);
+    transition: transform 0.22s ease;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
+  }
+
+  .panorama-360-app.mobile-tour-open .panorama-tour-panel {
+    transform: translateY(0);
+  }
+
+  .panorama-360-preview-bar {
+    top: max(10px, env(safe-area-inset-top));
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .panorama-360-preview-bar-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
 
 
 

@@ -7,6 +7,7 @@ import {
   getHotspotColor,
   getHotspotShape,
   getPopupAnchor,
+  getPopupBorderColor,
   getPopupWidth,
   getUrlIframeTitle,
   isLikelyIframeBlocked,
@@ -21,7 +22,8 @@ import {
   PANORAMA_SPHERE_RADIUS,
   projectToScreen,
   sphericalToCartesian,
-  syncPanoramaCameraAtOrigin
+  syncPanoramaCameraAtOrigin,
+  type PanoramaLiveLook
 } from '../panorama/panoramaSphericalCoords'
 import './Panorama360Viewer.css'
 
@@ -39,13 +41,19 @@ function hotspotProjectionSignature(hotspot: PanoramaHotspot): string {
     hotspot.popupHeight ?? '',
     hotspot.popupAnchor ?? '',
     hotspot.popupOffsetX ?? '',
-    hotspot.popupOffsetY ?? ''
+    hotspot.popupOffsetY ?? '',
+    hotspot.popupBorderColor ?? ''
   ].join('|')
 }
 
 const BASE_FOV = 75
 const ZOOM_FOV = 44
 const WIDE_FOV = 90
+/** User scroll/pinch FOV limits (degrees). Narrower = zoomed in. */
+const MIN_USER_FOV = 30
+const MAX_USER_FOV = 100
+/** FOV change per wheel deltaY unit (PerspectiveCamera FOV zoom). */
+const WHEEL_FOV_SPEED = 0.05
 const TRANSITION_HALF_MS = 275
 const ORIENTATION_ANIM_MS = 400
 const TRANSITION_OVERLAY_OPACITY = 1
@@ -54,6 +62,19 @@ type TransitionPhase = 'idle' | 'out' | 'in'
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+}
+
+function applyEasing(t: number, easing: 'linear' | 'easeInOut'): number {
+  if (easing === 'linear') return t
+  return easeInOutCubic(t)
+}
+
+export interface GuidedCameraCommand {
+  yaw: number
+  pitch: number
+  fov?: number
+  durationMs?: number
+  easing?: 'linear' | 'easeInOut'
 }
 
 interface TransitionState {
@@ -73,6 +94,11 @@ interface OrientationAnimationState {
   startPitch: number
   endYaw: number
   endPitch: number
+  startFov: number
+  endFov: number
+  durationMs: number
+  easing: 'linear' | 'easeInOut'
+  onComplete?: () => void
 }
 
 interface ProjectedHotspot {
@@ -96,6 +122,7 @@ function getInfoPopupStyle(
   const base: React.CSSProperties = {
     width,
     maxWidth: width,
+    borderColor: getPopupBorderColor(hotspot),
     ...(height ? { height, overflow: 'auto' } : {})
   }
 
@@ -302,6 +329,24 @@ interface Panorama360ViewerProps {
   onHotspotSelect?: (hotspotId: string, focusCamera?: boolean) => void
   onHotspotClick?: (hotspot: PanoramaHotspot) => void
   onOrientationChange?: (yaw: number, pitch: number) => void
+  /**
+   * Mutable look state written every animation frame (yaw/pitch/fov).
+   * Used by overlays (e.g. birds) that must stay glued to panorama space without React lag.
+   */
+  liveLookRef?: React.MutableRefObject<PanoramaLiveLook>
+  /** When true, OrbitControls are disabled (guided tour playback). */
+  interactionLocked?: boolean
+  /** Hotspot ids that should not render markers (guided tour visibility). */
+  hiddenHotspotIds?: ReadonlySet<string> | string[]
+  /**
+   * Imperative camera tween for guided tours. Bump `guidedCameraCommandKey` to apply.
+   * Prefer this over orientationFocusKey when FOV / custom duration are needed.
+   */
+  guidedCameraCommand?: GuidedCameraCommand | null
+  guidedCameraCommandKey?: number
+  onGuidedCameraComplete?: () => void
+  /** Force-open an info popup by hotspot id (guided tour). Null closes. */
+  guidedInfoPopupId?: string | null
 }
 
 export default function Panorama360Viewer({
@@ -325,7 +370,14 @@ export default function Panorama360Viewer({
   onPopupOffsetChange,
   onHotspotSelect,
   onHotspotClick,
-  onOrientationChange
+  onOrientationChange,
+  liveLookRef,
+  interactionLocked = false,
+  hiddenHotspotIds,
+  guidedCameraCommand = null,
+  guidedCameraCommandKey = 0,
+  onGuidedCameraComplete,
+  guidedInfoPopupId = null
 }: Panorama360ViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const transitionOverlayRef = useRef<HTMLDivElement>(null)
@@ -336,6 +388,11 @@ export default function Panorama360Viewer({
   const updateOrientationAnimationRef = useRef<() => boolean>(() => false)
   const orientationAnimRef = useRef<OrientationAnimationState | null>(null)
   const lastOrientationFocusKeyRef = useRef(0)
+  const lastGuidedCameraCommandKeyRef = useRef(0)
+  const onGuidedCameraCompleteRef = useRef(onGuidedCameraComplete)
+  onGuidedCameraCompleteRef.current = onGuidedCameraComplete
+  const interactionLockedRef = useRef(interactionLocked)
+  interactionLockedRef.current = interactionLocked
   const initialYawRef = useRef(initialYaw)
   const initialPitchRef = useRef(initialPitch)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -373,6 +430,25 @@ export default function Panorama360Viewer({
   const placementPreviewRef = useRef(placementPreview)
   const onPlaceHotspotRef = useRef(onPlaceHotspot)
   const onOrientationChangeRef = useRef(onOrientationChange)
+  const liveLookRefInternal = useRef(liveLookRef)
+  liveLookRefInternal.current = liveLookRef
+
+  const syncLiveLookRef = useCallback(() => {
+    const lookRef = liveLookRefInternal.current
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    if (!lookRef || !camera) return
+    const { yaw, pitch } = controls
+      ? getOrientationFromControls(controls, camera)
+      : { yaw: lookRef.current.yaw, pitch: lookRef.current.pitch }
+    lookRef.current.yaw = yaw
+    lookRef.current.pitch = pitch
+    lookRef.current.fov = camera.fov
+  }, [])
+
+  // Keep a stable frame hook so the mount-once animate loop never closes over a stale callback.
+  const syncLiveLookFrameRef = useRef(syncLiveLookRef)
+  syncLiveLookFrameRef.current = syncLiveLookRef
   const lastReportedOrientationRef = useRef<{ yaw: number; pitch: number } | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -380,6 +456,8 @@ export default function Panorama360Viewer({
   const [projectedHotspots, setProjectedHotspots] = useState<ProjectedHotspot[]>([])
   const projectedHotspotsRef = useRef(projectedHotspots)
   const [infoPopup, setInfoPopup] = useState<PanoramaHotspot | null>(null)
+  /** Last on-screen anchor so info popups stay readable when the hotspot leaves the frustum. */
+  const lastInfoPopupScreenRef = useRef<{ id: string; x: number; y: number } | null>(null)
   const [urlIframe, setUrlIframe] = useState<{ url: string; label: string } | null>(null)
   const [urlIframeError, setUrlIframeError] = useState<string | null>(null)
   const prevPreviewModeRef = useRef(previewMode)
@@ -396,6 +474,7 @@ export default function Panorama360Viewer({
   }, [projectedHotspots])
 
   const clearInfoPopup = useCallback(() => {
+    lastInfoPopupScreenRef.current = null
     setInfoPopup(null)
   }, [])
 
@@ -426,13 +505,14 @@ export default function Panorama360Viewer({
     const camera = cameraRef.current
     if (!controls || !camera) return
     const { yaw, pitch } = getOrientationFromControls(controls, camera)
+    syncLiveLookRef()
     const prev = lastReportedOrientationRef.current
     if (prev && Math.abs(prev.yaw - yaw) < 1e-5 && Math.abs(prev.pitch - pitch) < 1e-5) {
       return
     }
     lastReportedOrientationRef.current = { yaw, pitch }
     onOrientationChangeRef.current?.(yaw, pitch)
-  }, [])
+  }, [syncLiveLookRef])
 
   useEffect(() => {
     selectedHotspotIdRef.current = selectedHotspotId
@@ -471,7 +551,11 @@ export default function Panorama360Viewer({
       updated.popupOffsetX !== infoPopup.popupOffsetX ||
       updated.popupOffsetY !== infoPopup.popupOffsetY ||
       updated.label !== infoPopup.label ||
-      updated.info !== infoPopup.info
+      updated.info !== infoPopup.info ||
+      updated.popupBorderColor !== infoPopup.popupBorderColor ||
+      updated.popupWidth !== infoPopup.popupWidth ||
+      updated.popupHeight !== infoPopup.popupHeight ||
+      updated.popupAnchor !== infoPopup.popupAnchor
     ) {
       setInfoPopup(updated)
     }
@@ -496,9 +580,20 @@ export default function Panorama360Viewer({
 
   const setControlsEnabled = useCallback((enabled: boolean) => {
     if (controlsRef.current) {
-      controlsRef.current.enabled = enabled
+      controlsRef.current.enabled = enabled && !interactionLockedRef.current
     }
   }, [])
+
+  useEffect(() => {
+    if (!controlsRef.current) return
+    if (interactionLocked) {
+      controlsRef.current.enabled = false
+      return
+    }
+    if (transitionRef.current.phase === 'idle' && !orientationAnimRef.current) {
+      controlsRef.current.enabled = true
+    }
+  }, [interactionLocked])
 
   const startTransitionOut = useCallback(() => {
     transitionRef.current = {
@@ -574,10 +669,22 @@ export default function Panorama360Viewer({
 
   updateTransitionRef.current = updateTransition
 
-  const startOrientationAnimation = useCallback((endYaw: number, endPitch: number) => {
+  const startOrientationAnimation = useCallback((
+    endYaw: number,
+    endPitch: number,
+    options?: {
+      endFov?: number
+      durationMs?: number
+      easing?: 'linear' | 'easeInOut'
+      onComplete?: () => void
+    }
+  ) => {
     const camera = cameraRef.current
     const controls = controlsRef.current
-    if (!camera || !controls) return
+    if (!camera || !controls) {
+      options?.onComplete?.()
+      return
+    }
 
     const current = getOrientationFromControls(controls, camera)
     orientationAnimRef.current = {
@@ -585,7 +692,12 @@ export default function Panorama360Viewer({
       startYaw: current.yaw,
       startPitch: current.pitch,
       endYaw,
-      endPitch
+      endPitch,
+      startFov: camera.fov,
+      endFov: options?.endFov ?? camera.fov,
+      durationMs: Math.max(0, options?.durationMs ?? ORIENTATION_ANIM_MS),
+      easing: options?.easing ?? 'easeInOut',
+      onComplete: options?.onComplete
     }
     setControlsEnabled(false)
   }, [setControlsEnabled])
@@ -596,18 +708,23 @@ export default function Panorama360Viewer({
     const controls = controlsRef.current
     if (!anim || !camera || !controls) return false
 
-    const t = Math.min(1, (performance.now() - anim.startTime) / ORIENTATION_ANIM_MS)
-    const eased = easeInOutCubic(t)
+    const duration = Math.max(1, anim.durationMs)
+    const t = Math.min(1, (performance.now() - anim.startTime) / duration)
+    const eased = applyEasing(t, anim.easing)
     const yaw = lerpAngle(anim.startYaw, anim.endYaw, eased)
     const pitch = THREE.MathUtils.lerp(anim.startPitch, anim.endPitch, eased)
     applyCameraOrientation(camera, controls, yaw, pitch)
+    camera.fov = THREE.MathUtils.lerp(anim.startFov, anim.endFov, eased)
+    camera.updateProjectionMatrix()
 
     if (t >= 1) {
+      const onComplete = anim.onComplete
       orientationAnimRef.current = null
       if (transitionRef.current.phase === 'idle') {
         setControlsEnabled(true)
       }
       reportOrientation()
+      onComplete?.()
     }
     return true
   }, [reportOrientation, setControlsEnabled])
@@ -718,9 +835,14 @@ export default function Panorama360Viewer({
     cameraRef.current = camera
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
+    const coarsePointer =
+      typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+    const narrowViewport =
+      typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+    const isMobile = coarsePointer || narrowViewport
+    const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: false })
     renderer.setSize(width, height)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 2))
     renderer.setClearColor(0x000000, 1)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -732,7 +854,9 @@ export default function Panorama360Viewer({
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.05
-    controls.enableZoom = true
+    // Dolly zoom is useless here: syncPanoramaCameraAtOrigin resets position every frame.
+    // Zoom is handled via FOV on wheel (and pinch) below.
+    controls.enableZoom = false
     controls.enablePan = false
     controls.minDistance = 0.1
     controls.maxDistance = 10
@@ -750,6 +874,68 @@ export default function Panorama360Viewer({
       reportOrientation()
     }
     controls.addEventListener('change', handleControlsChange)
+
+    const applyUserFovZoom = (deltaFov: number) => {
+      if (!controls.enabled) return
+      if (transitionRef.current.phase !== 'idle') return
+      if (orientationAnimRef.current) return
+      const next = THREE.MathUtils.clamp(camera.fov + deltaFov, MIN_USER_FOV, MAX_USER_FOV)
+      if (Math.abs(next - camera.fov) < 1e-4) return
+      camera.fov = next
+      camera.updateProjectionMatrix()
+      syncLiveLookFrameRef.current()
+    }
+
+    const handleWheelZoom = (event: WheelEvent) => {
+      if (!controls.enabled) return
+      if (transitionRef.current.phase !== 'idle') return
+      if (orientationAnimRef.current) return
+      event.preventDefault()
+      // Scroll down / pinch-out → larger FOV (zoom out); scroll up → smaller FOV (zoom in)
+      applyUserFovZoom(event.deltaY * WHEEL_FOV_SPEED)
+    }
+    renderer.domElement.addEventListener('wheel', handleWheelZoom, { passive: false })
+
+    // Pinch-to-zoom → FOV (OrbitControls pinch is disabled with enableZoom=false)
+    let pinchStartDistance = 0
+    let pinchStartFov = camera.fov
+    const getTouchDistance = (touches: TouchList) => {
+      if (touches.length < 2) return 0
+      const dx = touches[0].clientX - touches[1].clientX
+      const dy = touches[0].clientY - touches[1].clientY
+      return Math.hypot(dx, dy)
+    }
+    const handleTouchStartPinch = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || !controls.enabled) return
+      pinchStartDistance = getTouchDistance(event.touches)
+      pinchStartFov = camera.fov
+    }
+    const handleTouchMovePinch = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || pinchStartDistance <= 0) return
+      if (!controls.enabled) return
+      if (transitionRef.current.phase !== 'idle') return
+      if (orientationAnimRef.current) return
+      event.preventDefault()
+      const distance = getTouchDistance(event.touches)
+      if (distance <= 0) return
+      // Spread fingers → zoom in (smaller FOV); pinch → zoom out
+      const next = THREE.MathUtils.clamp(
+        pinchStartFov * (pinchStartDistance / distance),
+        MIN_USER_FOV,
+        MAX_USER_FOV
+      )
+      if (Math.abs(next - camera.fov) < 1e-4) return
+      camera.fov = next
+      camera.updateProjectionMatrix()
+      syncLiveLookFrameRef.current()
+    }
+    const handleTouchEndPinch = () => {
+      pinchStartDistance = 0
+    }
+    renderer.domElement.addEventListener('touchstart', handleTouchStartPinch, { passive: true })
+    renderer.domElement.addEventListener('touchmove', handleTouchMovePinch, { passive: false })
+    renderer.domElement.addEventListener('touchend', handleTouchEndPinch, { passive: true })
+    renderer.domElement.addEventListener('touchcancel', handleTouchEndPinch, { passive: true })
 
     // Create sphere geometry for 360 view
     const geometry = new THREE.SphereGeometry(500, 60, 40)
@@ -821,6 +1007,8 @@ export default function Panorama360Viewer({
         syncPanoramaCameraAtOrigin(camera, controls)
       }
       updateTransitionRef.current()
+      // Keep overlay look refs in lockstep with the panorama camera (no React lag).
+      syncLiveLookFrameRef.current()
       if (renderer && scene && camera) {
         renderer.render(scene, camera)
       }
@@ -886,6 +1074,11 @@ export default function Panorama360Viewer({
 
     return () => {
       controls.removeEventListener('change', handleControlsChange)
+      renderer.domElement.removeEventListener('wheel', handleWheelZoom)
+      renderer.domElement.removeEventListener('touchstart', handleTouchStartPinch)
+      renderer.domElement.removeEventListener('touchmove', handleTouchMovePinch)
+      renderer.domElement.removeEventListener('touchend', handleTouchEndPinch)
+      renderer.domElement.removeEventListener('touchcancel', handleTouchEndPinch)
       window.removeEventListener('resize', handleResize)
       resizeObserver.disconnect()
       if (objectUrlRef.current) {
@@ -913,6 +1106,11 @@ export default function Panorama360Viewer({
   useEffect(() => {
     if (!cameraRef.current || !controlsRef.current) return
 
+    // Guided tour camera owns the next tween — don't snap overwrite.
+    if (guidedCameraCommandKey > lastGuidedCameraCommandKeyRef.current) {
+      return
+    }
+
     const shouldAnimate =
       orientationFocusKey > 0 &&
       orientationFocusKey !== lastOrientationFocusKeyRef.current
@@ -928,10 +1126,72 @@ export default function Panorama360Viewer({
       return
     }
 
+    if (orientationAnimRef.current) {
+      return
+    }
+
     orientationAnimRef.current = null
     applyCameraOrientation(cameraRef.current, controlsRef.current, initialYaw, initialPitch)
     reportOrientation()
-  }, [initialYaw, initialPitch, orientationFocusKey, imageUrl, reportOrientation, startOrientationAnimation])
+  }, [initialYaw, initialPitch, orientationFocusKey, imageUrl, reportOrientation, startOrientationAnimation, guidedCameraCommandKey])
+
+  useEffect(() => {
+    if (
+      guidedCameraCommandKey <= 0 ||
+      guidedCameraCommandKey === lastGuidedCameraCommandKeyRef.current
+    ) {
+      return
+    }
+    lastGuidedCameraCommandKeyRef.current = guidedCameraCommandKey
+    if (!guidedCameraCommand) {
+      onGuidedCameraCompleteRef.current?.()
+      return
+    }
+
+    const durationMs = guidedCameraCommand.durationMs ?? ORIENTATION_ANIM_MS
+    const endFov = guidedCameraCommand.fov
+    const complete = () => onGuidedCameraCompleteRef.current?.()
+
+    if (durationMs <= 0 && cameraRef.current && controlsRef.current) {
+      applyCameraOrientation(
+        cameraRef.current,
+        controlsRef.current,
+        guidedCameraCommand.yaw,
+        guidedCameraCommand.pitch
+      )
+      if (typeof endFov === 'number') {
+        cameraRef.current.fov = endFov
+        cameraRef.current.updateProjectionMatrix()
+      }
+      reportOrientation()
+      complete()
+      return
+    }
+
+    startOrientationAnimation(guidedCameraCommand.yaw, guidedCameraCommand.pitch, {
+      endFov,
+      durationMs,
+      easing: guidedCameraCommand.easing ?? 'easeInOut',
+      onComplete: complete
+    })
+  }, [guidedCameraCommand, guidedCameraCommandKey, reportOrientation, startOrientationAnimation])
+
+  const prevGuidedInfoPopupIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevGuidedInfoPopupIdRef.current
+    prevGuidedInfoPopupIdRef.current = guidedInfoPopupId ?? null
+
+    if (guidedInfoPopupId == null) {
+      if (prev != null && !editMode) clearInfoPopup()
+      return
+    }
+    if (editMode) return
+    const hotspot = hotspotsRef.current.find((h) => h.id === guidedInfoPopupId)
+    if (hotspot && hotspot.type === 'info') {
+      setInfoPopup(hotspot)
+      clearUrlIframe()
+    }
+  }, [guidedInfoPopupId, editMode, clearInfoPopup, clearUrlIframe])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     pointerDownRef.current = { x: e.clientX, y: e.clientY }
@@ -1787,6 +2047,13 @@ export default function Panorama360Viewer({
       <div ref={transitionOverlayRef} className="panorama-360-transition-overlay" aria-hidden />
       {projectedHotspots.map(({ hotspot: projectedHotspot, x, y }) => {
         const hotspot = hotspots.find((h) => h.id === projectedHotspot.id) ?? projectedHotspot
+        if (hiddenHotspotIds) {
+          const hidden =
+            typeof (hiddenHotspotIds as ReadonlySet<string>).has === 'function'
+              ? (hiddenHotspotIds as ReadonlySet<string>).has(hotspot.id)
+              : (hiddenHotspotIds as string[]).includes(hotspot.id)
+          if (hidden) return null
+        }
         const displayHotspot =
           editMarkerPreview?.id === hotspot.id ? editMarkerPreview : hotspot
         const color = getHotspotColor(displayHotspot)
@@ -1838,12 +2105,21 @@ export default function Panorama360Viewer({
         )
       })()}
       {!editMode && infoPopup && (() => {
+        // Guided tours use the same hotspot-anchored layout as manual preview
+        // (width, border color, offsets). Screen-position cache keeps the card
+        // visible if the marker briefly leaves the frustum during a camera tween.
         const projected = projectedHotspots.find((p) => p.hotspot.id === infoPopup.id)
-        if (!projected) return null
+        if (projected) {
+          lastInfoPopupScreenRef.current = { id: infoPopup.id, x: projected.x, y: projected.y }
+        }
+        const cached =
+          lastInfoPopupScreenRef.current?.id === infoPopup.id ? lastInfoPopupScreenRef.current : null
+        const anchor = projected ?? cached
+        if (!anchor) return null
         return (
           <div
             className="panorama-hotspot-info-popup view-only"
-            style={getInfoPopupStyle(infoPopup, projected.x, projected.y)}
+            style={getInfoPopupStyle(infoPopup, anchor.x, anchor.y)}
           >
             <button type="button" className="panorama-hotspot-info-close" onClick={clearInfoPopup}>×</button>
             <h3>{infoPopup.label}</h3>
@@ -1878,7 +2154,7 @@ export default function Panorama360Viewer({
         </div>
       )}
       <div className={`panorama-360-controls-hint ${previewMode ? 'preview' : ''}`}>
-        <p>{previewMode ? 'Drag to look around • Click hotspots to explore' : '🖱️ Drag to rotate • Scroll to zoom'}</p>
+        <p>{previewMode ? 'Drag to look around • Scroll to zoom • Click hotspots to explore' : '🖱️ Drag to rotate • Scroll to zoom'}</p>
       </div>
     </div>
   )

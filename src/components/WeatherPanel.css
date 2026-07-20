@@ -89,6 +89,7 @@
   font-weight: 600;
 }
 
+.weather-panel-header h3 {
   margin: 0;
   color: #f5f5f5;
   font-size: 17px;

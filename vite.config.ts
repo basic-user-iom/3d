@@ -2,8 +2,77 @@
 import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
+import http from 'http'
+import { spawn, type ChildProcess } from 'child_process'
+import { fileURLToPath } from 'url'
+
+const __viteConfigDir = path.dirname(fileURLToPath(import.meta.url))
 
 const WEB_IFC_WASM_FILES = ['web-ifc.wasm', 'web-ifc-mt.wasm', 'web-ifc-mt.worker.js'] as const
+
+/**
+ * Ensure Streets GL (:8081) is running whenever Vite starts.
+ * Safe with `npm run dev` (concurrently already starts the manager — we adopt).
+ * Fixes `dev:open` / lone `vite` sessions that previously left the iframe refused.
+ */
+function ensureStreetsGLOnViteStartPlugin() {
+  const STREETS_GL_PORT = 8081
+  let managerProcess: ChildProcess | null = null
+
+  const isReachable = () =>
+    new Promise<boolean>((resolve) => {
+      const req = http.get(
+        { host: '127.0.0.1', port: STREETS_GL_PORT, path: '/', timeout: 2000 },
+        (res) => {
+          res.resume()
+          resolve(true)
+        }
+      )
+      req.on('error', () => resolve(false))
+      req.on('timeout', () => {
+        req.destroy()
+        resolve(false)
+      })
+    })
+
+  return {
+    name: 'ensure-streets-gl-on-vite-start',
+    async configureServer(server: { httpServer?: { once: (event: string, cb: () => void) => void } | null }) {
+      // Delay so `npm run dev` (concurrently) can own the managed process first.
+      // If still down (e.g. `vite` / `dev:open` alone), we start it here.
+      const kickoff = async () => {
+        if (await isReachable()) {
+          console.log(`[vite] Streets GL already running on http://127.0.0.1:${STREETS_GL_PORT}`)
+          return
+        }
+
+        const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+        console.log('[vite] Starting Streets GL managed server (port 8081)...')
+        managerProcess = spawn(npmCommand, ['run', 'streets-gl:managed'], {
+          cwd: __viteConfigDir,
+          stdio: 'inherit',
+          shell: true,
+          env: { ...process.env }
+        })
+
+        managerProcess.on('exit', () => {
+          managerProcess = null
+        })
+      }
+
+      setTimeout(() => {
+        void kickoff()
+      }, 2500)
+
+      server.httpServer?.once('close', () => {
+        if (managerProcess && !managerProcess.killed) {
+          managerProcess.kill('SIGTERM')
+          managerProcess = null
+        }
+      })
+    }
+  }
+}
 
 function webIfcWasmPlugin() {
   const wasmDir = path.resolve(__dirname, 'node_modules/web-ifc')
@@ -121,6 +190,7 @@ export default defineConfig({
   plugins: [
     react(),
     webIfcWasmPlugin(),
+    ensureStreetsGLOnViteStartPlugin(),
     // Optional: enable SharedArrayBuffer for Gaussian splat sort workers (better performance).
     // Without these headers, the splat viewer uses sharedMemoryForWorkers: false.
     {

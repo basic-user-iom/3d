@@ -34,6 +34,7 @@
     "streets-gl": "cd streets-gl-alt && npm run dev",
     "streets-gl:managed": "node scripts/start-streets-gl-server.js",
     "build": "vite build",
+    "build:panorama": "vite build --config vite.panorama.config.ts",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "typecheck:full": "tsc",
     "preview": "vite preview",

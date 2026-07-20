@@ -68,7 +68,7 @@ void main() {
     if (windowNoise <= threshold) {
         glowFactor = 0.;
     } else {
-        glowFactor = (fract(windowNoise * 10.) * 0.6 + 0.4) * 0.5;
+        glowFactor = fract(windowNoise * 10.) * 0.6 + 0.4;
     }
 
     outColor = getColorValue(vTextureId, mask.b, vColor);

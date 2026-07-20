@@ -397,7 +397,12 @@ export class ExternalObjectBridge {
   private handleRemoveObject(data: { id: string }): void {
     const object = this.externalObjects.get(data.id)
     if (!object) {
-      console.warn('[ExternalObjectBridge] Object not found for removal:', data.id)
+      // Idempotent: parent may retry removal after iframe reload when object is already gone.
+      this.sendResponse('STREETS_GL_OBJECT_REMOVED', {
+        success: true,
+        objectId: data.id,
+        alreadyRemoved: true
+      })
       return
     }
 

@@ -1,3 +1,5 @@
+import type { GuidedTour } from './guidedTourTypes'
+
 export type PanoramaHotspotType = 'link' | 'info' | 'url'
 
 export type PanoramaHotspotShape = 'circle' | 'pin' | 'square'
@@ -38,6 +40,8 @@ export interface PanoramaHotspot {
   popupOffsetX?: number
   /** Extra vertical offset in px from anchored position. */
   popupOffsetY?: number
+  /** Info popup outline/border color (hex). Falls back to default gold. */
+  popupBorderColor?: string
 }
 
 export interface PanoramaEntry {
@@ -54,6 +58,8 @@ export interface PanoramaEntry {
 export interface PanoramaTourState {
   panoramas: PanoramaEntry[]
   activePanoramaId: string | null
+  /** Optional automated / guided tours persisted with the project. */
+  guidedTours?: GuidedTour[]
 }
 
 export const DEFAULT_HOTSPOT_COLORS: Record<PanoramaHotspotType, string> = {
@@ -65,6 +71,8 @@ export const DEFAULT_HOTSPOT_COLORS: Record<PanoramaHotspotType, string> = {
 export const DEFAULT_HOTSPOT_SHAPE: PanoramaHotspotShape = 'circle'
 export const DEFAULT_POPUP_WIDTH = 360
 export const DEFAULT_POPUP_ANCHOR: PanoramaPopupAnchor = 'above'
+/** Matches edit-preview gold in Panorama360Viewer.css (`rgba(255, 180, 60, …)`). */
+export const DEFAULT_POPUP_BORDER_COLOR = '#ffb43c'
 
 export function getHotspotColor(hotspot: PanoramaHotspot): string {
   return hotspot.color ?? DEFAULT_HOTSPOT_COLORS[hotspot.type]
@@ -75,11 +83,17 @@ export function getHotspotShape(hotspot: PanoramaHotspot): PanoramaHotspotShape 
 }
 
 export function getPopupWidth(hotspot: PanoramaHotspot): number {
-  return hotspot.popupWidth ?? DEFAULT_POPUP_WIDTH
+  const configured = hotspot.popupWidth ?? DEFAULT_POPUP_WIDTH
+  if (typeof window === 'undefined') return configured
+  return Math.min(configured, Math.max(200, window.innerWidth - 24))
 }
 
 export function getPopupAnchor(hotspot: PanoramaHotspot): PanoramaPopupAnchor {
   return hotspot.popupAnchor ?? DEFAULT_POPUP_ANCHOR
+}
+
+export function getPopupBorderColor(hotspot: PanoramaHotspot): string {
+  return hotspot.popupBorderColor ?? DEFAULT_POPUP_BORDER_COLOR
 }
 
 /** Returns a normalized http(s) URL or null when the value is missing or invalid. */

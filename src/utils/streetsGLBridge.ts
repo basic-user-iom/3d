@@ -16,11 +16,25 @@ export const STREETS_GL_MAX_VERTICES = 200_000
 /** Warn when geometry exceeds this; still attempt sync with TypedArrays. */
 export const STREETS_GL_LARGE_VERTEX_WARN = 150_000
 
+/**
+ * Cap unique textured/solid parts per object. Materials that share a texture.uuid are
+ * merged into one part (correct UVs). Distinct textures become separate draw parts so
+ * we never sample one atlas with another mesh's UVs (the striped/scrambled look).
+ */
+export const STREETS_GL_MAX_MESH_PARTS = 48
+
 export interface GeometryData {
   positions: number[] | Float32Array // [x, y, z, x, y, z, ...]
   indices?: number[] | Uint32Array // [i1, i2, i3, i1, i2, i3, ...]
   normals?: number[] | Float32Array // [nx, ny, nz, nx, ny, nz, ...]
   uvs?: number[] | Float32Array // [u, v, u, v, ...]
+}
+
+/** One draw call worth of geometry + its matching base-color map (or solid color). */
+export interface StreetsGLMeshPart {
+  geometry: GeometryData
+  color?: { r: number; g: number; b: number }
+  baseColorTextureDataUrl?: string
 }
 
 export interface StreetsGLObject {
@@ -32,7 +46,9 @@ export interface StreetsGLObject {
   color?: { r: number; g: number; b: number }
   visible?: boolean
   metadata?: any
-  geometry?: GeometryData // Optional geometry data for rendering
+  geometry?: GeometryData // Optional geometry data for rendering (legacy / single-part)
+  /** Per-texture (or solid-color) mesh parts — preferred over flattening to one material. */
+  parts?: StreetsGLMeshPart[]
 }
 
 export interface BridgeResponse {
@@ -53,10 +69,22 @@ export interface AddObjectResult {
   queued: boolean
 }
 
+/** Selected / hidden native OSM building (Streets GL packed feature id). */
+export interface StreetsGLBuildingRef {
+  buildingId: number
+  osmType?: number
+  osmId?: number
+  osmTypeName?: string
+}
+
+/** Default timeout for bridge RPCs that must not hang across iframe reload. */
+const STREETS_GL_RPC_TIMEOUT_MS = 8_000
+
 export class StreetsGLBridge {
   private iframe: HTMLIFrameElement | null = null
   private iframeWindow: Window | null = null
   private bridgeReady: boolean = false
+  private disposed = false
   private readyCallbacks: Array<() => void> = []
   private messageHandlers: Map<string, Array<(payload: any) => void>> = new Map()
   private pendingObjects: Map<string, StreetsGLObject> = new Map()
@@ -83,6 +111,52 @@ export class StreetsGLBridge {
     this.iframeWindow = iframe.contentWindow
     this.setupMessageListener()
     this.waitForBridge()
+  }
+
+  /**
+   * Await a single bridge response with timeout. Prevents hung promises when the
+   * iframe reloads / dispose() clears handlers mid-flight (remove/update races).
+   */
+  private awaitBridgeResponse<T>(
+    eventType: string,
+    send: () => void,
+    match: (payload: any) => boolean,
+    onMatch: (payload: any) => T,
+    onFail: () => T,
+    timeoutMs = STREETS_GL_RPC_TIMEOUT_MS,
+    timeoutLabel?: string
+  ): Promise<T> {
+    return new Promise((resolve) => {
+      if (this.disposed || !this.bridgeReady) {
+        resolve(onFail())
+        return
+      }
+
+      const timeout = setTimeout(() => {
+        this.off(eventType, handler)
+        if (timeoutLabel) {
+          console.warn(`[StreetsGLBridge] ${timeoutLabel} (timeout ${timeoutMs}ms)`)
+        }
+        resolve(onFail())
+      }, timeoutMs)
+
+      const handler = (payload: any) => {
+        if (!match(payload)) return
+        clearTimeout(timeout)
+        this.off(eventType, handler)
+        resolve(onMatch(payload))
+      }
+
+      this.on(eventType, handler)
+      try {
+        send()
+      } catch (error) {
+        clearTimeout(timeout)
+        this.off(eventType, handler)
+        console.error('[StreetsGLBridge] Failed to send', eventType, error)
+        resolve(onFail())
+      }
+    })
   }
 
   private debugLog(...args: any[]): void {
@@ -129,6 +203,21 @@ export class StreetsGLBridge {
         case 'STREETS_GL_SELECTED_BUILDING':
           this.handleResponse('STREETS_GL_SELECTED_BUILDING', payload)
           break
+        case 'STREETS_GL_BUILDING_SELECTED':
+          this.handleResponse('STREETS_GL_BUILDING_SELECTED', payload)
+          break
+        case 'STREETS_GL_BUILDING_HIDDEN':
+          this.handleResponse('STREETS_GL_BUILDING_HIDDEN', payload)
+          break
+        case 'STREETS_GL_BUILDING_SHOWN':
+          this.handleResponse('STREETS_GL_BUILDING_SHOWN', payload)
+          break
+        case 'STREETS_GL_HIDDEN_BUILDINGS_SYNCED':
+          this.handleResponse('STREETS_GL_HIDDEN_BUILDINGS_SYNCED', payload)
+          break
+        case 'STREETS_GL_HIDDEN_BUILDINGS':
+          this.handleResponse('STREETS_GL_HIDDEN_BUILDINGS', payload)
+          break
       }
     }
 
@@ -146,6 +235,7 @@ export class StreetsGLBridge {
   }
 
   private handleBridgeReady(): void {
+    if (this.disposed) return
     this.debugLog('[StreetsGLBridge] Bridge is ready!')
     this.bridgeReady = true
     
@@ -239,6 +329,10 @@ export class StreetsGLBridge {
    */
   addObject(object: StreetsGLObject): Promise<AddObjectResult> {
     return new Promise((resolve) => {
+      if (this.disposed) {
+        resolve({ success: false, queued: false })
+        return
+      }
       if (!this.bridgeReady) {
         console.warn('[StreetsGLBridge] ⚠️ Bridge not ready, queuing object:', object.id)
         // Keyed by id so the queued object keeps its id when flushed on ready (no duplicate).
@@ -342,95 +436,98 @@ export class StreetsGLBridge {
    * Update an object in Streets GL scene
    */
   updateObject(objectId: string, updates: Partial<StreetsGLObject>): Promise<boolean> {
-    return new Promise((resolve) => {
-      if (!this.bridgeReady) {
-        console.warn('[StreetsGLBridge] Bridge not ready')
-        resolve(false)
-        return
-      }
+    if (this.disposed) return Promise.resolve(false)
+    if (!this.bridgeReady) {
+      console.warn('[StreetsGLBridge] Bridge not ready')
+      return Promise.resolve(false)
+    }
 
-      const handler = (payload: any) => {
-        if (payload.objectId === objectId) {
-          this.off('STREETS_GL_OBJECT_UPDATED', handler)
-          resolve(payload.success === true)
-        }
-      }
-
-      this.on('STREETS_GL_OBJECT_UPDATED', handler)
-      this.sendMessage('STREETS_GL_UPDATE_OBJECT', {
-        id: objectId,
-        ...updates
-      })
-    })
+    return this.awaitBridgeResponse(
+      'STREETS_GL_OBJECT_UPDATED',
+      () =>
+        this.sendMessage('STREETS_GL_UPDATE_OBJECT', {
+          id: objectId,
+          ...updates
+        }),
+      (payload) => payload.objectId === objectId,
+      (payload) => payload.success === true,
+      () => false,
+      STREETS_GL_RPC_TIMEOUT_MS,
+      `Timeout waiting for update of object ${objectId}`
+    )
   }
 
   /**
    * Remove an object from Streets GL scene
    */
   removeObject(objectId: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      if (!this.bridgeReady) {
-        console.warn('[StreetsGLBridge] Bridge not ready')
-        resolve(false)
-        return
-      }
+    if (this.disposed) return Promise.resolve(false)
 
-      const handler = (payload: any) => {
-        if (payload.objectId === objectId) {
-          this.off('STREETS_GL_OBJECT_REMOVED', handler)
-          resolve(payload.success === true)
-        }
-      }
+    // Cancel a not-yet-flushed add so reload/remove races cannot resurrect the object.
+    if (this.pendingObjects.has(objectId)) {
+      this.pendingObjects.delete(objectId)
+      this.debugLog('[StreetsGLBridge] Removed queued (not yet added) object:', objectId)
+      return Promise.resolve(true)
+    }
 
-      this.on('STREETS_GL_OBJECT_REMOVED', handler)
-      this.sendMessage('STREETS_GL_REMOVE_OBJECT', { id: objectId })
-    })
+    if (!this.bridgeReady) {
+      console.warn('[StreetsGLBridge] Bridge not ready')
+      return Promise.resolve(false)
+    }
+
+    return this.awaitBridgeResponse(
+      'STREETS_GL_OBJECT_REMOVED',
+      () => this.sendMessage('STREETS_GL_REMOVE_OBJECT', { id: objectId }),
+      (payload) => payload.objectId === objectId,
+      (payload) => payload.success === true,
+      () => false,
+      STREETS_GL_RPC_TIMEOUT_MS,
+      `Timeout waiting for removal of object ${objectId}`
+    )
   }
 
   /**
    * Get all objects in Streets GL scene
    */
   getObjects(): Promise<StreetsGLObject[]> {
-    return new Promise((resolve) => {
-      if (!this.bridgeReady) {
+    if (this.disposed || !this.bridgeReady) {
+      if (!this.bridgeReady && !this.disposed) {
         console.warn('[StreetsGLBridge] Bridge not ready')
-        resolve([])
-        return
       }
+      return Promise.resolve([])
+    }
 
-      const handler = (payload: any) => {
-        if (payload.success) {
-          this.off('STREETS_GL_OBJECTS_LIST', handler)
-          resolve(payload.objects || [])
-        }
-      }
-
-      this.on('STREETS_GL_OBJECTS_LIST', handler)
-      this.sendMessage('STREETS_GL_GET_OBJECTS', {})
-    })
+    return this.awaitBridgeResponse(
+      'STREETS_GL_OBJECTS_LIST',
+      () => this.sendMessage('STREETS_GL_GET_OBJECTS', {}),
+      (payload) => payload.success === true,
+      (payload) => (payload.objects || []) as StreetsGLObject[],
+      () => [] as StreetsGLObject[],
+      STREETS_GL_RPC_TIMEOUT_MS,
+      'Timeout waiting for Streets GL object list'
+    )
   }
 
   /**
    * Sync multiple objects at once
    */
   syncObjects(objects: StreetsGLObject[]): Promise<boolean> {
-    return new Promise((resolve) => {
-      if (!this.bridgeReady) {
+    if (this.disposed || !this.bridgeReady) {
+      if (!this.bridgeReady && !this.disposed) {
         console.warn('[StreetsGLBridge] Bridge not ready')
-        resolve(false)
-        return
       }
+      return Promise.resolve(false)
+    }
 
-      const handler = (payload: any) => {
-        if (payload.success) {
-          this.off('STREETS_GL_OBJECTS_SYNCED', handler)
-          resolve(true)
-        }
-      }
-
-      this.on('STREETS_GL_OBJECTS_SYNCED', handler)
-      this.sendMessage('STREETS_GL_SYNC_OBJECTS', objects)
-    })
+    return this.awaitBridgeResponse(
+      'STREETS_GL_OBJECTS_SYNCED',
+      () => this.sendMessage('STREETS_GL_SYNC_OBJECTS', objects),
+      (payload) => payload.success === true,
+      () => true,
+      () => false,
+      STREETS_GL_RPC_TIMEOUT_MS,
+      'Timeout waiting for Streets GL syncObjects'
+    )
   }
 
   /**
@@ -601,7 +698,8 @@ export class StreetsGLBridge {
         max: { x: number; y: number; z: number }
         center: { x: number; y: number; z: number }
         size: { width: number; height: number; depth: number }
-      } | null
+      } | null,
+      building?: StreetsGLBuildingRef | null
     ) => void | Promise<void>
   ): Promise<boolean> {
     return new Promise((resolve) => {
@@ -628,11 +726,21 @@ export class StreetsGLBridge {
         }
 
         try {
+          const building: StreetsGLBuildingRef | null =
+            typeof payload.buildingId === 'number'
+              ? {
+                  buildingId: payload.buildingId,
+                  osmType: payload.osmType,
+                  osmId: payload.osmId,
+                  osmTypeName: payload.osmTypeName
+                }
+              : null
           await callback(
             payload.position,
             payload.estimatedHeight ?? 0,
             payload.buildingSize ?? null,
-            payload.buildingBounds ?? null
+            payload.buildingBounds ?? null,
+            building
           )
           resolve(true)
         } catch (error) {
@@ -646,7 +754,92 @@ export class StreetsGLBridge {
     })
   }
 
+  /**
+   * Subscribe to native OSM building pick events from the Streets GL iframe.
+   * Returns an unsubscribe function.
+   */
+  onBuildingSelected(callback: (building: StreetsGLBuildingRef | null) => void): () => void {
+    const handler = (payload: any) => {
+      if (!payload?.success) return
+      if (payload.buildingId == null) {
+        callback(null)
+        return
+      }
+      callback({
+        buildingId: Number(payload.buildingId),
+        osmType: payload.osmType,
+        osmId: payload.osmId,
+        osmTypeName: payload.osmTypeName
+      })
+    }
+    this.on('STREETS_GL_BUILDING_SELECTED', handler)
+    return () => this.off('STREETS_GL_BUILDING_SELECTED', handler)
+  }
+
+  /** Hide a native Streets GL / OSM building by packed feature id. */
+  hideBuilding(buildingId: number): Promise<boolean> {
+    return this.awaitBridgeResponse(
+      'STREETS_GL_BUILDING_HIDDEN',
+      () => this.sendMessage('STREETS_GL_HIDE_BUILDING', { buildingId }),
+      (payload) => payload?.buildingId === buildingId || payload?.success === false,
+      (payload) => Boolean(payload?.success),
+      () => false,
+      STREETS_GL_RPC_TIMEOUT_MS,
+      'hideBuilding timed out'
+    )
+  }
+
+  /** Show a previously hidden native Streets GL / OSM building. */
+  showBuilding(buildingId: number): Promise<boolean> {
+    return this.awaitBridgeResponse(
+      'STREETS_GL_BUILDING_SHOWN',
+      () => this.sendMessage('STREETS_GL_SHOW_BUILDING', { buildingId }),
+      (payload) => payload?.buildingId === buildingId || payload?.success === false,
+      (payload) => Boolean(payload?.success),
+      () => false,
+      STREETS_GL_RPC_TIMEOUT_MS,
+      'showBuilding timed out'
+    )
+  }
+
+  /** Replace the iframe's user-hidden building set (re-applied after tile reloads). */
+  syncHiddenBuildings(buildingIds: number[]): Promise<boolean> {
+    return this.awaitBridgeResponse(
+      'STREETS_GL_HIDDEN_BUILDINGS_SYNCED',
+      () => this.sendMessage('STREETS_GL_SYNC_HIDDEN_BUILDINGS', { buildingIds }),
+      () => true,
+      (payload) => Boolean(payload?.success),
+      () => false,
+      STREETS_GL_RPC_TIMEOUT_MS,
+      'syncHiddenBuildings timed out'
+    )
+  }
+
+  getHiddenBuildings(): Promise<StreetsGLBuildingRef[]> {
+    return this.awaitBridgeResponse(
+      'STREETS_GL_HIDDEN_BUILDINGS',
+      () => this.sendMessage('STREETS_GL_GET_HIDDEN_BUILDINGS', {}),
+      () => true,
+      (payload) => {
+        if (!payload?.success) return []
+        if (Array.isArray(payload.buildings)) {
+          return payload.buildings.map((b: any) => ({
+            buildingId: Number(b.buildingId),
+            osmType: b.osmType,
+            osmId: b.osmId,
+            osmTypeName: b.osmTypeName
+          }))
+        }
+        return (payload.buildingIds || []).map((id: number) => ({ buildingId: Number(id) }))
+      },
+      () => [],
+      STREETS_GL_RPC_TIMEOUT_MS,
+      'getHiddenBuildings timed out'
+    )
+  }
+
   dispose(): void {
+    this.disposed = true
     if (this.messageListener) {
       window.removeEventListener('message', this.messageListener)
       this.messageListener = null
@@ -668,44 +861,35 @@ export class StreetsGLBridge {
   }
 
   /**
-   * Convert Three.js object to Streets GL object format
+   * Convert Three.js object to Streets GL object format.
+   * Multi-material models are split into per-texture parts so UVs stay matched to maps.
    */
   static fromThreeJSObject(threeObject: any, id?: string): StreetsGLObject {
     const position = threeObject.position || { x: 0, y: 0, z: 0 }
     const rotation = threeObject.rotation || { x: 0, y: 0, z: 0 }
     const scale = threeObject.scale || { x: 1, y: 1, z: 1 }
 
-    // Extract geometry data from Three.js object
-    const geometry = StreetsGLBridge.extractGeometryFromThreeJS(threeObject)
-    
-    // Extract material information (color, etc.)
+    const parts = StreetsGLBridge.extractMeshPartsFromThreeJS(threeObject)
+    const geometry = parts.length > 0 ? parts[0].geometry : undefined
+    const primaryPart = parts[0]
     const material = StreetsGLBridge.extractMaterialFromThreeJS(threeObject)
-    
-    // Extract shadow settings
     const shadowSettings = StreetsGLBridge.extractShadowSettings(threeObject)
-    
-    // Log geometry extraction for debugging
-    if (geometry) {
-      const vertexCount = geometry.positions ? geometry.positions.length / 3 : 0
-      const indexCount = geometry.indices ? geometry.indices.length : 0
-      if (isStreetsGLDebugEnabled()) {
-        console.log('[StreetsGLBridge] Extracted geometry and material:', {
-          id: id || 'unknown',
-          vertexCount,
-          indexCount,
-          hasNormals: !!geometry.normals,
-          hasUVs: !!geometry.uvs,
-          hasMaterial: !!material,
-          materialColor: material?.color,
-          hasTextures: !!(material?.textures && Object.keys(material.textures).length > 0),
-          textureCount: material?.textures ? Object.keys(material.textures).length : 0,
-          textureTypes: material?.textures ? Object.keys(material.textures) : [],
-          materialProperties: material?.materialProperties,
-          shadowSettings,
-          position: { x: position.x, y: position.y, z: position.z },
-          scale: { x: scale.x, y: scale.y, z: scale.z }
-        })
-      }
+
+    if (parts.length > 0) {
+      const totalVerts = parts.reduce(
+        (sum, p) => sum + ((p.geometry.positions?.length || 0) / 3),
+        0
+      )
+      console.log('[StreetsGLBridge] Extracted mesh parts for Streets GL:', {
+        id: id || 'unknown',
+        partCount: parts.length,
+        texturedParts: parts.filter((p) => !!p.baseColorTextureDataUrl).length,
+        totalVertices: totalVerts,
+        note:
+          parts.length > 1
+            ? 'Multi-texture model — each unique map is a separate draw part (correct UVs)'
+            : 'Single-part model'
+      })
     } else {
       console.warn('[StreetsGLBridge] No geometry extracted from object:', id || 'unknown')
     }
@@ -737,19 +921,23 @@ export class StreetsGLBridge {
         }
         return threeObject.visible !== false
       })(),
-      color: material?.color, // Include material color
+      color: primaryPart?.color ?? material?.color,
+      parts: parts.length > 0 ? parts : undefined,
       metadata: {
         name: threeObject.name || '',
         type: threeObject.type || 'Object3D',
         userData: threeObject.userData || {},
-        // Include material and shadow settings in metadata for Streets GL
         material: material,
-        baseColorTextureDataUrl: material?.baseColorTextureDataUrl,
+        // Legacy single-texture fields (first textured part) for older iframe builds
+        baseColorTextureDataUrl:
+          primaryPart?.baseColorTextureDataUrl ?? material?.baseColorTextureDataUrl,
+        parts,
         shadows: shadowSettings,
-        castShadow: shadowSettings?.castShadow ?? true, // Default to true for full rendering
-        receiveShadow: shadowSettings?.receiveShadow ?? true // Default to true for full rendering
+        castShadow: shadowSettings?.castShadow ?? true,
+        receiveShadow: shadowSettings?.receiveShadow ?? true
       },
-      geometry: geometry // Include geometry data if available
+      // Keep first part as geometry for backward-compatible single-mesh iframe builds
+      geometry
     }
   }
 
@@ -758,8 +946,6 @@ export class StreetsGLBridge {
    * TypedArrays are ~4× smaller than plain JS number arrays and clone faster.
    */
   static ensureGeometrySerializable(object: StreetsGLObject): StreetsGLObject {
-    if (!object.geometry) return { ...object }
-    const g = object.geometry
     const toFloat32 = (a: number[] | Float32Array | undefined): Float32Array | undefined => {
       if (a == null) return undefined
       if (a instanceof Float32Array) return a
@@ -770,14 +956,34 @@ export class StreetsGLBridge {
       if (a instanceof Uint32Array) return a
       return Uint32Array.from(a as ArrayLike<number>)
     }
+    const serializeGeometry = (g: GeometryData): GeometryData => ({
+      positions: toFloat32(g.positions as number[] | Float32Array) ?? new Float32Array(0),
+      normals: toFloat32(g.normals as number[] | Float32Array | undefined),
+      uvs: toFloat32(g.uvs as number[] | Float32Array | undefined),
+      indices: toUint32(g.indices as number[] | Uint32Array | undefined)
+    })
+
+    if (!object.geometry && (!object.parts || object.parts.length === 0)) {
+      return { ...object }
+    }
+
+    const parts = object.parts?.map((part) => ({
+      ...part,
+      geometry: serializeGeometry(part.geometry)
+    }))
+
     return {
       ...object,
-      geometry: {
-        positions: toFloat32(g.positions as number[] | Float32Array) ?? new Float32Array(0),
-        normals: toFloat32(g.normals as number[] | Float32Array | undefined),
-        uvs: toFloat32(g.uvs as number[] | Float32Array | undefined),
-        indices: toUint32(g.indices as number[] | Uint32Array | undefined)
-      }
+      parts,
+      metadata: object.metadata
+        ? {
+            ...object.metadata,
+            parts: parts ?? object.metadata.parts
+          }
+        : object.metadata,
+      geometry: object.geometry
+        ? serializeGeometry(object.geometry)
+        : parts?.[0]?.geometry
     }
   }
 
@@ -864,18 +1070,79 @@ export class StreetsGLBridge {
   }
 
   /**
-   * Extract geometry data from a Three.js object (traverses the scene graph)
+   * Extract geometry data from a Three.js object (legacy single-mesh merge).
+   * Prefer {@link extractMeshPartsFromThreeJS} for textured multi-material models.
    */
   static extractGeometryFromThreeJS(threeObject: any): GeometryData | undefined {
+    const parts = StreetsGLBridge.extractMeshPartsFromThreeJS(threeObject)
+    if (parts.length === 0) return undefined
+    if (parts.length === 1) return parts[0].geometry
+
+    // Merge parts only for callers that still expect one buffer (UVs will be wrong across
+    // different textures — those callers should use parts instead).
     const positions: number[] = []
     const normals: number[] = []
     const uvs: number[] = []
     const indices: number[] = []
     let vertexOffset = 0
-    const disposableGeometries: THREE.BufferGeometry[] = []
+    for (const part of parts) {
+      const g = part.geometry
+      const pos = g.positions
+      const nor = g.normals
+      const uv = g.uvs
+      const idx = g.indices
+      const vertCount = (pos?.length || 0) / 3
+      for (let i = 0; i < (pos?.length || 0); i++) positions.push(pos![i] as number)
+      if (nor && nor.length === pos!.length) {
+        for (let i = 0; i < nor.length; i++) normals.push(nor[i] as number)
+      } else {
+        for (let v = 0; v < vertCount; v++) normals.push(0, 1, 0)
+      }
+      if (uv && uv.length === vertCount * 2) {
+        for (let i = 0; i < uv.length; i++) uvs.push(uv[i] as number)
+      } else {
+        for (let v = 0; v < vertCount; v++) uvs.push(0, 0)
+      }
+      if (idx && idx.length > 0) {
+        for (let i = 0; i < idx.length; i++) indices.push((idx[i] as number) + vertexOffset)
+      } else {
+        for (let i = 0; i < vertCount; i++) indices.push(vertexOffset + i)
+      }
+      vertexOffset += vertCount
+    }
+    return {
+      positions: Float32Array.from(positions),
+      normals: Float32Array.from(normals),
+      uvs: Float32Array.from(uvs),
+      indices: Uint32Array.from(indices)
+    }
+  }
 
-    // Count vertices across all meshes — Pagani-scale models (~340k verts) exceed postMessage
-    // budgets when serialized as plain JS arrays; simplify per-mesh before extraction when needed.
+  /**
+   * Extract per-texture (or solid-color) mesh parts from a Three.js object.
+   *
+   * Critical for buildings/FBX with many materials: merging all meshes into one buffer while
+   * sending only the dominant texture causes extreme UV stretching / scrambled atlas look.
+   * Materials that share the same `texture.uuid` are merged (UVs stay valid). Distinct maps
+   * become separate parts that Streets GL draws with their own base-color texture.
+   */
+  static extractMeshPartsFromThreeJS(threeObject: any): StreetsGLMeshPart[] {
+    type Accumulator = {
+      positions: number[]
+      normals: number[]
+      uvs: number[]
+      indices: number[]
+      vertexOffset: number
+      color: { r: number; g: number; b: number }
+      texture?: THREE.Texture
+      textureDataUrl?: string
+      vertexWeight: number
+    }
+
+    const buckets = new Map<string, Accumulator>()
+    const disposableGeometries: THREE.BufferGeometry[] = []
+    const textureDataUrlCache = new Map<string, string | undefined>()
+
     let totalSourceVertices = 0
     threeObject.traverse((obj: any) => {
       if (obj.isMesh && obj.geometry?.attributes?.position) {
@@ -893,14 +1160,129 @@ export class StreetsGLBridge {
       })
     }
 
-    // Bake child mesh transforms into the root object's local space so multi-mesh GLTF/GLB
-    // models (body, wheels, etc.) keep their relative layout when sent as one external object.
     threeObject.updateMatrixWorld(true)
     const rootInverse = new THREE.Matrix4().copy(threeObject.matrixWorld).invert()
     const toRoot = new THREE.Matrix4()
     const normalMatrix = new THREE.Matrix3()
     const vertex = new THREE.Vector3()
     const normalVec = new THREE.Vector3()
+
+    const partKeyForMaterial = (
+      mat: any
+    ): {
+      key: string
+      color: { r: number; g: number; b: number }
+      texture?: THREE.Texture
+      forcePng?: boolean
+    } => {
+      const color = StreetsGLBridge.readMaterialColor(mat)
+      const tex =
+        mat?.map instanceof THREE.Texture
+          ? mat.map
+          : mat?.emissiveMap instanceof THREE.Texture
+            ? mat.emissiveMap
+            : undefined
+      const forcePng =
+        mat?.transparent === true ||
+        (typeof mat?.opacity === 'number' && mat.opacity < 0.999) ||
+        (typeof mat?.alphaTest === 'number' && mat.alphaTest > 0)
+      if (tex) {
+        return { key: `tex:${tex.uuid}`, color: { r: 1, g: 1, b: 1 }, texture: tex, forcePng }
+      }
+      // Solid-color bucket (quantize slightly so near-identical paints merge)
+      const key = `col:${color.r.toFixed(3)},${color.g.toFixed(3)},${color.b.toFixed(3)}`
+      return { key, color, texture: undefined, forcePng }
+    }
+
+    const getBucket = (
+      key: string,
+      color: { r: number; g: number; b: number },
+      texture?: THREE.Texture,
+      forcePng?: boolean
+    ): Accumulator => {
+      let bucket = buckets.get(key)
+      if (!bucket) {
+        let textureDataUrl: string | undefined
+        if (texture) {
+          const cacheKey = `${texture.uuid}:${forcePng ? 'png' : 'auto'}`
+          if (textureDataUrlCache.has(cacheKey)) {
+            textureDataUrl = textureDataUrlCache.get(cacheKey)
+          } else {
+            textureDataUrl = StreetsGLBridge.textureToDataURL(texture, 512, { forcePng })
+            textureDataUrlCache.set(cacheKey, textureDataUrl)
+          }
+        }
+        bucket = {
+          positions: [],
+          normals: [],
+          uvs: [],
+          indices: [],
+          vertexOffset: 0,
+          color,
+          texture,
+          textureDataUrl,
+          vertexWeight: 0
+        }
+        buckets.set(key, bucket)
+      }
+      return bucket
+    }
+
+    const appendTriangleVertices = (
+      bucket: Accumulator,
+      geom: THREE.BufferGeometry,
+      indexList: ArrayLike<number>,
+      indexStart: number,
+      indexCount: number
+    ) => {
+      const posAttr = geom.attributes.position
+      const normalAttr = geom.attributes.normal
+      const uvAttr = geom.attributes.uv
+      if (!posAttr) return
+
+      const posArray = posAttr.array as ArrayLike<number>
+      const normalArray = normalAttr?.array as ArrayLike<number> | undefined
+      const uvArray = uvAttr?.array as ArrayLike<number> | undefined
+      const srcVertexCount = posAttr.count
+
+      // Expand indexed triangles so each part owns a compact vertex buffer (avoids sharing
+      // vertices across different materials on the same BufferGeometry).
+      for (let i = indexStart; i < indexStart + indexCount; i += 3) {
+        if (i + 2 >= indexStart + indexCount) break
+        const cornerIndices = [indexList[i], indexList[i + 1], indexList[i + 2]]
+        for (const srcIdx of cornerIndices) {
+          if (srcIdx < 0 || srcIdx >= srcVertexCount) {
+            bucket.positions.push(0, 0, 0)
+            bucket.normals.push(0, 1, 0)
+            bucket.uvs.push(0, 0)
+            bucket.indices.push(bucket.vertexOffset++)
+            continue
+          }
+          const pi = srcIdx * 3
+          vertex.set(posArray[pi], posArray[pi + 1], posArray[pi + 2])
+          vertex.applyMatrix4(toRoot)
+          bucket.positions.push(vertex.x, vertex.y, vertex.z)
+
+          if (normalArray && normalAttr && srcIdx < normalAttr.count) {
+            normalVec.set(normalArray[pi], normalArray[pi + 1], normalArray[pi + 2])
+            normalVec.applyMatrix3(normalMatrix).normalize()
+            bucket.normals.push(normalVec.x, normalVec.y, normalVec.z)
+          } else {
+            bucket.normals.push(0, 1, 0)
+          }
+
+          if (uvArray && uvAttr && srcIdx < uvAttr.count) {
+            const ui = srcIdx * 2
+            bucket.uvs.push(uvArray[ui], uvArray[ui + 1])
+          } else {
+            bucket.uvs.push(0, 0)
+          }
+
+          bucket.indices.push(bucket.vertexOffset++)
+        }
+        bucket.vertexWeight += 3
+      }
+    }
 
     const traverse = (obj: any) => {
       if (obj.isMesh && obj.geometry) {
@@ -915,86 +1297,51 @@ export class StreetsGLBridge {
           }
         }
 
-        const posAttr = geom.attributes?.position
-        const normalAttr = geom.attributes?.normal
-        const uvAttr = geom.attributes?.uv
-
-        obj.updateMatrixWorld(true)
-        toRoot.multiplyMatrices(rootInverse, obj.matrixWorld)
-        normalMatrix.getNormalMatrix(toRoot)
-
-        if (!posAttr) {
+        if (!geom.attributes?.position) {
           if (obj.children?.length) {
             for (const child of obj.children) traverse(child)
           }
           return
         }
 
-        const posArray = posAttr.array as ArrayLike<number>
-        const vertexCount = posAttr.count || posArray.length / 3
+        obj.updateMatrixWorld(true)
+        toRoot.multiplyMatrices(rootInverse, obj.matrixWorld)
+        normalMatrix.getNormalMatrix(toRoot)
 
-        for (let v = 0; v < vertexCount; v++) {
-          const i = v * 3
-          vertex.set(posArray[i], posArray[i + 1], posArray[i + 2])
-          vertex.applyMatrix4(toRoot)
-          positions.push(vertex.x, vertex.y, vertex.z)
-        }
+        const materials: any[] = Array.isArray(obj.material)
+          ? obj.material
+          : [obj.material]
 
-        if (normalAttr) {
-          const normalArray = normalAttr.array as ArrayLike<number>
-          const normalCount = normalAttr.count || normalArray.length / 3
+        const indexAttr = geom.index
+        const posCount = geom.attributes.position.count
+        const fullIndexCount = indexAttr ? indexAttr.count : posCount
+        const indexArray: ArrayLike<number> = indexAttr
+          ? (indexAttr.array as ArrayLike<number>)
+          : (() => {
+              const seq = new Uint32Array(posCount)
+              for (let i = 0; i < posCount; i++) seq[i] = i
+              return seq
+            })()
 
-          for (let v = 0; v < vertexCount; v++) {
-            if (v < normalCount) {
-              const i = v * 3
-              normalVec.set(normalArray[i], normalArray[i + 1], normalArray[i + 2])
-              normalVec.applyMatrix3(normalMatrix).normalize()
-              normals.push(normalVec.x, normalVec.y, normalVec.z)
-            } else {
-              normals.push(0, 1, 0)
-            }
-          }
-        } else {
-          for (let v = 0; v < vertexCount; v++) {
-            normals.push(0, 1, 0)
-          }
-        }
+        const groups =
+          geom.groups && geom.groups.length > 0
+            ? geom.groups
+            : [{ start: 0, count: fullIndexCount, materialIndex: 0 }]
 
-        if (uvAttr) {
-          const uvArray = uvAttr.array as ArrayLike<number>
-          const uvCount = uvAttr.count || uvArray.length / 2
-          for (let v = 0; v < vertexCount; v++) {
-            if (v < uvCount) {
-              const i = v * 2
-              uvs.push(uvArray[i], uvArray[i + 1])
-            } else {
-              uvs.push(0, 0)
-            }
-          }
-        } else {
-          for (let v = 0; v < vertexCount; v++) {
-            uvs.push(0, 0)
-          }
-        }
-
-        if (geom.index) {
-          const indexArray = geom.index.array as ArrayLike<number>
-          for (let i = 0; i < indexArray.length; i++) {
-            indices.push(indexArray[i] + vertexOffset)
-          }
-          vertexOffset += vertexCount
-        } else {
-          for (let i = 0; i < vertexCount; i++) {
-            indices.push(vertexOffset + i)
-          }
-          vertexOffset += vertexCount
+        for (const group of groups) {
+          const matIndex = Math.min(
+            Math.max(0, group.materialIndex ?? 0),
+            Math.max(0, materials.length - 1)
+          )
+          const mat = materials[matIndex]
+          const { key, color, texture, forcePng } = partKeyForMaterial(mat)
+          const bucket = getBucket(key, color, texture, forcePng)
+          appendTriangleVertices(bucket, geom, indexArray, group.start, group.count)
         }
       }
 
-      if (obj.children && obj.children.length > 0) {
-        for (const child of obj.children) {
-          traverse(child)
-        }
+      if (obj.children?.length) {
+        for (const child of obj.children) traverse(child)
       }
     }
 
@@ -1004,53 +1351,56 @@ export class StreetsGLBridge {
       disposableGeometries.forEach((g) => g.dispose())
     }
 
-    // Only return geometry if we found any vertices
-    if (positions.length > 0) {
-      // Ensure normals match vertex count (per-mesh gaps are padded above; recompute if still short).
-      let finalNormals: Float32Array | undefined = undefined
-      if (normals.length === positions.length) {
-        finalNormals = Float32Array.from(normals)
-      } else if (indices.length > 0) {
-        const computedNormals = StreetsGLBridge.computeNormalsFromPositionsAndIndices(positions, indices)
-        if (computedNormals.length > 0) {
-          finalNormals = Float32Array.from(computedNormals)
-          if (isStreetsGLDebugEnabled()) {
-            console.log('[StreetsGLBridge] Computed normals from positions and indices:', {
-              normalCount: finalNormals.length / 3,
-              vertexCount: positions.length / 3
-            })
-          }
-        }
-      }
+    if (needsSimplify) {
+      threeObject.userData.streetsGLGeometrySimplified = true
+      threeObject.userData.streetsGLOriginalVertexCount = totalSourceVertices
+    }
 
+    const sorted = Array.from(buckets.entries())
+      .map(([key, bucket]) => ({ key, bucket }))
+      .filter(({ bucket }) => bucket.positions.length >= 9)
+      .sort((a, b) => b.bucket.vertexWeight - a.bucket.vertexWeight)
+
+    if (sorted.length > STREETS_GL_MAX_MESH_PARTS) {
+      console.warn(
+        `[StreetsGLBridge] Model has ${sorted.length} unique material/texture parts; keeping top ${STREETS_GL_MAX_MESH_PARTS} by surface area`
+      )
+    }
+
+    const kept = sorted.slice(0, STREETS_GL_MAX_MESH_PARTS)
+    return kept.map(({ bucket }) => {
+      const positions = Float32Array.from(bucket.positions)
+      let normals = Float32Array.from(bucket.normals)
+      if (normals.length !== positions.length) {
+        normals = Float32Array.from(
+          StreetsGLBridge.computeNormalsFromPositionsAndIndices(
+            Array.from(positions),
+            bucket.indices
+          )
+        )
+      }
       const vertexCount = positions.length / 3
-      let finalUvs: Float32Array | undefined = undefined
-      if (uvs.length === vertexCount * 2) {
-        finalUvs = Float32Array.from(uvs)
-      } else if (uvs.length > 0) {
-        // Pad/truncate to match vertex count so Streets GL mesh attributes stay aligned.
-        const paddedUvs = new Float32Array(vertexCount * 2)
+      let uvs = Float32Array.from(bucket.uvs)
+      if (uvs.length !== vertexCount * 2) {
+        const padded = new Float32Array(vertexCount * 2)
         for (let v = 0; v < vertexCount; v++) {
-          paddedUvs[v * 2] = uvs[v * 2] ?? 0
-          paddedUvs[v * 2 + 1] = uvs[v * 2 + 1] ?? 0
+          padded[v * 2] = uvs[v * 2] ?? 0
+          padded[v * 2 + 1] = uvs[v * 2 + 1] ?? 0
         }
-        finalUvs = paddedUvs
-      }
-
-      if (needsSimplify) {
-        threeObject.userData.streetsGLGeometrySimplified = true
-        threeObject.userData.streetsGLOriginalVertexCount = totalSourceVertices
+        uvs = padded
       }
 
       return {
-        positions: Float32Array.from(positions),
-        normals: finalNormals,
-        uvs: finalUvs,
-        indices: indices.length > 0 ? Uint32Array.from(indices) : undefined
-      }
-    }
-
-    return undefined
+        geometry: {
+          positions,
+          normals,
+          uvs,
+          indices: Uint32Array.from(bucket.indices)
+        },
+        color: bucket.textureDataUrl ? { r: 1, g: 1, b: 1 } : bucket.color,
+        baseColorTextureDataUrl: bucket.textureDataUrl
+      } satisfies StreetsGLMeshPart
+    })
   }
 
   /**
@@ -1083,7 +1433,11 @@ export class StreetsGLBridge {
   private static waitForTexture(texture: THREE.Texture, timeoutMs: number): Promise<void> {
     return new Promise((resolve) => {
       const image = texture.image as HTMLImageElement | undefined
-      if (!image || !(image instanceof HTMLImageElement)) {
+      if (
+        !image ||
+        typeof HTMLImageElement === 'undefined' ||
+        !(image instanceof HTMLImageElement)
+      ) {
         resolve()
         return
       }
@@ -1111,7 +1465,11 @@ export class StreetsGLBridge {
    * Convert a Three.js texture image to a data URL for postMessage transport.
    * Resizes to maxSize to stay within structured-clone / postMessage limits.
    */
-  static textureToDataURL(texture: THREE.Texture, maxSize = 512): string | undefined {
+  static textureToDataURL(
+    texture: THREE.Texture,
+    maxSize = 512,
+    options?: { forcePng?: boolean }
+  ): string | undefined {
     const image = texture?.image as CanvasImageSource & {
       width?: number
       height?: number
@@ -1126,30 +1484,33 @@ export class StreetsGLBridge {
       let srcW = 0
       let srcH = 0
 
-      if (image instanceof HTMLImageElement) {
+      if (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement) {
         if (!image.complete || image.naturalWidth === 0) return undefined
         source = image
         srcW = image.naturalWidth
         srcH = image.naturalHeight
-      } else if (image instanceof HTMLCanvasElement || image instanceof ImageBitmap) {
+      } else if (
+        (typeof HTMLCanvasElement !== 'undefined' && image instanceof HTMLCanvasElement) ||
+        (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap)
+      ) {
         source = image
         srcW = image.width
         srcH = image.height
       } else if (
         typeof (image as any).width === 'number' &&
         typeof (image as any).height === 'number' &&
-        (image as any).data instanceof Uint8Array
+        ((image as any).data instanceof Uint8Array || (image as any).data instanceof Uint8ClampedArray)
       ) {
         // THREE.DataTexture / raw RGBA buffer
         srcW = (image as any).width
         srcH = (image as any).height
-        const data = (image as any).data as Uint8Array
+        const data = (image as any).data as Uint8Array | Uint8ClampedArray
         canvas.width = srcW
         canvas.height = srcH
         const ctx = canvas.getContext('2d')
         if (!ctx) return undefined
         const imageData = ctx.createImageData(srcW, srcH)
-        imageData.data.set(data.subarray(0, srcW * srcH * 4))
+        imageData.data.set(data.subarray(0, srcW * srcH * 4) as Uint8ClampedArray)
         ctx.putImageData(imageData, 0, 0)
         source = canvas
       } else if (typeof (image as any).width === 'number' && typeof (image as any).height === 'number') {
@@ -1171,6 +1532,11 @@ export class StreetsGLBridge {
         ctx.drawImage(source as CanvasImageSource, 0, 0, targetW, targetH)
       }
 
+      const usePng =
+        options?.forcePng === true ||
+        texture.format === THREE.RGBAFormat ||
+        (texture as any).premultiplyAlpha === true
+
       if (source !== canvas) {
         canvas.width = Math.max(1, Math.round(srcW * scale))
         canvas.height = Math.max(1, Math.round(srcH * scale))
@@ -1184,12 +1550,9 @@ export class StreetsGLBridge {
         const sctx = scaled.getContext('2d')
         if (!sctx) return undefined
         drawSource(sctx, scaled.width, scaled.height)
-        return scaled.toDataURL(texture.format === THREE.RGBAFormat ? 'image/png' : 'image/jpeg', 0.9)
+        return scaled.toDataURL(usePng ? 'image/png' : 'image/jpeg', usePng ? undefined : 0.9)
       }
 
-      const usePng =
-        texture.format === THREE.RGBAFormat ||
-        (texture as any).premultiplyAlpha === true
       return canvas.toDataURL(usePng ? 'image/png' : 'image/jpeg', usePng ? undefined : 0.9)
     } catch (e) {
       console.warn('[StreetsGLBridge] Could not serialize texture to data URL:', e)
@@ -1266,7 +1629,12 @@ export class StreetsGLBridge {
           baseColorTextureDataUrl = texUrl
           // Sample the texture untinted in Streets GL (shader multiplies by color).
           texturedMaterialColor = { r: 1, g: 1, b: 1 }
-        } else if (!texUrl && baseColorTex.image instanceof HTMLImageElement && !baseColorTex.image.complete) {
+        } else if (
+          !texUrl &&
+          typeof HTMLImageElement !== 'undefined' &&
+          baseColorTex.image instanceof HTMLImageElement &&
+          !baseColorTex.image.complete
+        ) {
           console.warn('[StreetsGLBridge] Base color texture not yet loaded — Streets GL will use material color fallback')
         }
       }
@@ -1315,9 +1683,9 @@ export class StreetsGLBridge {
         let textureUrl: string | undefined = undefined
         
         if (texture.image) {
-          if (texture.image instanceof HTMLImageElement) {
+          if (typeof HTMLImageElement !== 'undefined' && texture.image instanceof HTMLImageElement) {
             textureUrl = texture.image.src
-          } else if (texture.image instanceof HTMLCanvasElement) {
+          } else if (typeof HTMLCanvasElement !== 'undefined' && texture.image instanceof HTMLCanvasElement) {
             try {
               textureUrl = texture.image.toDataURL('image/png')
             } catch (e) {

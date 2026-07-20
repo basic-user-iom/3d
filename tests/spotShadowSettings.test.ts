@@ -9,7 +9,8 @@ import {
 import {
   aimSpotLightAtSceneCenter,
   collectSceneShadowBounds,
-  getSceneShadowBoundsCenter
+  getSceneShadowBoundsCenter,
+  updateShadowCameraBounds
 } from '../src/viewer/utils/shadowManager'
 
 function makeCarScene(): THREE.Scene {
@@ -46,7 +47,7 @@ describe('spot shadow settings', () => {
     expect(center?.x).toBeCloseTo(2, 0)
   })
 
-  it('aims spot light target at model bbox center', () => {
+  it('aims spot light target at model bbox center (explicit helper only)', () => {
     const scene = makeCarScene()
     const spot = new THREE.SpotLight(0xffffff, 1)
     spot.position.set(-5, 8, 0)
@@ -56,6 +57,23 @@ describe('spot shadow settings', () => {
     const aimed = aimSpotLightAtSceneCenter(spot, scene)
     expect(aimed?.x).toBeCloseTo(2, 0)
     expect(spot.target.position.x).toBeCloseTo(2, 0)
+  })
+
+  it('updateShadowCameraBounds does not steal spot aim from the user', () => {
+    const scene = makeCarScene()
+    const spot = new THREE.SpotLight(0xffffff, 1, 100, Math.PI / 6, 0.2, 2)
+    spot.position.set(5, 5, 5)
+    spot.target.position.set(5, -5, 5)
+    spot.castShadow = true
+    scene.add(spot)
+    scene.add(spot.target)
+
+    updateShadowCameraBounds(spot, scene)
+
+    expect(spot.target.position.x).toBeCloseTo(5, 5)
+    expect(spot.target.position.y).toBeCloseTo(-5, 5)
+    expect(spot.target.position.z).toBeCloseTo(5, 5)
+    expect(spot.target.parent).toBe(scene)
   })
 
   it('keeps spot shadow far tighter than racetrack omnidirectional far', () => {

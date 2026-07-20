@@ -1,6 +1,14 @@
+import type {
+  GuidedTour,
+  GuidedTourCameraTarget,
+  GuidedTourEffectsAction,
+  GuidedTourHotspotAction,
+  GuidedTourStep
+} from './guidedTourTypes'
 import type { PanoramaEntry, PanoramaHotspot, PanoramaTourState } from './panoramaTourTypes'
 
-export const PANORAMA_PROJECT_FILE_VERSION = 1
+/** v1 = panoramas + hotspots; v2 adds guidedTours. Older files still load. */
+export const PANORAMA_PROJECT_FILE_VERSION = 2
 export const PANORAMA_PROJECT_FILE_KIND = '360-panorama-project'
 export const PANORAMA_PROJECT_FILE_EXTENSION = '.360project'
 
@@ -27,6 +35,7 @@ export interface SerializedPanoramaHotspot {
   popupAnchor?: PanoramaHotspot['popupAnchor']
   popupOffsetX?: number
   popupOffsetY?: number
+  popupBorderColor?: string
 }
 
 export interface SerializedPanoramaEntry {
@@ -38,12 +47,51 @@ export interface SerializedPanoramaEntry {
   initialPitch?: number
 }
 
+export interface SerializedGuidedTourCamera {
+  yaw: number
+  pitch: number
+  fov?: number
+}
+
+export interface SerializedGuidedTourHotspotAction {
+  hotspotId: string
+  visible?: boolean
+  openPopup?: boolean
+  popupDurationSec?: number
+}
+
+export interface SerializedGuidedTourEffectsAction {
+  birds?: boolean
+  particles?: boolean
+  spout?: boolean
+}
+
+export interface SerializedGuidedTourStep {
+  id: string
+  label?: string
+  durationSec: number
+  camera?: SerializedGuidedTourCamera | null
+  cameraDurationSec?: number
+  easing?: 'linear' | 'easeInOut'
+  hotspotActions?: SerializedGuidedTourHotspotAction[]
+  effects?: SerializedGuidedTourEffectsAction
+  targetPanoramaId?: string | null
+}
+
+export interface SerializedGuidedTour {
+  id: string
+  name: string
+  steps: SerializedGuidedTourStep[]
+}
+
 export interface PanoramaProjectFile {
   version: number
   kind: typeof PANORAMA_PROJECT_FILE_KIND
   createdAt: string
   activePanoramaId: string | null
   panoramas: SerializedPanoramaEntry[]
+  /** Present from project file version 2. */
+  guidedTours?: SerializedGuidedTour[]
 }
 
 export class PanoramaProjectError extends Error {
@@ -94,7 +142,8 @@ function serializeHotspot(hotspot: PanoramaHotspot): SerializedPanoramaHotspot {
     ...(hotspot.popupHeight !== undefined ? { popupHeight: hotspot.popupHeight } : {}),
     ...(hotspot.popupAnchor !== undefined ? { popupAnchor: hotspot.popupAnchor } : {}),
     ...(hotspot.popupOffsetX !== undefined ? { popupOffsetX: hotspot.popupOffsetX } : {}),
-    ...(hotspot.popupOffsetY !== undefined ? { popupOffsetY: hotspot.popupOffsetY } : {})
+    ...(hotspot.popupOffsetY !== undefined ? { popupOffsetY: hotspot.popupOffsetY } : {}),
+    ...(hotspot.popupBorderColor !== undefined ? { popupBorderColor: hotspot.popupBorderColor } : {})
   }
 }
 
@@ -143,8 +192,168 @@ function deserializeHotspot(hotspot: SerializedPanoramaHotspot): PanoramaHotspot
     ...(hotspot.popupHeight !== undefined ? { popupHeight: hotspot.popupHeight } : {}),
     ...(hotspot.popupAnchor !== undefined ? { popupAnchor: hotspot.popupAnchor } : {}),
     ...(hotspot.popupOffsetX !== undefined ? { popupOffsetX: hotspot.popupOffsetX } : {}),
-    ...(hotspot.popupOffsetY !== undefined ? { popupOffsetY: hotspot.popupOffsetY } : {})
+    ...(hotspot.popupOffsetY !== undefined ? { popupOffsetY: hotspot.popupOffsetY } : {}),
+    ...(hotspot.popupBorderColor !== undefined ? { popupBorderColor: hotspot.popupBorderColor } : {})
   }
+}
+
+function serializeGuidedCamera(camera: GuidedTourCameraTarget): SerializedGuidedTourCamera {
+  return {
+    yaw: camera.yaw,
+    pitch: camera.pitch,
+    ...(camera.fov !== undefined ? { fov: camera.fov } : {})
+  }
+}
+
+function serializeGuidedHotspotAction(
+  action: GuidedTourHotspotAction
+): SerializedGuidedTourHotspotAction {
+  return {
+    hotspotId: action.hotspotId,
+    ...(action.visible !== undefined ? { visible: action.visible } : {}),
+    ...(action.openPopup !== undefined ? { openPopup: action.openPopup } : {}),
+    ...(action.popupDurationSec !== undefined ? { popupDurationSec: action.popupDurationSec } : {})
+  }
+}
+
+function serializeGuidedEffects(
+  effects: GuidedTourEffectsAction
+): SerializedGuidedTourEffectsAction {
+  return {
+    ...(effects.birds !== undefined ? { birds: effects.birds } : {}),
+    ...(effects.particles !== undefined ? { particles: effects.particles } : {}),
+    ...(effects.spout !== undefined ? { spout: effects.spout } : {})
+  }
+}
+
+function serializeGuidedTourStep(step: GuidedTourStep): SerializedGuidedTourStep {
+  return {
+    id: step.id,
+    ...(step.label !== undefined ? { label: step.label } : {}),
+    durationSec: step.durationSec,
+    ...(step.camera ? { camera: serializeGuidedCamera(step.camera) } : { camera: null }),
+    ...(step.cameraDurationSec !== undefined ? { cameraDurationSec: step.cameraDurationSec } : {}),
+    ...(step.easing !== undefined ? { easing: step.easing } : {}),
+    ...(step.hotspotActions && step.hotspotActions.length > 0
+      ? { hotspotActions: step.hotspotActions.map(serializeGuidedHotspotAction) }
+      : {}),
+    ...(step.effects ? { effects: serializeGuidedEffects(step.effects) } : {}),
+    ...(step.targetPanoramaId ? { targetPanoramaId: step.targetPanoramaId } : {})
+  }
+}
+
+function serializeGuidedTour(tour: GuidedTour): SerializedGuidedTour {
+  return {
+    id: tour.id,
+    name: tour.name,
+    steps: tour.steps.map(serializeGuidedTourStep)
+  }
+}
+
+function deserializeGuidedCamera(camera: SerializedGuidedTourCamera): GuidedTourCameraTarget {
+  if (typeof camera.yaw !== 'number' || typeof camera.pitch !== 'number') {
+    throw new PanoramaProjectError('Guided tour camera has invalid yaw/pitch')
+  }
+  return {
+    yaw: camera.yaw,
+    pitch: camera.pitch,
+    ...(typeof camera.fov === 'number' ? { fov: camera.fov } : {})
+  }
+}
+
+function deserializeGuidedHotspotAction(
+  action: SerializedGuidedTourHotspotAction,
+  stepId: string
+): GuidedTourHotspotAction {
+  if (!action || typeof action !== 'object' || typeof action.hotspotId !== 'string') {
+    throw new PanoramaProjectError(`Guided step "${stepId}" has an invalid hotspot action`)
+  }
+  return {
+    hotspotId: action.hotspotId,
+    ...(typeof action.visible === 'boolean' ? { visible: action.visible } : {}),
+    ...(typeof action.openPopup === 'boolean' ? { openPopup: action.openPopup } : {}),
+    ...(typeof action.popupDurationSec === 'number'
+      ? { popupDurationSec: action.popupDurationSec }
+      : {})
+  }
+}
+
+function deserializeGuidedEffects(
+  effects: SerializedGuidedTourEffectsAction | undefined
+): GuidedTourEffectsAction | undefined {
+  if (!effects || typeof effects !== 'object') return undefined
+  const next: GuidedTourEffectsAction = {}
+  if (typeof effects.birds === 'boolean') next.birds = effects.birds
+  if (typeof effects.particles === 'boolean') next.particles = effects.particles
+  if (typeof effects.spout === 'boolean') next.spout = effects.spout
+  return Object.keys(next).length > 0 ? next : undefined
+}
+
+function deserializeGuidedTourStep(step: SerializedGuidedTourStep, index: number): GuidedTourStep {
+  if (!step || typeof step !== 'object') {
+    throw new PanoramaProjectError(`Guided tour step at index ${index} is invalid`)
+  }
+  if (!step.id || typeof step.id !== 'string') {
+    throw new PanoramaProjectError(`Guided tour step at index ${index} is missing a valid id`)
+  }
+  if (typeof step.durationSec !== 'number' || !Number.isFinite(step.durationSec)) {
+    throw new PanoramaProjectError(`Guided tour step "${step.id}" has an invalid durationSec`)
+  }
+
+  let camera: GuidedTourCameraTarget | null = null
+  if (step.camera && typeof step.camera === 'object') {
+    camera = deserializeGuidedCamera(step.camera)
+  }
+
+  const easing =
+    step.easing === 'linear' || step.easing === 'easeInOut' ? step.easing : undefined
+
+  return {
+    id: step.id,
+    ...(typeof step.label === 'string' ? { label: step.label } : {}),
+    durationSec: Math.max(0, step.durationSec),
+    camera,
+    ...(typeof step.cameraDurationSec === 'number'
+      ? { cameraDurationSec: Math.max(0, step.cameraDurationSec) }
+      : {}),
+    ...(easing ? { easing } : {}),
+    hotspotActions: Array.isArray(step.hotspotActions)
+      ? step.hotspotActions.map((a) => deserializeGuidedHotspotAction(a, step.id))
+      : [],
+    effects: deserializeGuidedEffects(step.effects),
+    targetPanoramaId:
+      typeof step.targetPanoramaId === 'string' && step.targetPanoramaId
+        ? step.targetPanoramaId
+        : null
+  }
+}
+
+function deserializeGuidedTour(tour: SerializedGuidedTour, index: number): GuidedTour {
+  if (!tour || typeof tour !== 'object') {
+    throw new PanoramaProjectError(`Guided tour at index ${index} is invalid`)
+  }
+  if (!tour.id || typeof tour.id !== 'string') {
+    throw new PanoramaProjectError(`Guided tour at index ${index} is missing a valid id`)
+  }
+  if (!tour.name || typeof tour.name !== 'string') {
+    throw new PanoramaProjectError(`Guided tour "${tour.id}" is missing a valid name`)
+  }
+  if (!Array.isArray(tour.steps)) {
+    throw new PanoramaProjectError(`Guided tour "${tour.id}" is missing steps`)
+  }
+  return {
+    id: tour.id,
+    name: tour.name,
+    steps: tour.steps.map(deserializeGuidedTourStep)
+  }
+}
+
+function deserializeGuidedTours(raw: unknown): GuidedTour[] {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) {
+    throw new PanoramaProjectError('Project file guidedTours must be an array when present')
+  }
+  return raw.map(deserializeGuidedTour)
 }
 
 function deserializePanoramaSource(source: SerializedPanoramaSource): File | string {
@@ -204,6 +413,10 @@ function validateProjectFile(data: unknown): PanoramaProjectFile {
     throw new PanoramaProjectError('Project file has an invalid activePanoramaId')
   }
 
+  if (file.guidedTours !== undefined && !Array.isArray(file.guidedTours)) {
+    throw new PanoramaProjectError('Project file guidedTours must be an array when present')
+  }
+
   return file as PanoramaProjectFile
 }
 
@@ -221,12 +434,15 @@ export async function serializePanoramaProject(state: PanoramaTourState): Promis
     })
   }
 
+  const guidedTours = (state.guidedTours ?? []).map(serializeGuidedTour)
+
   return {
     version: PANORAMA_PROJECT_FILE_VERSION,
     kind: PANORAMA_PROJECT_FILE_KIND,
     createdAt: new Date().toISOString(),
     activePanoramaId: state.activePanoramaId,
-    panoramas
+    panoramas,
+    ...(guidedTours.length > 0 ? { guidedTours } : {})
   }
 }
 
@@ -262,7 +478,13 @@ export function deserializePanoramaProject(file: PanoramaProjectFile): PanoramaT
       ? validated.activePanoramaId
       : panoramas[0]?.id ?? null
 
-  return { panoramas, activePanoramaId }
+  const guidedTours = deserializeGuidedTours(validated.guidedTours)
+
+  return {
+    panoramas,
+    activePanoramaId,
+    ...(guidedTours.length > 0 ? { guidedTours } : {})
+  }
 }
 
 export function parsePanoramaProjectJson(json: string): PanoramaProjectFile {
@@ -279,6 +501,62 @@ export async function loadPanoramaProjectFromFile(file: File): Promise<PanoramaT
   const text = await file.text()
   const project = parsePanoramaProjectJson(text)
   return deserializePanoramaProject(project)
+}
+
+/** Load a project JSON from a public URL (e.g. shipped default under /projects/). */
+export async function loadPanoramaProjectFromUrl(url: string): Promise<PanoramaTourState> {
+  let response: Response
+  try {
+    response = await fetch(url)
+  } catch {
+    throw new PanoramaProjectError(`Could not fetch project from ${url}`)
+  }
+  if (!response.ok) {
+    throw new PanoramaProjectError(
+      `Could not load project (${response.status} ${response.statusText}): ${url}`
+    )
+  }
+  const text = await response.text()
+  return deserializePanoramaProject(parsePanoramaProjectJson(text))
+}
+
+/**
+ * Resolve panorama image URLs so relative paths work under the demo BASE_URL.
+ * Leaves http(s), blob:, data:, and site-absolute (/…) URLs unchanged.
+ */
+export function resolvePanoramaProjectAssetUrl(
+  url: string,
+  baseUrl: string = typeof import.meta !== 'undefined' ? import.meta.env.BASE_URL || '/' : '/'
+): string {
+  const trimmed = url.trim()
+  if (!trimmed) return trimmed
+  if (
+    /^https?:\/\//i.test(trimmed) ||
+    trimmed.startsWith('blob:') ||
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('/')
+  ) {
+    return trimmed
+  }
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`
+  return `${normalizedBase}${trimmed.replace(/^\.\//, '')}`
+}
+
+/** Rewrite relative panorama sources onto the demo base URL after deserialize. */
+export function resolvePanoramaTourAssetUrls(
+  state: PanoramaTourState,
+  baseUrl?: string
+): PanoramaTourState {
+  return {
+    ...state,
+    panoramas: state.panoramas.map((pano) => {
+      if (typeof pano.source !== 'string') return pano
+      return {
+        ...pano,
+        source: resolvePanoramaProjectAssetUrl(pano.source, baseUrl)
+      }
+    })
+  }
 }
 
 export function downloadPanoramaProject(project: PanoramaProjectFile, filename?: string): void {

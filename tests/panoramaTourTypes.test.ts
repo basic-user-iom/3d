@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_HOTSPOT_COLORS,
   DEFAULT_POPUP_ANCHOR,
+  DEFAULT_POPUP_BORDER_COLOR,
   DEFAULT_POPUP_WIDTH,
   degToRad,
   getHotspotColor,
   getHotspotShape,
   getPopupAnchor,
+  getPopupBorderColor,
   getPopupWidth,
   getUrlIframeTitle,
   hasPanoramaInitialView,
@@ -40,9 +42,12 @@ describe('panoramaTourTypes defaults', () => {
   it('returns popup layout defaults', () => {
     expect(getPopupWidth(baseHotspot)).toBe(DEFAULT_POPUP_WIDTH)
     expect(getPopupAnchor(baseHotspot)).toBe(DEFAULT_POPUP_ANCHOR)
+    expect(getPopupBorderColor(baseHotspot)).toBe(DEFAULT_POPUP_BORDER_COLOR)
     expect(DEFAULT_POPUP_ANCHOR).toBe('above')
+    expect(DEFAULT_POPUP_BORDER_COLOR).toBe('#ffb43c')
     expect(getPopupWidth({ ...baseHotspot, popupWidth: 240 })).toBe(240)
     expect(getPopupAnchor({ ...baseHotspot, popupAnchor: 'below' })).toBe('below')
+    expect(getPopupBorderColor({ ...baseHotspot, popupBorderColor: '#00ff88' })).toBe('#00ff88')
   })
 
   it('converts degrees and radians', () => {

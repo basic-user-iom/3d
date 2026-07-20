@@ -22,6 +22,12 @@ export default class PickingSystem extends System {
 	private externalPickingIds: Map<number, string> = new Map();
 	public selectedExternalObjectId: string = null;
 	public onExternalObjectSelected: ((externalId: string | null) => void) | null = null;
+	/** Fired when a native OSM building is selected or cleared (packed feature id). */
+	public onBuildingSelected: ((payload: {
+		buildingId: number;
+		osmType: number;
+		osmId: number;
+	} | null) => void) | null = null;
 
 	public constructor() {
 		super();
@@ -143,27 +149,49 @@ export default class PickingSystem extends System {
 		const localFeatureId = selectedValue & 0xffff;
 		const packedFeatureId = tile.buildingLocalToPackedMap.get(localFeatureId);
 
+		if (packedFeatureId === undefined) {
+			this.clearSelection();
+			return;
+		}
+
 		const [type, id] = Tile.unpackFeatureId(packedFeatureId);
 
 		const tileObjectsSystem = this.systemManager.getSystem(TileObjectsSystem);
 		this.selectedTileBuilding = tileObjectsSystem.getTileBuildingByPackedId(packedFeatureId);
+		this.selectedExternalObjectId = null;
 
 		this.systemManager.getSystem(UISystem).setActiveFeature(type, id);
+
+		if (this.onBuildingSelected) {
+			this.onBuildingSelected({
+				buildingId: packedFeatureId,
+				osmType: type,
+				osmId: id
+			});
+		}
 	}
 
 	private clearNativeSelection(): void {
+		const hadBuilding = this.selectedTileBuilding !== null;
 		this.selectedTileBuilding = null;
 		this.systemManager.getSystem(UISystem).clearActiveFeature();
+		if (hadBuilding && this.onBuildingSelected) {
+			this.onBuildingSelected(null);
+		}
 	}
 
 	public clearSelection(): void {
 		this.selectedObjectId = 0;
+		const hadBuilding = this.selectedTileBuilding !== null;
 		this.selectedTileBuilding = null;
 		const hadExternal = this.selectedExternalObjectId !== null;
 		this.selectedExternalObjectId = null;
 		this.systemManager.getSystem(UISystem).clearActiveFeature();
 		if (hadExternal && this.onExternalObjectSelected) {
 			this.onExternalObjectSelected(null);
+		}
+		if (hadBuilding && this.onBuildingSelected) {
+			this.onBuildingSelected(null);
 		}
 	}
 

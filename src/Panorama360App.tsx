@@ -1,32 +1,149 @@
-import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, useRef, useEffect, Suspense, lazy } from 'react'
 import Panorama360Viewer from './components/Panorama360Viewer'
 import Panorama360TourPanel from './components/Panorama360TourPanel'
-import type { PanoramaEntry, PanoramaHotspot } from './panorama/panoramaTourTypes'
-import { createEmptyPanorama, PLACEMENT_PREVIEW_HOTSPOT_ID, resolvePanoramaUrl } from './panorama/panoramaTourTypes'
+import Panorama360HelpModal from './components/Panorama360HelpModal'
+import type { PanoramaEntry, PanoramaHotspot, PanoramaTourState } from './panorama/panoramaTourTypes'
+import {
+  createEmptyPanorama,
+  degToRad,
+  PLACEMENT_PREVIEW_HOTSPOT_ID,
+  resolvePanoramaUrl
+} from './panorama/panoramaTourTypes'
 import {
   loadPanoramaProjectFromFile,
+  loadPanoramaProjectFromUrl,
   PanoramaProjectError,
+  resolvePanoramaTourAssetUrls,
   savePanoramaProject
 } from './panorama/panoramaProjectFile'
+import {
+  loadBirdsEffectSettings,
+  saveBirdsEffectSettings,
+  type BirdsEffectSettings
+} from './panorama/birdsEffectSettings'
+import {
+  loadParticlesEffectSettings,
+  saveParticlesEffectSettings,
+  type ParticlesEffectSettings
+} from './panorama/particlesEffectSettings'
+import {
+  loadSpoutEffectSettings,
+  saveSpoutEffectSettings,
+  type SpoutEffectSettings
+} from './panorama/spoutEffectSettings'
+import {
+  createEmptyGuidedTour,
+  createGuidedTourStep,
+  DEFAULT_GUIDED_CAMERA_FOV,
+  DEFAULT_GUIDED_POPUP_DURATION_SEC,
+  type GuidedTour,
+  type GuidedTourStep
+} from './panorama/guidedTourTypes'
+import {
+  playGuidedTour,
+  previewGuidedTourStep,
+  type GuidedTourCameraCommand,
+  type GuidedTourPlaybackHandlers
+} from './panorama/guidedTourPlayback'
+
+/** Short tween when scrubbing a single step in the STEPS list. */
+const GUIDED_STEP_PREVIEW_CAMERA_SEC = 0.85
+import { DEFAULT_PANORAMA_LIVE_LOOK, type PanoramaLiveLook } from './panorama/panoramaSphericalCoords'
+import type { GuidedCameraCommand } from './components/Panorama360Viewer'
 import './Panorama360App.css'
+
+const Panorama360BirdsOverlay = lazy(() => import('./components/Panorama360BirdsOverlay'))
+const Panorama360ParticlesOverlay = lazy(() => import('./components/Panorama360ParticlesOverlay'))
+const Panorama360SpoutOverlay = lazy(() => import('./components/Panorama360SpoutOverlay'))
+
+/** Default equirectangular asset shipped under public/panoramas (URL-encoded for spaces). */
+const DEFAULT_PANORAMA_FILE = 'The Black Witness.jpeg'
+/** Shipped demo tour (hotspots + guided tour) under public/projects/. */
+const DEFAULT_PROJECT_PATH = 'projects/default.360project'
+
+function demoBaseUrl(): string {
+  const base = import.meta.env.BASE_URL || '/'
+  return base.endsWith('/') ? base : `${base}/`
+}
+
+function defaultPanoramaUrl(): string {
+  return `${demoBaseUrl()}panoramas/${encodeURIComponent(DEFAULT_PANORAMA_FILE)}`
+}
+
+function defaultProjectUrl(): string {
+  return `${demoBaseUrl()}${DEFAULT_PROJECT_PATH}`
+}
+
+function panoramaNameFromSourceUrl(url: string): string {
+  try {
+    const leaf = url.split('/').pop() ?? DEFAULT_PANORAMA_FILE
+    return decodeURIComponent(leaf).replace(/\.[^.]+$/, '') || 'Panorama 1'
+  } catch {
+    return 'Panorama 1'
+  }
+}
 
 export interface PopupOffsetPatch {
   popupOffsetX: number
   popupOffsetY: number
 }
 
-export default function Panorama360App() {
-  const urlParams = new URLSearchParams(window.location.search)
-  const imageUrlParam = urlParams.get('image')
+function parseOrientationUrlOverride(params: URLSearchParams): {
+  yaw?: number
+  pitch?: number
+} | null {
+  const yawRaw = params.get('yaw')
+  const pitchRaw = params.get('pitch')
+  if (yawRaw == null && pitchRaw == null) return null
+  const yawDeg = yawRaw != null ? Number(yawRaw) : NaN
+  const pitchDeg = pitchRaw != null ? Number(pitchRaw) : NaN
+  const hasYaw = Number.isFinite(yawDeg)
+  const hasPitch = Number.isFinite(pitchDeg)
+  if (!hasYaw && !hasPitch) return null
+  return {
+    ...(hasYaw ? { yaw: degToRad(yawDeg) } : {}),
+    ...(hasPitch ? { pitch: degToRad(pitchDeg) } : {})
+  }
+}
 
-  const initialState = (() => {
-    if (imageUrlParam) {
-      const name = imageUrlParam.split('/').pop() ?? 'Panorama 1'
-      const entry = createEmptyPanorama(name, imageUrlParam)
-      return { panoramas: [entry], activeId: entry.id }
+/** Visitor/play mode: ?mode=preview | ?mode=view | ?preview=1 | ?preview=true */
+function parsePreviewModeFromUrl(params: URLSearchParams): boolean {
+  const mode = params.get('mode')?.trim().toLowerCase()
+  if (mode === 'preview' || mode === 'view' || mode === 'play') return true
+  const preview = params.get('preview')?.trim().toLowerCase()
+  return preview === '1' || preview === 'true' || preview === 'yes'
+}
+
+export default function Panorama360App() {
+  // Parse once — a fresh object each render was recreating applyRestoredTour and
+  // re-firing the default-project load effect, which cleared guided-tour popups.
+  const [urlBootstrap] = useState(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const imageUrlParam = urlParams.get('image')?.trim() || null
+    return {
+      imageUrlParam,
+      projectUrlParam: urlParams.get('project')?.trim() || null,
+      orientationUrlOverride: parseOrientationUrlOverride(urlParams),
+      startInPreviewMode: parsePreviewModeFromUrl(urlParams),
+      skipDefaultProject: Boolean(imageUrlParam),
+      initialState: (() => {
+        if (imageUrlParam) {
+          const entry = createEmptyPanorama(panoramaNameFromSourceUrl(imageUrlParam), imageUrlParam)
+          return { panoramas: [entry] as PanoramaEntry[], activeId: entry.id as string | null }
+        }
+        // Empty until default (or ?project=) loads — avoids a bare Black Witness without hotspots.
+        return { panoramas: [] as PanoramaEntry[], activeId: null as string | null }
+      })()
     }
-    return { panoramas: [] as PanoramaEntry[], activeId: null as string | null }
-  })()
+  })
+  const {
+    imageUrlParam,
+    projectUrlParam,
+    orientationUrlOverride,
+    startInPreviewMode,
+    skipDefaultProject,
+    initialState
+  } = urlBootstrap
 
   const [panoramas, setPanoramas] = useState<PanoramaEntry[]>(initialState.panoramas)
   const [activePanoramaId, setActivePanoramaId] = useState<string | null>(initialState.activeId)
@@ -41,10 +158,112 @@ export default function Panorama360App() {
   const [editPopupPreview, setEditPopupPreview] = useState<PanoramaHotspot | null>(null)
   const [editMarkerPreview, setEditMarkerPreview] = useState<PanoramaHotspot | null>(null)
   const [popupOffsetPatch, setPopupOffsetPatch] = useState<PopupOffsetPatch | null>(null)
-  const [previewMode, setPreviewMode] = useState(false)
+  const [previewMode, setPreviewMode] = useState(startInPreviewMode)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [projectBusy, setProjectBusy] = useState(false)
+  const [mobileTourOpen, setMobileTourOpen] = useState(false)
+  /** True while fetching the shipped default / ?project= override on first paint. */
+  const [defaultProjectLoading, setDefaultProjectLoading] = useState(
+    () => !skipDefaultProject
+  )
+  const [birdsEffect, setBirdsEffect] = useState<BirdsEffectSettings>(() => loadBirdsEffectSettings())
+  const [birdsStatus, setBirdsStatus] = useState<{
+    status: 'idle' | 'ready' | 'unsupported' | 'error'
+    message?: string
+  }>({ status: 'idle' })
+  const [particlesEffect, setParticlesEffect] = useState<ParticlesEffectSettings>(() =>
+    loadParticlesEffectSettings()
+  )
+  const [particlesStatus, setParticlesStatus] = useState<{
+    status: 'idle' | 'ready' | 'unsupported' | 'error'
+    message?: string
+  }>({ status: 'idle' })
+  const [spoutEffect, setSpoutEffect] = useState<SpoutEffectSettings>(() => loadSpoutEffectSettings())
+  const [spoutStatus, setSpoutStatus] = useState<{
+    status: 'idle' | 'ready' | 'unsupported' | 'error'
+    message?: string
+  }>({ status: 'idle' })
+  const [guidedTours, setGuidedTours] = useState<GuidedTour[]>([])
+  const [activeGuidedTourId, setActiveGuidedTourId] = useState<string | null>(null)
+  const [selectedGuidedStepId, setSelectedGuidedStepId] = useState<string | null>(null)
+  const [guidedTourPlaying, setGuidedTourPlaying] = useState(false)
+  const [guidedTourStepIndex, setGuidedTourStepIndex] = useState(-1)
+  const [hiddenHotspotIds, setHiddenHotspotIds] = useState<Set<string>>(() => new Set())
+  const [guidedInfoPopupId, setGuidedInfoPopupId] = useState<string | null>(null)
+  const [guidedCameraCommand, setGuidedCameraCommand] = useState<GuidedCameraCommand | null>(null)
+  const [guidedCameraCommandKey, setGuidedCameraCommandKey] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
   const projectLoadInputRef = useRef<HTMLInputElement>(null)
+  /** Frame-synced panorama look for overlays; updated by the viewer every frame. */
+  const liveLookRef = useRef<PanoramaLiveLook>({ ...DEFAULT_PANORAMA_LIVE_LOOK })
+  const guidedAbortRef = useRef<AbortController | null>(null)
+  const guidedCameraWaitRef = useRef<{ resolve: () => void } | null>(null)
+  const popupAutoCloseTimerRef = useRef<number | null>(null)
+  const activePanoramaIdRef = useRef(activePanoramaId)
+  activePanoramaIdRef.current = activePanoramaId
+  const panoramasRef = useRef(panoramas)
+  panoramasRef.current = panoramas
+  const guidedToursRef = useRef(guidedTours)
+  guidedToursRef.current = guidedTours
+  const activeGuidedTourIdRef = useRef(activeGuidedTourId)
+  activeGuidedTourIdRef.current = activeGuidedTourId
+  const birdsStatusRef = useRef(birdsStatus)
+  birdsStatusRef.current = birdsStatus
+  const particlesStatusRef = useRef(particlesStatus)
+  particlesStatusRef.current = particlesStatus
+  const spoutStatusRef = useRef(spoutStatus)
+  spoutStatusRef.current = spoutStatus
+
+  const handleBirdsEffectChange = useCallback((patch: Partial<BirdsEffectSettings>) => {
+    setBirdsEffect((prev) => {
+      const next = { ...prev, ...patch }
+      saveBirdsEffectSettings(next)
+      return next
+    })
+    if (patch.enabled === false) {
+      setBirdsStatus({ status: 'idle' })
+    }
+  }, [])
+
+  const handleBirdsStatusChange = useCallback((status: 'ready' | 'unsupported' | 'error', message?: string) => {
+    setBirdsStatus({ status, message })
+  }, [])
+
+  const handleParticlesEffectChange = useCallback((patch: Partial<ParticlesEffectSettings>) => {
+    setParticlesEffect((prev) => {
+      const next = { ...prev, ...patch }
+      saveParticlesEffectSettings(next)
+      return next
+    })
+    if (patch.enabled === false) {
+      setParticlesStatus({ status: 'idle' })
+    }
+  }, [])
+
+  const handleParticlesStatusChange = useCallback(
+    (status: 'ready' | 'unsupported' | 'error', message?: string) => {
+      setParticlesStatus({ status, message })
+    },
+    []
+  )
+
+  const handleSpoutEffectChange = useCallback((patch: Partial<SpoutEffectSettings>) => {
+    setSpoutEffect((prev) => {
+      const next = { ...prev, ...patch }
+      saveSpoutEffectSettings(next)
+      return next
+    })
+    if (patch.enabled === false) {
+      setSpoutStatus({ status: 'idle' })
+    }
+  }, [])
+
+  const handleSpoutStatusChange = useCallback(
+    (status: 'ready' | 'unsupported' | 'error', message?: string) => {
+      setSpoutStatus({ status, message })
+    },
+    []
+  )
 
   const activePanorama = useMemo(
     () => panoramas.find((p) => p.id === activePanoramaId) ?? null,
@@ -149,21 +368,43 @@ export default function Panorama360App() {
     setEditPopupPreview(null)
     setEditMarkerPreview(null)
     setPopupOffsetPatch(null)
-    setPreviewMode(false)
-  }, [])
+    // Keep visitor/play URLs in preview after the default project finishes loading.
+    setPreviewMode(startInPreviewMode)
+  }, [startInPreviewMode])
+
+  const applyRestoredTour = useCallback(
+    (restoredRaw: PanoramaTourState) => {
+      const restored = resolvePanoramaTourAssetUrls(restoredRaw)
+      const active =
+        restored.panoramas.find((p) => p.id === restored.activePanoramaId) ?? restored.panoramas[0]
+      setPanoramas(restored.panoramas)
+      setActivePanoramaId(restored.activePanoramaId)
+      setGuidedTours(restored.guidedTours ?? [])
+      setActiveGuidedTourId(restored.guidedTours?.[0]?.id ?? null)
+      setSelectedGuidedStepId(restored.guidedTours?.[0]?.steps[0]?.id ?? null)
+      setHiddenHotspotIds(new Set())
+      setGuidedInfoPopupId(null)
+      setViewOrientation({
+        yaw: orientationUrlOverride?.yaw ?? active?.initialYaw ?? 0,
+        pitch: orientationUrlOverride?.pitch ?? active?.initialPitch ?? 0
+      })
+      resetEditorUiState()
+    },
+    [orientationUrlOverride, resetEditorUiState]
+  )
 
   const handleSaveProject = useCallback(async () => {
     if (projectBusy) return
     setProjectBusy(true)
     try {
-      await savePanoramaProject({ panoramas, activePanoramaId })
+      await savePanoramaProject({ panoramas, activePanoramaId, guidedTours })
     } catch (error) {
       const message = error instanceof PanoramaProjectError ? error.message : 'Failed to save project'
       alert(message)
     } finally {
       setProjectBusy(false)
     }
-  }, [activePanoramaId, panoramas, projectBusy])
+  }, [activePanoramaId, panoramas, guidedTours, projectBusy])
 
   const handleLoadProjectClick = useCallback(() => {
     projectLoadInputRef.current?.click()
@@ -177,7 +418,7 @@ export default function Panorama360App() {
     if (
       panoramas.length > 0 &&
       !confirm(
-        'Load project?\n\nThis replaces the current tour (panoramas, hotspots, and initial views). Unsaved changes will be lost.'
+        'Load project?\n\nThis replaces the current tour (panoramas, hotspots, guided tours, and initial views). Unsaved changes will be lost.'
       )
     ) {
       return
@@ -186,14 +427,7 @@ export default function Panorama360App() {
     setProjectBusy(true)
     try {
       const restored = await loadPanoramaProjectFromFile(file)
-      const active = restored.panoramas.find((p) => p.id === restored.activePanoramaId) ?? restored.panoramas[0]
-      setPanoramas(restored.panoramas)
-      setActivePanoramaId(restored.activePanoramaId)
-      setViewOrientation({
-        yaw: active?.initialYaw ?? 0,
-        pitch: active?.initialPitch ?? 0
-      })
-      resetEditorUiState()
+      applyRestoredTour(restored)
     } catch (error) {
       const message =
         error instanceof PanoramaProjectError
@@ -205,7 +439,48 @@ export default function Panorama360App() {
     } finally {
       setProjectBusy(false)
     }
-  }, [panoramas.length, resetEditorUiState])
+  }, [applyRestoredTour, panoramas.length])
+
+  const applyRestoredTourRef = useRef(applyRestoredTour)
+  applyRestoredTourRef.current = applyRestoredTour
+
+  // Auto-load shipped default tour (or ?project= override) when no ?image= override.
+  // Intentionally does not depend on applyRestoredTour — that callback's identity must not
+  // retrigger a full project reload (it clears guidedInfoPopupId mid-tour).
+  useEffect(() => {
+    if (skipDefaultProject) return
+
+    let cancelled = false
+    const url = projectUrlParam || defaultProjectUrl()
+
+    ;(async () => {
+      setDefaultProjectLoading(true)
+      try {
+        const restored = await loadPanoramaProjectFromUrl(url)
+        if (cancelled) return
+        applyRestoredTourRef.current(restored)
+      } catch (error) {
+        if (cancelled) return
+        console.warn('[Panorama360] Failed to load default project, falling back to sample panorama:', error)
+        // Fallback: single shipped panorama so the empty screen is still avoided.
+        const entry = createEmptyPanorama(
+          panoramaNameFromSourceUrl(defaultPanoramaUrl()),
+          defaultPanoramaUrl()
+        )
+        setPanoramas([entry])
+        setActivePanoramaId(entry.id)
+        setGuidedTours([])
+        setActiveGuidedTourId(null)
+        setSelectedGuidedStepId(null)
+      } finally {
+        if (!cancelled) setDefaultProjectLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [projectUrlParam, skipDefaultProject])
 
   const handleSelectPanorama = useCallback((id: string) => {
     const pano = panoramas.find((p) => p.id === id)
@@ -243,8 +518,32 @@ export default function Panorama360App() {
   }, [])
 
   const handleOrientationChange = useCallback((yaw: number, pitch: number) => {
+    liveLookRef.current.yaw = yaw
+    liveLookRef.current.pitch = pitch
     setCurrentViewOrientation({ yaw, pitch })
   }, [])
+
+  /** Prefer live camera ref so “Pin birds to view” matches what is on screen. */
+  const handlePinBirdsToCurrentView = useCallback(() => {
+    handleBirdsEffectChange({
+      viewYaw: liveLookRef.current.yaw,
+      viewPitch: liveLookRef.current.pitch
+    })
+  }, [handleBirdsEffectChange])
+
+  const handlePinParticlesToCurrentView = useCallback(() => {
+    handleParticlesEffectChange({
+      viewYaw: liveLookRef.current.yaw,
+      viewPitch: liveLookRef.current.pitch
+    })
+  }, [handleParticlesEffectChange])
+
+  const handlePinSpoutToCurrentView = useCallback(() => {
+    handleSpoutEffectChange({
+      viewYaw: liveLookRef.current.yaw,
+      viewPitch: liveLookRef.current.pitch
+    })
+  }, [handleSpoutEffectChange])
 
   const handleSetInitialView = useCallback(() => {
     if (!activePanoramaId) return
@@ -441,7 +740,30 @@ export default function Panorama360App() {
     setPreviewMode(true)
   }, [])
 
+  const clearPopupAutoCloseTimer = useCallback(() => {
+    if (popupAutoCloseTimerRef.current != null) {
+      window.clearTimeout(popupAutoCloseTimerRef.current)
+      popupAutoCloseTimerRef.current = null
+    }
+  }, [])
+
+  const handleStopGuidedTour = useCallback(() => {
+    guidedAbortRef.current?.abort()
+    guidedAbortRef.current = null
+    if (guidedCameraWaitRef.current) {
+      guidedCameraWaitRef.current.resolve()
+      guidedCameraWaitRef.current = null
+    }
+    clearPopupAutoCloseTimer()
+    setGuidedTourPlaying(false)
+    setGuidedTourStepIndex(-1)
+    setGuidedInfoPopupId(null)
+  }, [clearPopupAutoCloseTimer])
+
   const handleExitPreview = useCallback(() => {
+    if (guidedTourPlaying) {
+      handleStopGuidedTour()
+    }
     if (document.fullscreenElement) {
       void document.exitFullscreen()
     }
@@ -453,7 +775,308 @@ export default function Panorama360App() {
     if (editMode) {
       setPlacementMode(true)
     }
-  }, [editMode])
+  }, [editMode, guidedTourPlaying, handleStopGuidedTour])
+
+  const handleGuidedCameraComplete = useCallback(() => {
+    const waiter = guidedCameraWaitRef.current
+    guidedCameraWaitRef.current = null
+    waiter?.resolve()
+  }, [])
+
+  const handleCreateGuidedTour = useCallback(() => {
+    const tour = createEmptyGuidedTour(`Guided tour ${guidedTours.length + 1}`)
+    setGuidedTours((prev) => [...prev, tour])
+    setActiveGuidedTourId(tour.id)
+    setSelectedGuidedStepId(null)
+  }, [guidedTours.length])
+
+  const handleRenameGuidedTour = useCallback((tourId: string, name: string) => {
+    setGuidedTours((prev) => prev.map((t) => (t.id === tourId ? { ...t, name } : t)))
+  }, [])
+
+  const handleDeleteGuidedTour = useCallback((tourId: string) => {
+    setGuidedTours((prev) => {
+      const next = prev.filter((t) => t.id !== tourId)
+      setActiveGuidedTourId((current) => {
+        if (current !== tourId) return current
+        return next[0]?.id ?? null
+      })
+      return next
+    })
+    setSelectedGuidedStepId(null)
+  }, [])
+
+  const handleSelectGuidedTour = useCallback((tourId: string | null) => {
+    setActiveGuidedTourId(tourId)
+    const tour = guidedToursRef.current.find((t) => t.id === tourId)
+    setSelectedGuidedStepId(tour?.steps[0]?.id ?? null)
+  }, [])
+
+  const handleAddGuidedStepFromView = useCallback(() => {
+    if (!activeGuidedTourId) return
+    const look = liveLookRef.current
+    const step = createGuidedTourStep({
+      label: `Step ${(guidedTours.find((t) => t.id === activeGuidedTourId)?.steps.length ?? 0) + 1}`,
+      camera: {
+        yaw: look.yaw,
+        pitch: look.pitch,
+        fov: look.fov || DEFAULT_GUIDED_CAMERA_FOV
+      },
+      cameraDurationSec: 2,
+      durationSec: 1.5
+    })
+    setGuidedTours((prev) =>
+      prev.map((t) => (t.id === activeGuidedTourId ? { ...t, steps: [...t.steps, step] } : t))
+    )
+    setSelectedGuidedStepId(step.id)
+  }, [activeGuidedTourId, guidedTours])
+
+  const handleUpdateGuidedStep = useCallback((stepId: string, patch: Partial<GuidedTourStep>) => {
+    if (!activeGuidedTourId) return
+    setGuidedTours((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeGuidedTourId) return t
+        return {
+          ...t,
+          steps: t.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s))
+        }
+      })
+    )
+  }, [activeGuidedTourId])
+
+  const handleDeleteGuidedStep = useCallback((stepId: string) => {
+    if (!activeGuidedTourId) return
+    setGuidedTours((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeGuidedTourId) return t
+        const steps = t.steps.filter((s) => s.id !== stepId)
+        return { ...t, steps }
+      })
+    )
+    setSelectedGuidedStepId((current) => (current === stepId ? null : current))
+  }, [activeGuidedTourId])
+
+  const handleMoveGuidedStep = useCallback((stepId: string, direction: -1 | 1) => {
+    if (!activeGuidedTourId) return
+    setGuidedTours((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeGuidedTourId) return t
+        const index = t.steps.findIndex((s) => s.id === stepId)
+        if (index < 0) return t
+        const nextIndex = index + direction
+        if (nextIndex < 0 || nextIndex >= t.steps.length) return t
+        const steps = [...t.steps]
+        const [item] = steps.splice(index, 1)
+        steps.splice(nextIndex, 0, item)
+        return { ...t, steps }
+      })
+    )
+  }, [activeGuidedTourId])
+
+  const createGuidedPlaybackHandlers = useCallback(
+    (abort: AbortController): GuidedTourPlaybackHandlers => ({
+      isCurrentSession: () => guidedAbortRef.current === abort,
+      getActivePanoramaId: () => activePanoramaIdRef.current,
+      switchPanorama: (panoramaId) => {
+        const pano = panoramasRef.current.find((p) => p.id === panoramaId)
+        if (!pano) return
+        setActivePanoramaId(pano.id)
+        setViewOrientation({
+          yaw: pano.initialYaw ?? 0,
+          pitch: pano.initialPitch ?? 0
+        })
+      },
+      waitForPanoramaTransition: () =>
+        new Promise((resolve) => {
+          window.setTimeout(resolve, 650)
+        }),
+      animateCamera: (command: GuidedTourCameraCommand) =>
+        new Promise((resolve) => {
+          if (abort.signal.aborted) {
+            resolve()
+            return
+          }
+          guidedCameraWaitRef.current = { resolve }
+          setGuidedCameraCommand({
+            yaw: command.yaw,
+            pitch: command.pitch,
+            fov: command.fov,
+            durationMs: command.durationMs,
+            easing: command.easing
+          })
+          setGuidedCameraCommandKey((k) => k + 1)
+        }),
+      setHotspotVisible: (hotspotId, visible) => {
+        setHiddenHotspotIds((prev) => {
+          const next = new Set(prev)
+          if (visible) next.delete(hotspotId)
+          else next.add(hotspotId)
+          return next
+        })
+      },
+      openInfoPopup: (hotspotId, _autoCloseSec) => {
+        // Guided-tour step dwell owns popup lifetime (see resolvePopupHoldSec).
+        // A parallel timer races re-renders and can clear the card while the step still runs.
+        clearPopupAutoCloseTimer()
+        setGuidedInfoPopupId(hotspotId)
+      },
+      closeInfoPopup: () => {
+        clearPopupAutoCloseTimer()
+        setGuidedInfoPopupId(null)
+      },
+      setBirdsEnabled: (enabled) => {
+        handleBirdsEffectChange({ enabled })
+      },
+      setParticlesEnabled: (enabled) => {
+        handleParticlesEffectChange({ enabled })
+      },
+      setSpoutEnabled: (enabled) => {
+        handleSpoutEffectChange({ enabled })
+      },
+      waitForEffectsReady: async (step) => {
+        const needed: Array<'birds' | 'particles' | 'spout'> = []
+        if (step.effects?.birds === true) needed.push('birds')
+        if (step.effects?.particles === true) needed.push('particles')
+        if (step.effects?.spout === true) needed.push('spout')
+        if (needed.length === 0) return
+
+        const settled = (key: 'birds' | 'particles' | 'spout') => {
+          const status =
+            key === 'birds'
+              ? birdsStatusRef.current.status
+              : key === 'particles'
+                ? particlesStatusRef.current.status
+                : spoutStatusRef.current.status
+          return status === 'ready' || status === 'unsupported' || status === 'error'
+        }
+
+        const deadline = performance.now() + 12000
+        while (performance.now() < deadline) {
+          if (abort.signal.aborted) return
+          if (needed.every(settled)) return
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 50)
+          })
+        }
+      }
+    }),
+    [
+      clearPopupAutoCloseTimer,
+      handleBirdsEffectChange,
+      handleParticlesEffectChange,
+      handleSpoutEffectChange
+    ]
+  )
+
+  /** Select a step for editing and immediately preview its camera + linked actions. */
+  const handleSelectGuidedStep = useCallback(
+    (stepId: string | null) => {
+      setSelectedGuidedStepId(stepId)
+      if (!stepId || guidedTourPlaying) return
+
+      const tourId = activeGuidedTourIdRef.current
+      const tour = guidedToursRef.current.find((t) => t.id === tourId)
+      const step = tour?.steps.find((s) => s.id === stepId)
+      if (!step) return
+
+      // Abort any in-flight full play or previous step preview.
+      guidedAbortRef.current?.abort()
+      if (guidedCameraWaitRef.current) {
+        guidedCameraWaitRef.current.resolve()
+        guidedCameraWaitRef.current = null
+      }
+
+      const abort = new AbortController()
+      guidedAbortRef.current = abort
+      const handlers = createGuidedPlaybackHandlers(abort)
+
+      void previewGuidedTourStep(step, handlers, {
+        signal: abort.signal,
+        skipDwell: true,
+        cameraDurationSecOverride: GUIDED_STEP_PREVIEW_CAMERA_SEC
+      }).finally(() => {
+        if (guidedAbortRef.current === abort) {
+          guidedAbortRef.current = null
+        }
+      })
+    },
+    [createGuidedPlaybackHandlers, guidedTourPlaying]
+  )
+
+  const handlePlayGuidedTour = useCallback(() => {
+    const tourId = activeGuidedTourIdRef.current
+    const tour = guidedToursRef.current.find((t) => t.id === tourId)
+    if (!tour || tour.steps.length === 0) {
+      alert('Add at least one guided tour step before playing.')
+      return
+    }
+
+    // Stop any prior session without letting its AbortError wipe the new popups.
+    const previousAbort = guidedAbortRef.current
+    guidedAbortRef.current = null
+    previousAbort?.abort()
+    if (guidedCameraWaitRef.current) {
+      guidedCameraWaitRef.current.resolve()
+      guidedCameraWaitRef.current = null
+    }
+    clearPopupAutoCloseTimer()
+
+    setPreviewMode(true)
+    setEditMode(false)
+    setSelectedHotspotId(null)
+    setPendingPlacement(null)
+    setPlacementMode(false)
+    setGuidedInfoPopupId(null)
+
+    // Start with reveal-targets hidden so later “show hotspot / enable effect” steps work.
+    const preHidden = new Set<string>()
+    let preBirds: boolean | undefined
+    let preParticles: boolean | undefined
+    let preSpout: boolean | undefined
+    for (const step of tour.steps) {
+      for (const action of step.hotspotActions ?? []) {
+        if (action.visible === true) preHidden.add(action.hotspotId)
+      }
+      if (step.effects?.birds === true) preBirds = false
+      if (step.effects?.particles === true) preParticles = false
+      if (step.effects?.spout === true) preSpout = false
+    }
+    setHiddenHotspotIds(preHidden)
+    if (preBirds === false) handleBirdsEffectChange({ enabled: false })
+    if (preParticles === false) handleParticlesEffectChange({ enabled: false })
+    if (preSpout === false) handleSpoutEffectChange({ enabled: false })
+
+    setGuidedTourPlaying(true)
+    setGuidedTourStepIndex(0)
+
+    const abort = new AbortController()
+    guidedAbortRef.current = abort
+    const handlers = createGuidedPlaybackHandlers(abort)
+
+    void playGuidedTour(tour, handlers, {
+      signal: abort.signal,
+      onStepIndex: setGuidedTourStepIndex,
+      onComplete: () => {
+        if (guidedAbortRef.current !== abort) return
+        setGuidedTourPlaying(false)
+        setGuidedTourStepIndex(-1)
+        guidedAbortRef.current = null
+      }
+    })
+  }, [
+    clearPopupAutoCloseTimer,
+    createGuidedPlaybackHandlers,
+    handleBirdsEffectChange,
+    handleParticlesEffectChange,
+    handleSpoutEffectChange
+  ])
+
+  useEffect(() => {
+    return () => {
+      guidedAbortRef.current?.abort()
+      clearPopupAutoCloseTimer()
+    }
+  }, [clearPopupAutoCloseTimer])
 
   const handleToggleFullscreen = useCallback(() => {
     const el = contentRef.current
@@ -471,24 +1094,64 @@ export default function Panorama360App() {
       if (e.key !== 'Escape') return
       if (document.fullscreenElement) {
         void document.exitFullscreen()
-      } else {
+        return
+      }
+      // Visitor URLs (?mode=preview) stay in play mode — Escape must not open the editor.
+      if (!startInPreviewMode) {
         handleExitPreview()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [previewMode, handleExitPreview])
+  }, [previewMode, startInPreviewMode, handleExitPreview])
 
   const effectiveEditMode = editMode && !previewMode
 
+  const currentViewForGuided = useMemo(
+    () => ({
+      yaw: currentViewOrientation.yaw,
+      pitch: currentViewOrientation.pitch,
+      fov: liveLookRef.current.fov || DEFAULT_GUIDED_CAMERA_FOV
+    }),
+    [currentViewOrientation]
+  )
+
   return (
-    <div className={`panorama-360-app ${previewMode ? 'preview-mode' : ''}`}>
+    <div
+      className={`panorama-360-app ${previewMode ? 'preview-mode' : ''} ${mobileTourOpen && !previewMode ? 'mobile-tour-open' : ''}`}
+    >
+      {previewMode ? (
+        <a
+          className="panorama-360-back-link panorama-360-back-link--floating"
+          href="https://iobjectm.com/#360"
+          aria-label="Back to 360 Tours section"
+        >
+          ← IOM
+        </a>
+      ) : null}
+      {!previewMode && (
       <header className="panorama-360-header">
+        <a
+          className="panorama-360-back-link"
+          href="https://iobjectm.com/#software"
+          aria-label="Back to Software section"
+        >
+          ← IOM
+        </a>
         <div className="panorama-360-header-main">
           <h1>360° Virtual Tour</h1>
           <p>Upload equirectangular panoramas, add hotspots, and link scenes together.</p>
         </div>
         <div className="panorama-360-actions">
+          <button
+            type="button"
+            className="panorama-360-button secondary panorama-360-tour-toggle"
+            onClick={() => setMobileTourOpen((open) => !open)}
+            aria-expanded={mobileTourOpen}
+            aria-controls="panorama-tour-panel"
+          >
+            {mobileTourOpen ? 'Close tour' : 'Tour'}
+          </button>
           {panoramas.length > 0 && (
             <button
               type="button"
@@ -537,10 +1200,31 @@ export default function Panorama360App() {
           <button type="button" className="panorama-360-button secondary" onClick={handleLoadFromUrl}>
             Load from URL
           </button>
+          <button
+            type="button"
+            className="panorama-360-button secondary"
+            onClick={() => setHelpOpen(true)}
+            title="How to use the 360° tour"
+            aria-haspopup="dialog"
+            aria-expanded={helpOpen}
+          >
+            Help
+          </button>
         </div>
       </header>
+      )}
+
+      <Panorama360HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       <div className="panorama-360-body">
+        {!previewMode && mobileTourOpen && (
+          <button
+            type="button"
+            className="panorama-360-tour-backdrop"
+            aria-label="Close tour panel"
+            onClick={() => setMobileTourOpen(false)}
+          />
+        )}
         {!previewMode && (
         <Panorama360TourPanel
           panoramas={panoramas}
@@ -549,7 +1233,10 @@ export default function Panorama360App() {
           selectedHotspotId={selectedHotspotId}
           pendingPlacement={pendingPlacement}
           placementMode={placementMode}
-          onSelectPanorama={handleSelectPanorama}
+          onSelectPanorama={(id) => {
+            handleSelectPanorama(id)
+            setMobileTourOpen(false)
+          }}
           onAddPanoramas={handleAddPanoramas}
           onRemovePanorama={handleRemovePanorama}
           onRenamePanorama={handleRenamePanorama}
@@ -572,6 +1259,35 @@ export default function Panorama360App() {
           onEditMarkerPreviewChange={setEditMarkerPreview}
           popupOffsetPatch={popupOffsetPatch}
           onPopupOffsetPatchApplied={() => setPopupOffsetPatch(null)}
+          birdsEffect={birdsEffect}
+          onBirdsEffectChange={handleBirdsEffectChange}
+          onPinBirdsToView={handlePinBirdsToCurrentView}
+          birdsStatus={birdsStatus}
+          particlesEffect={particlesEffect}
+          onParticlesEffectChange={handleParticlesEffectChange}
+          onPinParticlesToView={handlePinParticlesToCurrentView}
+          particlesStatus={particlesStatus}
+          spoutEffect={spoutEffect}
+          onSpoutEffectChange={handleSpoutEffectChange}
+          onPinSpoutToView={handlePinSpoutToCurrentView}
+          spoutStatus={spoutStatus}
+          guidedTours={guidedTours}
+          activeGuidedTourId={activeGuidedTourId}
+          selectedGuidedStepId={selectedGuidedStepId}
+          currentViewForGuided={currentViewForGuided}
+          guidedTourPlaying={guidedTourPlaying}
+          guidedTourStepIndex={guidedTourStepIndex}
+          onSelectGuidedTour={handleSelectGuidedTour}
+          onCreateGuidedTour={handleCreateGuidedTour}
+          onRenameGuidedTour={handleRenameGuidedTour}
+          onDeleteGuidedTour={handleDeleteGuidedTour}
+          onSelectGuidedStep={handleSelectGuidedStep}
+          onAddGuidedStepFromView={handleAddGuidedStepFromView}
+          onUpdateGuidedStep={handleUpdateGuidedStep}
+          onDeleteGuidedStep={handleDeleteGuidedStep}
+          onMoveGuidedStep={handleMoveGuidedStep}
+          onPlayGuidedTour={handlePlayGuidedTour}
+          onStopGuidedTour={handleStopGuidedTour}
         />
         )}
 
@@ -586,62 +1302,130 @@ export default function Panorama360App() {
           {previewMode && activePanorama && (
             <div className="panorama-360-preview-bar">
               <div className="panorama-360-preview-bar-main">
-                <span className="panorama-360-preview-badge">Preview</span>
-                <span className="panorama-360-preview-scene">{activePanorama.name}</span>
+                <span className="panorama-360-preview-badge">
+                  {guidedTourPlaying ? 'Guided tour' : 'Preview'}
+                </span>
+                <span className="panorama-360-preview-scene">
+                  {guidedTourPlaying && guidedTourStepIndex >= 0
+                    ? `Step ${guidedTourStepIndex + 1} · ${activePanorama.name}`
+                    : activePanorama.name}
+                </span>
               </div>
               <div className="panorama-360-preview-bar-actions">
+                {guidedTourPlaying ? (
+                  <button type="button" className="panorama-360-preview-btn secondary" onClick={handleStopGuidedTour}>
+                    Stop tour
+                  </button>
+                ) : (
+                  activeGuidedTourId &&
+                  (guidedTours.find((t) => t.id === activeGuidedTourId)?.steps.length ?? 0) > 0 && (
+                    <button type="button" className="panorama-360-preview-btn secondary" onClick={handlePlayGuidedTour}>
+                      Play guided tour
+                    </button>
+                  )
+                )}
                 <button type="button" className="panorama-360-preview-btn secondary" onClick={handleToggleFullscreen}>
                   Fullscreen
                 </button>
-                <button type="button" className="panorama-360-preview-btn" onClick={handleExitPreview}>
-                  Edit tour
-                </button>
+                {!startInPreviewMode && (
+                  <button type="button" className="panorama-360-preview-btn" onClick={handleExitPreview}>
+                    Edit tour
+                  </button>
+                )}
               </div>
             </div>
           )}
           {activePanorama ? (
-            <Panorama360Viewer
-              imageUrl={activePanorama.source}
-              hotspots={activePanorama.hotspots}
-              placementPreview={
-                previewMode
-                  ? null
-                  : editMarkerPreview?.id === PLACEMENT_PREVIEW_HOTSPOT_ID
-                    ? editMarkerPreview
-                    : placementPreview
-              }
-              editPopupPreview={previewMode ? null : editPopupPreview}
-              editMarkerPreview={previewMode ? null : editMarkerPreview}
-              editMode={effectiveEditMode}
-              previewMode={previewMode}
-              initialYaw={viewOrientation.yaw}
-              initialPitch={viewOrientation.pitch}
-              orientationFocusKey={orientationFocusKey}
-              highlightedHotspotId={previewMode ? null : selectedHotspotId}
-              selectedHotspotId={previewMode ? null : selectedHotspotId}
-              placementMode={previewMode ? false : placementMode}
-              onPlaceHotspot={handlePlaceHotspot}
-              onMoveHotspot={handleMoveHotspot}
-              onPopupOffsetChange={handlePopupOffsetChange}
-              onHotspotSelect={handleSelectHotspot}
-              onHotspotClick={handleHotspotClick}
-              onOrientationChange={handleOrientationChange}
-              onError={(err) => alert(`Failed to load image: ${err.message}`)}
-            />
+            <>
+              <Panorama360Viewer
+                imageUrl={activePanorama.source}
+                hotspots={activePanorama.hotspots}
+                placementPreview={
+                  previewMode
+                    ? null
+                    : editMarkerPreview?.id === PLACEMENT_PREVIEW_HOTSPOT_ID
+                      ? editMarkerPreview
+                      : placementPreview
+                }
+                editPopupPreview={previewMode ? null : editPopupPreview}
+                editMarkerPreview={previewMode ? null : editMarkerPreview}
+                editMode={effectiveEditMode}
+                previewMode={previewMode}
+                initialYaw={viewOrientation.yaw}
+                initialPitch={viewOrientation.pitch}
+                orientationFocusKey={orientationFocusKey}
+                highlightedHotspotId={previewMode ? null : selectedHotspotId}
+                selectedHotspotId={previewMode ? null : selectedHotspotId}
+                placementMode={previewMode ? false : placementMode}
+                onPlaceHotspot={handlePlaceHotspot}
+                onMoveHotspot={handleMoveHotspot}
+                onPopupOffsetChange={handlePopupOffsetChange}
+                onHotspotSelect={handleSelectHotspot}
+                onHotspotClick={handleHotspotClick}
+                onOrientationChange={handleOrientationChange}
+                liveLookRef={liveLookRef}
+                interactionLocked={guidedTourPlaying}
+                hiddenHotspotIds={hiddenHotspotIds}
+                guidedCameraCommand={guidedCameraCommand}
+                guidedCameraCommandKey={guidedCameraCommandKey}
+                onGuidedCameraComplete={handleGuidedCameraComplete}
+                guidedInfoPopupId={guidedInfoPopupId}
+                onError={(err) => alert(`Failed to load image: ${err.message}`)}
+              />
+              {particlesEffect.enabled && (
+                <Suspense fallback={null}>
+                  <Panorama360ParticlesOverlay
+                    settings={particlesEffect}
+                    liveLookRef={liveLookRef}
+                    onStatusChange={handleParticlesStatusChange}
+                  />
+                </Suspense>
+              )}
+              {birdsEffect.enabled && (
+                <Suspense fallback={null}>
+                  <Panorama360BirdsOverlay
+                    settings={birdsEffect}
+                    birdCount={birdsEffect.count}
+                    liveLookRef={liveLookRef}
+                    onStatusChange={handleBirdsStatusChange}
+                  />
+                </Suspense>
+              )}
+              {spoutEffect.enabled && (
+                <Suspense fallback={null}>
+                  <Panorama360SpoutOverlay
+                    settings={spoutEffect}
+                    liveLookRef={liveLookRef}
+                    onStatusChange={handleSpoutStatusChange}
+                    onGizmoChange={handleSpoutEffectChange}
+                  />
+                </Suspense>
+              )}
+            </>
           ) : (
             <div className="panorama-360-placeholder">
               <div className="placeholder-content">
-                <div className="placeholder-icon">🌐</div>
-                <h2>Start your virtual tour</h2>
-                <p>Drag and drop one or more 360° equirectangular images, or use the sidebar to upload.</p>
-                <div className="placeholder-formats">
-                  <p><strong>Supported formats:</strong></p>
-                  <ul>
-                    <li>JPG, PNG, WebP — standard equirectangular images</li>
-                    <li>HDR, EXR — high dynamic range panoramas</li>
-                    <li>KTX2 — compressed FastHDR format</li>
-                  </ul>
-                </div>
+                {defaultProjectLoading ? (
+                  <>
+                    <div className="placeholder-icon">🌐</div>
+                    <h2>Loading tour…</h2>
+                    <p>Preparing the default 360° demo project.</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="placeholder-icon">🌐</div>
+                    <h2>Start your virtual tour</h2>
+                    <p>Drag and drop one or more 360° equirectangular images, or use the sidebar to upload.</p>
+                    <div className="placeholder-formats">
+                      <p><strong>Supported formats:</strong></p>
+                      <ul>
+                        <li>JPG, PNG, WebP — standard equirectangular images</li>
+                        <li>HDR, EXR — high dynamic range panoramas</li>
+                        <li>KTX2 — compressed FastHDR format</li>
+                      </ul>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}

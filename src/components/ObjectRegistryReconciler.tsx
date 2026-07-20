@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
-import { getSharedViewer, syncModelToStreetsGL, mergeStreetsGLObjectsIntoRegistry } from '../viewer/useViewer'
+import { getSharedViewer, syncModelToStreetsGL, mergeStreetsGLObjectsIntoRegistry, resyncRegistryObjectsAfterBridgeReload } from '../viewer/useViewer'
 import { buildMeshFromDescriptor, reconcileSceneFromRegistry } from '../viewer/objectRegistry'
 import { getCachedImportedModelScene } from '../viewer/importedModelCache'
 import { latLonToStreetsGL } from '../utils/mapCoordinates'
@@ -62,10 +62,10 @@ export default function ObjectRegistryReconciler() {
     }
   }, [renderMode, updateProjectObject, markSceneRevision])
 
-  // Entering city -> ensure every descriptor is reflected in Streets GL. Re-runs when
-  // the bridge becomes available so objects added in product mode appear on the map.
+  // City / hybrid + overlay → ensure every descriptor is reflected in Streets GL.
+  // Re-runs when the bridge becomes available so objects added in product mode appear on the map.
   useEffect(() => {
-    if (renderMode !== 'city') return
+    if (renderMode !== 'city' && renderMode !== 'hybrid') return
     if (!streetsGLIframeOverlay) return
     if (!streetsGLBridge) return // wait until the bridge exists (effect re-runs on change)
 
@@ -121,13 +121,19 @@ export default function ObjectRegistryReconciler() {
     })
   }, [renderMode, streetsGLIframeOverlay, streetsGLBridge, updateProjectObject])
 
-  // On bridge ready, list pre-existing external objects from the iframe and merge into the registry.
+  // On bridge ready (including after any iframe restart), merge iframe objects into the
+  // registry and re-push registry objects that are missing from the live ExternalObjectBridge.
   useEffect(() => {
     if (!streetsGLBridge) return
 
     const syncExisting = () => {
       mergeStreetsGLObjectsIntoRegistry(streetsGLBridge).catch((err) => {
         console.warn('[ObjectRegistry] Failed to merge Streets GL objects:', err)
+      })
+      // Critical after tab-triggered / reload-triggered iframe restarts: registry still
+      // has streetsGLAdded=true while the iframe scene is empty — force re-add.
+      resyncRegistryObjectsAfterBridgeReload(streetsGLBridge).catch((err) => {
+        console.warn('[ObjectRegistry] Failed to re-sync registry after bridge reload:', err)
       })
     }
 

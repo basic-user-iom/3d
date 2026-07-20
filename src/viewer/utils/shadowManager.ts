@@ -397,7 +397,13 @@ export function updateShadowCameraBounds(
       light.shadow.camera.lookAt(center)
       light.shadow.camera.updateProjectionMatrix()
     } else if (light instanceof THREE.SpotLight) {
-      aimSpotLightAtSceneCenter(light, scene)
+      // CRITICAL: Do NOT redirect spot.target here. User / LightingPanel aim must be
+      // preserved (v3.17 behavior). Auto-aiming at scene center broke spotlights on
+      // large terrains — attenuation distance often ends before the bbox center.
+      if (!light.target.parent) {
+        scene.add(light.target)
+      }
+      light.target.updateMatrixWorld(true)
       const farPlane = computeSpotLightShadowFar(
         light.position,
         light.target.position,

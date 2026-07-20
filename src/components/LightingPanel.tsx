@@ -276,7 +276,10 @@ export default function LightingPanel() {
     if (type === 'point' || type === 'spot') {
       typeSpecificConfig.distance = 100
       typeSpecificConfig.decay = 2
-      typeSpecificConfig.power = 1000
+      // Keep power in sync with intensity (Three.js: spot power=I*π, point power=I*4π)
+      const baseIntensity = baseConfig.intensity
+      typeSpecificConfig.power =
+        type === 'spot' ? baseIntensity * Math.PI : baseIntensity * 4 * Math.PI
     }
     
     if (type === 'spot') {
@@ -2094,7 +2097,13 @@ export default function LightingPanel() {
                     value={selectedLight.intensity}
                     onChange={(e) => {
                       const newValue = parseFloat(e.target.value)
-                      trackSliderInteraction('Light Intensity', newValue, 'LightingPanel', () => updateDirectionalLight(selectedLight.id, { intensity: newValue }))
+                      const isSpot = selectedLight.type === 'spot'
+                      const isPoint = selectedLight.type === 'point'
+                      const updates: Partial<typeof selectedLight> = { intensity: newValue }
+                      // Keep physical power in sync so Power slider / Three.js stay consistent
+                      if (isSpot) updates.power = newValue * Math.PI
+                      if (isPoint) updates.power = newValue * 4 * Math.PI
+                      trackSliderInteraction('Light Intensity', newValue, 'LightingPanel', () => updateDirectionalLight(selectedLight.id, updates))
                     }}
                     className="slider"
                   />
@@ -2250,14 +2259,20 @@ export default function LightingPanel() {
                         min="0"
                         max="5000"
                         step="100"
-                        value={selectedLight.power ?? 1000}
+                        value={selectedLight.power ?? (selectedLight.type === 'spot' ? selectedLight.intensity * Math.PI : selectedLight.intensity * 4 * Math.PI)}
                         onChange={(e) => {
                           const newValue = parseFloat(e.target.value)
-                          trackSliderInteraction('Light Power', newValue, 'LightingPanel', () => updateDirectionalLight(selectedLight.id, { power: newValue }))
+                          const intensity =
+                            selectedLight.type === 'spot'
+                              ? newValue / Math.PI
+                              : newValue / (4 * Math.PI)
+                          trackSliderInteraction('Light Power', newValue, 'LightingPanel', () =>
+                            updateDirectionalLight(selectedLight.id, { power: newValue, intensity })
+                          )
                         }}
                         className="slider"
                       />
-                      <span className="slider-value">{selectedLight.power ?? 1000}</span>
+                      <span className="slider-value">{(selectedLight.power ?? (selectedLight.type === 'spot' ? selectedLight.intensity * Math.PI : selectedLight.intensity * 4 * Math.PI)).toFixed(0)}</span>
                     </div>
                   </label>
                 </>

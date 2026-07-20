@@ -139,6 +139,7 @@
   justify-content: center;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   transition: transform 0.15s, box-shadow 0.15s;
+  touch-action: none;
 }
 
 .panorama-360-viewer.dragging-hotspot .panorama-hotspot-marker {
@@ -253,20 +254,48 @@
   opacity: 1;
 }
 
+@media (pointer: coarse), (max-width: 768px) {
+  .panorama-hotspot-marker,
+  .panorama-hotspot-marker.shape-square {
+    width: 44px;
+    height: 44px;
+  }
+
+  .panorama-hotspot-marker.shape-pin {
+    width: 40px;
+    height: 40px;
+  }
+
+  .panorama-hotspot-label {
+    opacity: 1;
+    font-size: 12px;
+    max-width: min(40vw, 160px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .panorama-360-controls-hint {
+    font-size: 12px;
+    max-width: min(92vw, 420px);
+  }
+
+  .panorama-hotspot-info-popup {
+    max-width: calc(100vw - 24px) !important;
+    padding: 14px 16px;
+  }
+}
+
+
 .panorama-hotspot-info-popup {
   position: absolute;
   background: rgba(16, 16, 24, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--popup-border-color, #ffb43c);
   border-radius: 10px;
   padding: 20px 24px;
   z-index: 30;
   color: white;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   pointer-events: auto;
-}
-
-.panorama-hotspot-info-popup.edit-preview {
-  border-color: rgba(255, 180, 60, 0.35);
 }
 
 .panorama-hotspot-info-popup.view-only {

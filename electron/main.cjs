@@ -371,17 +371,16 @@ async function bootstrapDesktopApp() {
     }
   })
 
-  // Packaged desktop: serve pre-built Streets GL assets on 8081 before the window loads.
-  if (app.isPackaged) {
-    try {
-      const streetsGLResult = await ensureStreetsGLServer()
-      console.log('[Electron] Streets GL:', streetsGLResult.message)
-    } catch (error) {
-      console.error(
-        '[Electron] Streets GL startup failed:',
-        error instanceof Error ? error.message : String(error)
-      )
-    }
+  // Always ensure Streets GL is up before the window loads (packaged static serve,
+  // unpackaged managed webpack). Avoids "localhost refused" on every reopen.
+  try {
+    const streetsGLResult = await ensureStreetsGLServer()
+    console.log('[Electron] Streets GL:', streetsGLResult.message)
+  } catch (error) {
+    console.error(
+      '[Electron] Streets GL startup failed:',
+      error instanceof Error ? error.message : String(error)
+    )
   }
 
   await createMainWindow()

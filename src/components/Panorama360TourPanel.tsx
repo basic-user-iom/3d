@@ -24,11 +24,15 @@ import {
 
   DEFAULT_POPUP_ANCHOR,
 
+  DEFAULT_POPUP_BORDER_COLOR,
+
   DEFAULT_POPUP_WIDTH,
 
   degToRad,
 
   getHotspotColor,
+
+  getPopupBorderColor,
 
   hasPanoramaInitialView,
 
@@ -38,7 +42,26 @@ import {
 
 } from '../panorama/panoramaTourTypes'
 
+import {
+  BIRDS_COUNT_OPTIONS,
+  type BirdsEffectSettings
+} from '../panorama/birdsEffectSettings'
+import {
+  PARTICLES_FIRE_COUNT_OPTIONS,
+  PARTICLES_SMOKE_COUNT_OPTIONS,
+  type ParticlesEffectSettings
+} from '../panorama/particlesEffectSettings'
+import {
+  applySpoutShapePreset,
+  type SpoutEffectSettings,
+  type SpoutShapePreset
+} from '../panorama/spoutEffectSettings'
+import type { GuidedTour, GuidedTourStep } from '../panorama/guidedTourTypes'
+import Panorama360GuidedTourSection from './Panorama360GuidedTourSection'
+
 import './Panorama360TourPanel.css'
+
+type EffectsTab = 'birds' | 'particles' | 'spout'
 
 
 
@@ -93,6 +116,57 @@ interface Panorama360TourPanelProps {
 
   onPopupOffsetPatchApplied: () => void
 
+  birdsEffect: BirdsEffectSettings
+
+  onBirdsEffectChange: (patch: Partial<BirdsEffectSettings>) => void
+
+  /** Pin flock home to the live camera look (preferred over React state). */
+  onPinBirdsToView: () => void
+
+  birdsStatus: {
+    status: 'idle' | 'ready' | 'unsupported' | 'error'
+    message?: string
+  }
+
+  particlesEffect: ParticlesEffectSettings
+
+  onParticlesEffectChange: (patch: Partial<ParticlesEffectSettings>) => void
+
+  onPinParticlesToView: () => void
+
+  particlesStatus: {
+    status: 'idle' | 'ready' | 'unsupported' | 'error'
+    message?: string
+  }
+
+  spoutEffect: SpoutEffectSettings
+
+  onSpoutEffectChange: (patch: Partial<SpoutEffectSettings>) => void
+
+  onPinSpoutToView: () => void
+
+  spoutStatus: {
+    status: 'idle' | 'ready' | 'unsupported' | 'error'
+    message?: string
+  }
+
+  guidedTours: GuidedTour[]
+  activeGuidedTourId: string | null
+  selectedGuidedStepId: string | null
+  currentViewForGuided: { yaw: number; pitch: number; fov: number }
+  guidedTourPlaying: boolean
+  guidedTourStepIndex: number
+  onSelectGuidedTour: (tourId: string | null) => void
+  onCreateGuidedTour: () => void
+  onRenameGuidedTour: (tourId: string, name: string) => void
+  onDeleteGuidedTour: (tourId: string) => void
+  onSelectGuidedStep: (stepId: string | null) => void
+  onAddGuidedStepFromView: () => void
+  onUpdateGuidedStep: (stepId: string, patch: Partial<GuidedTourStep>) => void
+  onDeleteGuidedStep: (stepId: string) => void
+  onMoveGuidedStep: (stepId: string, direction: -1 | 1) => void
+  onPlayGuidedTour: () => void
+  onStopGuidedTour: () => void
 }
 
 
@@ -169,6 +243,8 @@ interface HotspotDraft {
 
   popupOffsetY: number
 
+  popupBorderColor: string
+
 }
 
 
@@ -205,7 +281,9 @@ function defaultDraft(type: PanoramaHotspotType = 'link', yaw = 0, pitch = 0): H
 
     popupOffsetX: 0,
 
-    popupOffsetY: 0
+    popupOffsetY: 0,
+
+    popupBorderColor: DEFAULT_POPUP_BORDER_COLOR
 
   }
 
@@ -245,7 +323,9 @@ function draftFromHotspot(hotspot: PanoramaHotspot): HotspotDraft {
 
     popupOffsetX: hotspot.popupOffsetX ?? 0,
 
-    popupOffsetY: hotspot.popupOffsetY ?? 0
+    popupOffsetY: hotspot.popupOffsetY ?? 0,
+
+    popupBorderColor: getPopupBorderColor(hotspot)
 
   }
 
@@ -289,7 +369,9 @@ function buildHotspot(id: string, draft: HotspotDraft): PanoramaHotspot {
 
     popupOffsetX: draft.type === 'info' ? draft.popupOffsetX : undefined,
 
-    popupOffsetY: draft.type === 'info' ? draft.popupOffsetY : undefined
+    popupOffsetY: draft.type === 'info' ? draft.popupOffsetY : undefined,
+
+    popupBorderColor: draft.type === 'info' ? draft.popupBorderColor : undefined
 
   }
 
@@ -346,7 +428,49 @@ export default function Panorama360TourPanel({
 
   popupOffsetPatch,
 
-  onPopupOffsetPatchApplied
+  onPopupOffsetPatchApplied,
+
+  birdsEffect,
+
+  onBirdsEffectChange,
+
+  onPinBirdsToView,
+
+  birdsStatus,
+
+  particlesEffect,
+
+  onParticlesEffectChange,
+
+  onPinParticlesToView,
+
+  particlesStatus,
+
+  spoutEffect,
+
+  onSpoutEffectChange,
+
+  onPinSpoutToView,
+
+  spoutStatus,
+
+  guidedTours,
+  activeGuidedTourId,
+  selectedGuidedStepId,
+  currentViewForGuided,
+  guidedTourPlaying,
+  guidedTourStepIndex,
+  onSelectGuidedTour,
+  onCreateGuidedTour,
+  onRenameGuidedTour,
+  onDeleteGuidedTour,
+  onSelectGuidedStep,
+  onAddGuidedStepFromView,
+  onUpdateGuidedStep,
+  onDeleteGuidedStep,
+  onMoveGuidedStep,
+  onPlayGuidedTour,
+  onStopGuidedTour
 
 }: Panorama360TourPanelProps) {
 
@@ -362,6 +486,8 @@ export default function Panorama360TourPanel({
 
 
   const [draft, setDraft] = useState<HotspotDraft>(() => defaultDraft())
+  const [effectsExpanded, setEffectsExpanded] = useState(false)
+  const [effectsTab, setEffectsTab] = useState<EffectsTab>('birds')
 
   const loadedHotspotIdRef = useRef<string | null>(null)
 
@@ -591,6 +717,56 @@ export default function Panorama360TourPanel({
     const yaw = degToRad(yawDeg)
     const pitch = degToRad(Math.max(-89, Math.min(89, pitchDeg)))
     onUpdateInitialView(yaw, pitch)
+  }
+
+  const handleBirdsOrientationChange = (yawDeg: number, pitchDeg: number) => {
+    const yaw = degToRad(yawDeg)
+    const pitch = degToRad(Math.max(-89, Math.min(89, pitchDeg)))
+    onBirdsEffectChange({ viewYaw: yaw, viewPitch: pitch })
+  }
+
+  const handleSetBirdsFromCurrentView = () => {
+    onPinBirdsToView()
+  }
+
+  const handleResetBirdsOrientation = () => {
+    onBirdsEffectChange({ viewYaw: 0, viewPitch: 0 })
+  }
+
+  const handleParticlesOrientationChange = (yawDeg: number, pitchDeg: number) => {
+    const yaw = degToRad(yawDeg)
+    const pitch = degToRad(Math.max(-89, Math.min(89, pitchDeg)))
+    onParticlesEffectChange({ viewYaw: yaw, viewPitch: pitch })
+  }
+
+  const handleSetParticlesFromCurrentView = () => {
+    onPinParticlesToView()
+  }
+
+  const handleResetParticlesOrientation = () => {
+    onParticlesEffectChange({ viewYaw: 0, viewPitch: 0 })
+  }
+
+  const handleSpoutOrientationChange = (yawDeg: number, pitchDeg: number) => {
+    const yaw = degToRad(yawDeg)
+    const pitch = degToRad(Math.max(-89, Math.min(89, pitchDeg)))
+    onSpoutEffectChange({ viewYaw: yaw, viewPitch: pitch })
+  }
+
+  const handleSetSpoutFromCurrentView = () => {
+    onPinSpoutToView()
+  }
+
+  const handleResetSpoutOrientation = () => {
+    onSpoutEffectChange({ viewYaw: 0, viewPitch: 0 })
+  }
+
+  const handleSpoutShapePreset = (preset: SpoutShapePreset) => {
+    if (preset === 'custom') {
+      onSpoutEffectChange({ shapePreset: 'custom' })
+      return
+    }
+    onSpoutEffectChange(applySpoutShapePreset(preset))
   }
 
   const renderInitialViewSection = () => {
@@ -897,6 +1073,22 @@ export default function Panorama360TourPanel({
 
           <legend>Popup layout</legend>
 
+          <label>
+
+            Outline color
+
+            <input
+
+              type="color"
+
+              value={draft.popupBorderColor}
+
+              onChange={(e) => updateDraft({ popupBorderColor: e.target.value })}
+
+            />
+
+          </label>
+
           <div className="panorama-tour-row">
 
             <label>
@@ -1192,6 +1384,921 @@ export default function Panorama360TourPanel({
         )}
 
       </section>
+
+
+
+      <section className="panorama-tour-section">
+        <div
+          className={`panorama-tour-section-header${effectsExpanded ? '' : ' panorama-tour-section-header-collapsed'}`}
+        >
+          <button
+            type="button"
+            className="panorama-tour-section-toggle"
+            onClick={() => setEffectsExpanded((open) => !open)}
+            aria-expanded={effectsExpanded}
+            aria-controls="panorama-tour-effects-body"
+          >
+            <span className="panorama-tour-section-chevron" aria-hidden="true">
+              {effectsExpanded ? '▼' : '▶'}
+            </span>
+            <h2>Effects</h2>
+          </button>
+        </div>
+        {effectsExpanded && (
+          <div id="panorama-tour-effects-body">
+            <p className="panorama-tour-hint">
+              Transparent overlays. Enable each effect separately — Birds / Particles need WebGPU;
+              Spout uses WebGL2. Pointers pass through unless Spout “Edit transform” is on.
+            </p>
+
+            <div className="panorama-tour-effects-tabs" role="tablist" aria-label="Effects">
+              <button
+                type="button"
+                role="tab"
+                id="panorama-effects-tab-birds"
+                aria-selected={effectsTab === 'birds'}
+                aria-controls="panorama-effects-panel-birds"
+                className={`panorama-tour-effects-tab${effectsTab === 'birds' ? ' active' : ''}${birdsEffect.enabled ? ' enabled' : ''}`}
+                onClick={() => setEffectsTab('birds')}
+              >
+                Birds
+                <span className="panorama-tour-effects-tab-dot" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="panorama-effects-tab-particles"
+                aria-selected={effectsTab === 'particles'}
+                aria-controls="panorama-effects-panel-particles"
+                className={`panorama-tour-effects-tab${effectsTab === 'particles' ? ' active' : ''}${particlesEffect.enabled ? ' enabled' : ''}`}
+                onClick={() => setEffectsTab('particles')}
+              >
+                Particles
+                <span className="panorama-tour-effects-tab-dot" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="panorama-effects-tab-spout"
+                aria-selected={effectsTab === 'spout'}
+                aria-controls="panorama-effects-panel-spout"
+                className={`panorama-tour-effects-tab${effectsTab === 'spout' ? ' active' : ''}${spoutEffect.enabled ? ' enabled' : ''}`}
+                onClick={() => setEffectsTab('spout')}
+              >
+                Spout
+                <span className="panorama-tour-effects-tab-dot" aria-hidden="true" />
+              </button>
+            </div>
+
+            {effectsTab === 'birds' && (
+              <div
+                id="panorama-effects-panel-birds"
+                role="tabpanel"
+                aria-labelledby="panorama-effects-tab-birds"
+                className="panorama-tour-effects-panel"
+              >
+                <div className="panorama-tour-effects-panel-header">
+                  <label className="panorama-tour-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={birdsEffect.enabled}
+                      onChange={(e) => onBirdsEffectChange({ enabled: e.target.checked })}
+                    />
+                    Enable birds
+                  </label>
+                  <button
+                    type="button"
+                    className={`panorama-tour-add-btn ${birdsEffect.enabled ? 'active' : ''}`}
+                    onClick={() => onBirdsEffectChange({ enabled: !birdsEffect.enabled })}
+                  >
+                    {birdsEffect.enabled ? 'On' : 'Off'}
+                  </button>
+                </div>
+                {birdsEffect.enabled && (
+                  <div className="panorama-tour-effects-controls">
+                    <label>
+                      Bird count
+                      <select
+                        value={birdsEffect.count}
+                        onChange={(e) => onBirdsEffectChange({ count: Number(e.target.value) })}
+                      >
+                        {BIRDS_COUNT_OPTIONS.map((n) => (
+                          <option key={n} value={n}>{n.toLocaleString()}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Size
+                      <input
+                        type="range"
+                        min={0.25}
+                        max={2.5}
+                        step={0.05}
+                        value={birdsEffect.size}
+                        onChange={(e) => onBirdsEffectChange({ size: Number(e.target.value) })}
+                      />
+                      <span className="panorama-tour-range-value">{birdsEffect.size.toFixed(2)}</span>
+                    </label>
+                    <label>
+                      Speed
+                      <input
+                        type="range"
+                        min={0.25}
+                        max={2.5}
+                        step={0.05}
+                        value={birdsEffect.speed}
+                        onChange={(e) => onBirdsEffectChange({ speed: Number(e.target.value) })}
+                      />
+                      <span className="panorama-tour-range-value">{birdsEffect.speed.toFixed(2)}</span>
+                    </label>
+                    <label>
+                      Color
+                      <input
+                        type="color"
+                        value={birdsEffect.color}
+                        onChange={(e) => onBirdsEffectChange({ color: e.target.value })}
+                      />
+                    </label>
+                    <fieldset
+                      className="panorama-tour-fieldset panorama-tour-flock-position"
+                      data-testid="flock-position"
+                      aria-label="Flock position"
+                    >
+                      <legend>Flock position</legend>
+                      <p className="panorama-tour-field-hint panorama-tour-flock-position-banner">
+                        Pin birds to the sky region you are looking at (same idea as Initial view).
+                        The flock stays fixed there while you look around.
+                      </p>
+                      <div className="panorama-tour-row">
+                        <label>
+                          Yaw (°)
+                          <input
+                            type="number"
+                            step="1"
+                            value={Math.round(radToDeg(birdsEffect.viewYaw ?? 0) * 10) / 10}
+                            onChange={(e) =>
+                              handleBirdsOrientationChange(
+                                Number(e.target.value),
+                                radToDeg(birdsEffect.viewPitch ?? 0)
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          Pitch (°)
+                          <input
+                            type="number"
+                            step="1"
+                            min={-89}
+                            max={89}
+                            value={Math.round(radToDeg(birdsEffect.viewPitch ?? 0) * 10) / 10}
+                            onChange={(e) =>
+                              handleBirdsOrientationChange(
+                                radToDeg(birdsEffect.viewYaw ?? 0),
+                                Number(e.target.value)
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="panorama-tour-initial-view-actions">
+                        <button
+                          type="button"
+                          className="primary panorama-tour-pin-birds-btn"
+                          onClick={handleSetBirdsFromCurrentView}
+                        >
+                          Pin birds to view
+                        </button>
+                        <button type="button" className="secondary" onClick={handleResetBirdsOrientation}>
+                          Reset flock position
+                        </button>
+                      </div>
+                    </fieldset>
+                    <fieldset className="panorama-tour-fieldset">
+                      <legend>Flocking</legend>
+                      <label>
+                        Separation
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={birdsEffect.separation}
+                          onChange={(e) => onBirdsEffectChange({ separation: Number(e.target.value) })}
+                        />
+                        <span className="panorama-tour-range-value">{birdsEffect.separation}</span>
+                      </label>
+                      <label>
+                        Alignment
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={birdsEffect.alignment}
+                          onChange={(e) => onBirdsEffectChange({ alignment: Number(e.target.value) })}
+                        />
+                        <span className="panorama-tour-range-value">{birdsEffect.alignment}</span>
+                      </label>
+                      <label>
+                        Cohesion
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={birdsEffect.cohesion}
+                          onChange={(e) => onBirdsEffectChange({ cohesion: Number(e.target.value) })}
+                        />
+                        <span className="panorama-tour-range-value">{birdsEffect.cohesion}</span>
+                      </label>
+                    </fieldset>
+                    {(birdsStatus.status === 'unsupported' || birdsStatus.status === 'error') && (
+                      <p className="panorama-tour-effects-warning">
+                        {birdsStatus.message || 'WebGPU birds effect is unavailable in this browser.'}
+                      </p>
+                    )}
+                    {birdsStatus.status === 'ready' && (
+                      <p className="panorama-tour-field-hint">Running · move the mouse to disturb the flock.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {effectsTab === 'particles' && (
+              <div
+                id="panorama-effects-panel-particles"
+                role="tabpanel"
+                aria-labelledby="panorama-effects-tab-particles"
+                className="panorama-tour-effects-panel"
+              >
+                <div className="panorama-tour-effects-panel-header">
+                  <label className="panorama-tour-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={particlesEffect.enabled}
+                      onChange={(e) => onParticlesEffectChange({ enabled: e.target.checked })}
+                    />
+                    Enable particles
+                  </label>
+                  <button
+                    type="button"
+                    className={`panorama-tour-add-btn ${particlesEffect.enabled ? 'active' : ''}`}
+                    onClick={() => onParticlesEffectChange({ enabled: !particlesEffect.enabled })}
+                  >
+                    {particlesEffect.enabled ? 'On' : 'Off'}
+                  </button>
+                </div>
+                {particlesEffect.enabled && (
+                  <div className="panorama-tour-effects-controls">
+                    <label>
+                      Smoke count
+                      <select
+                        value={particlesEffect.smokeCount}
+                        onChange={(e) =>
+                          onParticlesEffectChange({ smokeCount: Number(e.target.value) })
+                        }
+                      >
+                        {PARTICLES_SMOKE_COUNT_OPTIONS.map((n) => (
+                          <option key={n} value={n}>{n.toLocaleString()}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Fire count
+                      <select
+                        value={particlesEffect.fireCount}
+                        onChange={(e) =>
+                          onParticlesEffectChange({ fireCount: Number(e.target.value) })
+                        }
+                      >
+                        {PARTICLES_FIRE_COUNT_OPTIONS.map((n) => (
+                          <option key={n} value={n}>{n.toLocaleString()}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Size
+                      <input
+                        type="range"
+                        min={0.25}
+                        max={2.5}
+                        step={0.05}
+                        value={particlesEffect.size}
+                        onChange={(e) => onParticlesEffectChange({ size: Number(e.target.value) })}
+                      />
+                      <span className="panorama-tour-range-value">{particlesEffect.size.toFixed(2)}</span>
+                    </label>
+                    <label>
+                      Speed
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={particlesEffect.speed}
+                        onChange={(e) => onParticlesEffectChange({ speed: Number(e.target.value) })}
+                      />
+                      <span className="panorama-tour-range-value">{particlesEffect.speed.toFixed(2)}</span>
+                    </label>
+                    <label>
+                      Fire color
+                      <input
+                        type="color"
+                        value={particlesEffect.fireColor}
+                        onChange={(e) => onParticlesEffectChange({ fireColor: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Ember color
+                      <input
+                        type="color"
+                        value={particlesEffect.emberColor}
+                        onChange={(e) => onParticlesEffectChange({ emberColor: e.target.value })}
+                      />
+                    </label>
+                    <label className="panorama-tour-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={particlesEffect.showSmoke}
+                        onChange={(e) => onParticlesEffectChange({ showSmoke: e.target.checked })}
+                      />
+                      Show smoke
+                    </label>
+                    <label className="panorama-tour-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={particlesEffect.showFire}
+                        onChange={(e) => onParticlesEffectChange({ showFire: e.target.checked })}
+                      />
+                      Show fire
+                    </label>
+                    <fieldset
+                      className="panorama-tour-fieldset panorama-tour-flock-position"
+                      aria-label="Emitter position"
+                    >
+                      <legend>Emitter position</legend>
+                      <p className="panorama-tour-field-hint panorama-tour-flock-position-banner">
+                        Pin the fire/smoke emitter to the sky region you are looking at.
+                        It stays fixed there while you look around.
+                      </p>
+                      <div className="panorama-tour-row">
+                        <label>
+                          Yaw (°)
+                          <input
+                            type="number"
+                            step="1"
+                            value={Math.round(radToDeg(particlesEffect.viewYaw ?? 0) * 10) / 10}
+                            onChange={(e) =>
+                              handleParticlesOrientationChange(
+                                Number(e.target.value),
+                                radToDeg(particlesEffect.viewPitch ?? 0)
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          Pitch (°)
+                          <input
+                            type="number"
+                            step="1"
+                            min={-89}
+                            max={89}
+                            value={Math.round(radToDeg(particlesEffect.viewPitch ?? 0) * 10) / 10}
+                            onChange={(e) =>
+                              handleParticlesOrientationChange(
+                                radToDeg(particlesEffect.viewYaw ?? 0),
+                                Number(e.target.value)
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="panorama-tour-initial-view-actions">
+                        <button
+                          type="button"
+                          className="primary panorama-tour-pin-birds-btn"
+                          onClick={handleSetParticlesFromCurrentView}
+                        >
+                          Pin particles to view
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={handleResetParticlesOrientation}
+                        >
+                          Reset emitter position
+                        </button>
+                      </div>
+                    </fieldset>
+                    {(particlesStatus.status === 'unsupported' || particlesStatus.status === 'error') && (
+                      <p className="panorama-tour-effects-warning">
+                        {particlesStatus.message ||
+                          'WebGPU particles effect is unavailable in this browser.'}
+                      </p>
+                    )}
+                    {particlesStatus.status === 'ready' && (
+                      <p className="panorama-tour-field-hint">
+                        Running · fire &amp; smoke sprites (TSL / WebGPU).
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {effectsTab === 'spout' && (
+              <div
+                id="panorama-effects-panel-spout"
+                role="tabpanel"
+                aria-labelledby="panorama-effects-tab-spout"
+                className="panorama-tour-effects-panel"
+              >
+                <div className="panorama-tour-effects-panel-header">
+                  <label className="panorama-tour-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={spoutEffect.enabled}
+                      onChange={(e) => onSpoutEffectChange({ enabled: e.target.checked })}
+                    />
+                    Enable spout
+                  </label>
+                  <button
+                    type="button"
+                    className={`panorama-tour-add-btn ${spoutEffect.enabled ? 'active' : ''}`}
+                    onClick={() => onSpoutEffectChange({ enabled: !spoutEffect.enabled })}
+                  >
+                    {spoutEffect.enabled ? 'On' : 'Off'}
+                  </button>
+                </div>
+                {spoutEffect.enabled && (
+                  <div className="panorama-tour-effects-controls">
+                    <p className="panorama-tour-field-hint">
+                      Raymarched falling water (P_Malin / Shadertoy). Shape via presets and stream
+                      SDF params — no pipe geometry.
+                    </p>
+                    <label>
+                      Size
+                      <input
+                        type="range"
+                        min={0.2}
+                        max={3}
+                        step={0.05}
+                        value={spoutEffect.size}
+                        onChange={(e) => onSpoutEffectChange({ size: Number(e.target.value) })}
+                      />
+                      <span className="panorama-tour-range-value">{spoutEffect.size.toFixed(2)}</span>
+                    </label>
+                    <label>
+                      Water speed
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={3}
+                        step={0.05}
+                        value={spoutEffect.speed}
+                        onChange={(e) => onSpoutEffectChange({ speed: Number(e.target.value) })}
+                      />
+                      <span className="panorama-tour-range-value">{spoutEffect.speed.toFixed(2)}</span>
+                    </label>
+                    <label>
+                      Exposure
+                      <input
+                        type="range"
+                        min={0.4}
+                        max={3}
+                        step={0.05}
+                        value={spoutEffect.exposure}
+                        onChange={(e) => onSpoutEffectChange({ exposure: Number(e.target.value) })}
+                      />
+                      <span className="panorama-tour-range-value">{spoutEffect.exposure.toFixed(2)}</span>
+                    </label>
+
+                    <fieldset className="panorama-tour-fieldset" aria-label="Shape and material">
+                      <legend>Shape / Material</legend>
+                      <label>
+                        Preset
+                        <select
+                          value={spoutEffect.shapePreset}
+                          onChange={(e) => handleSpoutShapePreset(e.target.value as SpoutShapePreset)}
+                        >
+                          <option value="waterOnly">Water only (no pipe)</option>
+                          <option value="classic">Classic room + pipe</option>
+                          <option value="wide">Wide stream</option>
+                          <option value="tall">Tall fall</option>
+                          <option value="thin">Thin stream</option>
+                          <option value="custom">Custom</option>
+                        </select>
+                      </label>
+                      <label className="panorama-tour-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={spoutEffect.showPipe}
+                          onChange={(e) =>
+                            onSpoutEffectChange({
+                              showPipe: e.target.checked,
+                              shapePreset: 'custom'
+                            })
+                          }
+                        />
+                        Show pipe
+                      </label>
+                      <label>
+                        Stream radius
+                        <input
+                          type="range"
+                          min={0.1}
+                          max={1.5}
+                          step={0.01}
+                          value={spoutEffect.pipeRadius}
+                          onChange={(e) =>
+                            onSpoutEffectChange({
+                              pipeRadius: Number(e.target.value),
+                              shapePreset: 'custom'
+                            })
+                          }
+                        />
+                        <span className="panorama-tour-range-value">
+                          {spoutEffect.pipeRadius.toFixed(2)}
+                        </span>
+                      </label>
+                      <label>
+                        Pipe thickness
+                        <input
+                          type="range"
+                          min={0.04}
+                          max={0.6}
+                          step={0.01}
+                          value={spoutEffect.pipeThickness}
+                          disabled={!spoutEffect.showPipe}
+                          onChange={(e) =>
+                            onSpoutEffectChange({
+                              pipeThickness: Number(e.target.value),
+                              shapePreset: 'custom'
+                            })
+                          }
+                        />
+                        <span className="panorama-tour-range-value">
+                          {spoutEffect.pipeThickness.toFixed(2)}
+                        </span>
+                      </label>
+                      <label>
+                        Pipe length
+                        <input
+                          type="range"
+                          min={0.2}
+                          max={8}
+                          step={0.05}
+                          value={spoutEffect.pipeLength}
+                          onChange={(e) =>
+                            onSpoutEffectChange({
+                              pipeLength: Number(e.target.value),
+                              shapePreset: 'custom'
+                            })
+                          }
+                        />
+                        <span className="panorama-tour-range-value">
+                          {spoutEffect.pipeLength.toFixed(2)}
+                        </span>
+                      </label>
+                      <label>
+                        Fall height
+                        <input
+                          type="range"
+                          min={0.5}
+                          max={6}
+                          step={0.05}
+                          value={spoutEffect.pipeHeight}
+                          onChange={(e) =>
+                            onSpoutEffectChange({
+                              pipeHeight: Number(e.target.value),
+                              shapePreset: 'custom'
+                            })
+                          }
+                        />
+                        <span className="panorama-tour-range-value">
+                          {spoutEffect.pipeHeight.toFixed(2)}
+                        </span>
+                      </label>
+                      {spoutEffect.showPipe && (
+                        <>
+                          <label>
+                            Pipe color
+                            <input
+                              type="color"
+                              value={spoutEffect.pipeColor}
+                              onChange={(e) =>
+                                onSpoutEffectChange({
+                                  pipeColor: e.target.value,
+                                  shapePreset: 'custom'
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Pipe roughness
+                            <input
+                              type="range"
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              value={spoutEffect.pipeRoughness}
+                              onChange={(e) =>
+                                onSpoutEffectChange({
+                                  pipeRoughness: Number(e.target.value),
+                                  shapePreset: 'custom'
+                                })
+                              }
+                            />
+                            <span className="panorama-tour-range-value">
+                              {spoutEffect.pipeRoughness.toFixed(2)}
+                            </span>
+                          </label>
+                        </>
+                      )}
+                      <fieldset className="panorama-tour-fieldset" aria-label="Water">
+                        <legend>Water</legend>
+                        <label>
+                          Color
+                          <input
+                            type="color"
+                            value={spoutEffect.waterColor}
+                            onChange={(e) =>
+                              onSpoutEffectChange({
+                                waterColor: e.target.value,
+                                shapePreset: 'custom'
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Transparency
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={spoutEffect.waterOpacity}
+                            onChange={(e) =>
+                              onSpoutEffectChange({
+                                waterOpacity: Number(e.target.value),
+                                shapePreset: 'custom'
+                              })
+                            }
+                          />
+                          <span className="panorama-tour-range-value">
+                            {spoutEffect.waterOpacity.toFixed(2)}
+                          </span>
+                        </label>
+                        <label>
+                          Roughness
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={spoutEffect.waterRoughness}
+                            onChange={(e) =>
+                              onSpoutEffectChange({
+                                waterRoughness: Number(e.target.value),
+                                shapePreset: 'custom'
+                              })
+                            }
+                          />
+                          <span className="panorama-tour-range-value">
+                            {spoutEffect.waterRoughness.toFixed(2)}
+                          </span>
+                        </label>
+                        <label>
+                          IOR
+                          <input
+                            type="range"
+                            min={1}
+                            max={2.5}
+                            step={0.01}
+                            value={spoutEffect.waterIor}
+                            onChange={(e) =>
+                              onSpoutEffectChange({
+                                waterIor: Number(e.target.value),
+                                shapePreset: 'custom'
+                              })
+                            }
+                          />
+                          <span className="panorama-tour-range-value">
+                            {spoutEffect.waterIor.toFixed(2)}
+                          </span>
+                        </label>
+                        <label>
+                          Tint intensity
+                          <input
+                            type="range"
+                            min={0.2}
+                            max={6}
+                            step={0.05}
+                            value={spoutEffect.waterTint}
+                            onChange={(e) =>
+                              onSpoutEffectChange({
+                                waterTint: Number(e.target.value),
+                                shapePreset: 'custom'
+                              })
+                            }
+                          />
+                          <span className="panorama-tour-range-value">
+                            {spoutEffect.waterTint.toFixed(2)}
+                          </span>
+                        </label>
+                      </fieldset>
+                      <label className="panorama-tour-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={spoutEffect.showFloor}
+                          onChange={(e) =>
+                            onSpoutEffectChange({
+                              showFloor: e.target.checked,
+                              shapePreset: 'custom'
+                            })
+                          }
+                        />
+                        Show floor / wall (classic room)
+                      </label>
+                    </fieldset>
+
+                    <fieldset className="panorama-tour-fieldset" aria-label="Transform gizmo">
+                      <legend>Transform gizmo</legend>
+                      <label className="panorama-tour-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={spoutEffect.editTransform}
+                          onChange={(e) => onSpoutEffectChange({ editTransform: e.target.checked })}
+                        />
+                        Edit transform (enables gizmo pointers)
+                      </label>
+                      <label>
+                        Gizmo mode
+                        <select
+                          value={spoutEffect.gizmoMode}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            onSpoutEffectChange({
+                              gizmoMode:
+                                v === 'translate' || v === 'scale' || v === 'rotate' ? v : 'translate'
+                            })
+                          }}
+                          disabled={!spoutEffect.editTransform}
+                        >
+                          <option value="translate">Move</option>
+                          <option value="rotate">Rotate</option>
+                          <option value="scale">Scale</option>
+                        </select>
+                      </label>
+                      <p className="panorama-tour-field-hint">
+                        When Edit transform is on, drag the gizmo in the view. Move updates yaw /
+                        pitch; pin-to-view below still works.
+                      </p>
+                      <div className="panorama-tour-row">
+                        <label>
+                          Rot X (°)
+                          <input
+                            type="number"
+                            step="1"
+                            value={Math.round(radToDeg(spoutEffect.rotationX) * 10) / 10}
+                            onChange={(e) =>
+                              onSpoutEffectChange({ rotationX: degToRad(Number(e.target.value)) })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Rot Y (°)
+                          <input
+                            type="number"
+                            step="1"
+                            value={Math.round(radToDeg(spoutEffect.rotationY) * 10) / 10}
+                            onChange={(e) =>
+                              onSpoutEffectChange({ rotationY: degToRad(Number(e.target.value)) })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Rot Z (°)
+                          <input
+                            type="number"
+                            step="1"
+                            value={Math.round(radToDeg(spoutEffect.rotationZ) * 10) / 10}
+                            onChange={(e) =>
+                              onSpoutEffectChange({ rotationZ: degToRad(Number(e.target.value)) })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() =>
+                          onSpoutEffectChange({ rotationX: 0, rotationY: 0, rotationZ: 0, size: 1 })
+                        }
+                      >
+                        Reset rotation &amp; size
+                      </button>
+                    </fieldset>
+
+                    <fieldset
+                      className="panorama-tour-fieldset panorama-tour-flock-position"
+                      aria-label="Spout position"
+                    >
+                      <legend>Spout position</legend>
+                      <p className="panorama-tour-field-hint panorama-tour-flock-position-banner">
+                        Pin the spout to the sky region you are looking at. It stays fixed there
+                        while you look around.
+                      </p>
+                      <div className="panorama-tour-row">
+                        <label>
+                          Yaw (°)
+                          <input
+                            type="number"
+                            step="1"
+                            value={Math.round(radToDeg(spoutEffect.viewYaw ?? 0) * 10) / 10}
+                            onChange={(e) =>
+                              handleSpoutOrientationChange(
+                                Number(e.target.value),
+                                radToDeg(spoutEffect.viewPitch ?? 0)
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          Pitch (°)
+                          <input
+                            type="number"
+                            step="1"
+                            min={-89}
+                            max={89}
+                            value={Math.round(radToDeg(spoutEffect.viewPitch ?? 0) * 10) / 10}
+                            onChange={(e) =>
+                              handleSpoutOrientationChange(
+                                radToDeg(spoutEffect.viewYaw ?? 0),
+                                Number(e.target.value)
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="panorama-tour-initial-view-actions">
+                        <button
+                          type="button"
+                          className="primary panorama-tour-pin-birds-btn"
+                          onClick={handleSetSpoutFromCurrentView}
+                        >
+                          Pin spout to view
+                        </button>
+                        <button type="button" className="secondary" onClick={handleResetSpoutOrientation}>
+                          Reset spout position
+                        </button>
+                      </div>
+                    </fieldset>
+
+                    {(spoutStatus.status === 'unsupported' || spoutStatus.status === 'error') && (
+                      <p className="panorama-tour-effects-warning">
+                        {spoutStatus.message ||
+                          'WebGL2 Spout effect is unavailable in this browser.'}
+                      </p>
+                    )}
+                    {spoutStatus.status === 'ready' && (
+                      <p className="panorama-tour-field-hint">
+                        Running · raymarched WebGL2 spout overlay.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+
+
+      <Panorama360GuidedTourSection
+        panoramas={panoramas}
+        activePanoramaId={activePanoramaId}
+        guidedTours={guidedTours}
+        activeGuidedTourId={activeGuidedTourId}
+        selectedStepId={selectedGuidedStepId}
+        currentView={currentViewForGuided}
+        isPlaying={guidedTourPlaying}
+        playingStepIndex={guidedTourStepIndex}
+        onSelectTour={onSelectGuidedTour}
+        onCreateTour={onCreateGuidedTour}
+        onRenameTour={onRenameGuidedTour}
+        onDeleteTour={onDeleteGuidedTour}
+        onSelectStep={onSelectGuidedStep}
+        onAddStepFromCurrentView={onAddGuidedStepFromView}
+        onUpdateStep={onUpdateGuidedStep}
+        onDeleteStep={onDeleteGuidedStep}
+        onMoveStep={onMoveGuidedStep}
+        onPlay={onPlayGuidedTour}
+        onStop={onStopGuidedTour}
+      />
 
 
 

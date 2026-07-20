@@ -3,6 +3,19 @@ import * as THREE from 'three'
 /** Sphere radius used by the panorama viewer mesh. */
 export const PANORAMA_SPHERE_RADIUS = 500
 
+/** Live panorama camera look — updated every animation frame for overlays. */
+export interface PanoramaLiveLook {
+  yaw: number
+  pitch: number
+  fov: number
+}
+
+export const DEFAULT_PANORAMA_LIVE_LOOK: PanoramaLiveLook = {
+  yaw: 0,
+  pitch: 0,
+  fov: 75
+}
+
 /**
  * Convert spherical yaw/pitch to a point on the inner panorama sphere.
  * Yaw 0 looks along -Z; positive yaw rotates toward +X.

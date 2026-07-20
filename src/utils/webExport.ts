@@ -20,7 +20,7 @@ import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
 import { getCameraBoundsClampSource } from '../viewer/utils/cameraBounds'
 import { ExportWorkerPool } from './webExportWorker'
 import { generateHotspotMarkerRuntimeJs } from './hotspotMarkerRuntime'
-import { generateWebExportWeatherRuntimeJs } from './webExportWeatherRuntime'
+import { generateWebExportWeatherRuntimeJs, webExportIsSunLightConfig } from './webExportWeatherRuntime'
 
 export interface WebExportOptions {
   includeModel: boolean
@@ -28,7 +28,10 @@ export interface WebExportOptions {
   includeCameraViews: boolean
   includeAnimations: boolean
   presentationMode: boolean
-  transitionDuration: number // in seconds
+  /** Camera move duration between views (seconds). */
+  transitionDuration: number
+  /** How long to stay on each camera view after the transition finishes (seconds). */
+  viewHoldDuration: number
   autoPlay: boolean
   loop: boolean
   quality: 'low' | 'medium' | 'high' | 'ultra'
@@ -435,42 +438,50 @@ export function createStandaloneViewerHTML(
 ): string {
   // Ensure cameraViews is always an array
   const safeCameraViews = Array.isArray(cameraViews) ? cameraViews : []
-  const transitionDuration = options.transitionDuration || 2.0
-  const autoPlay = options.autoPlay !== false
+  const transitionDuration =
+    typeof options.transitionDuration === 'number' && isFinite(options.transitionDuration) && options.transitionDuration > 0
+      ? options.transitionDuration
+      : 2.0
+  const viewHoldDuration =
+    typeof options.viewHoldDuration === 'number' && isFinite(options.viewHoldDuration) && options.viewHoldDuration >= 0
+      ? options.viewHoldDuration
+      : 1.0
+  const autoPlay = options.autoPlay === true
   const loop = options.loop !== false
+
+  // Presentation timing must live at CONFIG top-level — the embedded player reads
+  // CONFIG.transitionDuration / CONFIG.viewHoldDuration / CONFIG.autoPlay / CONFIG.loop.
+  // Older exports nested these under config.options, so the player ignored the UI values.
+  const presentationConfig = {
+    transitionDuration,
+    viewHoldDuration,
+    autoPlay,
+    loop,
+    cameraViews: safeCameraViews
+  }
   
-  // Build config string - if config is provided, use it, otherwise build a default one
+  // Build config string - if config is provided, merge presentation settings on top
   // CRITICAL: Ensure configString is always valid JSON to prevent syntax errors
   let configString: string
   try {
     if (config) {
-      configString = JSON.stringify(config, null, 2)
-    } else {
       configString = JSON.stringify({
-        transitionDuration,
-        autoPlay,
-        loop,
-        cameraViews: safeCameraViews
+        ...config,
+        ...presentationConfig,
+        // Prefer explicit cameraViews already on config when present
+        cameraViews: Array.isArray(config.cameraViews) ? config.cameraViews : safeCameraViews
       }, null, 2)
+    } else {
+      configString = JSON.stringify(presentationConfig, null, 2)
     }
     // Ensure configString is not empty or undefined
     if (!configString || configString.trim() === '') {
-      configString = JSON.stringify({
-        transitionDuration,
-        autoPlay,
-        loop,
-        cameraViews: safeCameraViews
-      }, null, 2)
+      configString = JSON.stringify(presentationConfig, null, 2)
     }
   } catch (error) {
     console.error('[WebExport] Error stringifying config:', error)
     // Fallback to minimal valid config
-    configString = JSON.stringify({
-      transitionDuration,
-      autoPlay,
-      loop,
-      cameraViews: safeCameraViews
-    }, null, 2)
+    configString = JSON.stringify(presentationConfig, null, 2)
   }
 
   return `<!DOCTYPE html>
@@ -1505,7 +1516,6 @@ export function createStandaloneViewerHTML(
     import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
     import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
     import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
-    import { Sky } from 'three/addons/objects/Sky.js';
     import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
     
     // Load MeshoptSimplifier dynamically (it's a large library)
@@ -1623,8 +1633,9 @@ export function createStandaloneViewerHTML(
     
     // Presentation state
     let currentViewIndex = 0;
-    let isPlaying = CONFIG.autoPlay;
+    let isPlaying = false; // set true when autoplay actually starts (after scene ready)
     let transitionAnimation = null;
+    let presentationReady = false; // true after model/HDR load + first camera applied
     
     // Simple camera debug tracker
     const cameraDebug = {
@@ -1802,7 +1813,7 @@ export function createStandaloneViewerHTML(
       if (transitionAnimation || !Array.isArray(CONFIG.cameraViews) || CONFIG.cameraViews.length === 0) return;
       const next = (currentViewIndex + 1) % CONFIG.cameraViews.length;
       if (next === 0 && !CONFIG.loop) {
-        isPlaying = false;
+        stopAutoPlay();
         updatePlayPauseButton();
         return;
       }
@@ -1828,33 +1839,99 @@ export function createStandaloneViewerHTML(
       }
     }
     
-    // Auto-play
-    let autoPlayInterval = null;
+    // Auto-play: stay on each view (hold), then animate to the next (transition).
+    // Timing comes from CONFIG (set at export from the Export panel).
+    let autoPlayTimeout = null;
+    function getTransitionSec() {
+      return (typeof CONFIG.transitionDuration === 'number' && isFinite(CONFIG.transitionDuration) && CONFIG.transitionDuration > 0)
+        ? CONFIG.transitionDuration
+        : 2.0;
+    }
+    function getHoldSec() {
+      return (typeof CONFIG.viewHoldDuration === 'number' && isFinite(CONFIG.viewHoldDuration) && CONFIG.viewHoldDuration >= 0)
+        ? CONFIG.viewHoldDuration
+        : 1.0;
+    }
+    function clearAutoPlayTimer() {
+      if (autoPlayTimeout) {
+        clearTimeout(autoPlayTimeout);
+        autoPlayTimeout = null;
+      }
+    }
     function startAutoPlay() {
-      if (autoPlayInterval) clearInterval(autoPlayInterval);
-      autoPlayInterval = setInterval(() => {
-        if (isPlaying && !transitionAnimation) {
-          nextView();
+      if (!presentationReady) {
+        // Queue until the scene finishes loading (see loadModel → sceneReady)
+        isPlaying = true;
+        updatePlayPauseButton();
+        return;
+      }
+      clearAutoPlayTimer();
+      isPlaying = true;
+      updatePlayPauseButton();
+      const advance = () => {
+        if (!isPlaying) return;
+        if (transitionAnimation) {
+          // Wait out an in-flight transition, then retry
+          autoPlayTimeout = setTimeout(advance, 100);
+          return;
         }
-      }, CONFIG.transitionDuration * 1000 + 1000); // transition + 1s pause
+        nextView();
+        // After starting a move: wait for transition + hold on the new view
+        autoPlayTimeout = setTimeout(advance, (getTransitionSec() + getHoldSec()) * 1000);
+      };
+      // Initial hold on camera 1 (index 0) before advancing to camera 2
+      autoPlayTimeout = setTimeout(advance, getHoldSec() * 1000);
     }
     
     function stopAutoPlay() {
-      if (autoPlayInterval) {
-        clearInterval(autoPlayInterval);
-        autoPlayInterval = null;
+      clearAutoPlayTimer();
+      isPlaying = false;
+    }
+
+    /** Snap to the first saved camera view (no animation) and mark it active. */
+    function goToFirstCameraViewImmediate() {
+      if (!Array.isArray(CONFIG.cameraViews) || CONFIG.cameraViews.length === 0) return false;
+      const firstView = CONFIG.cameraViews[0];
+      if (!firstView || !firstView.cameraPosition || !firstView.cameraTarget) return false;
+      camera.position.set(
+        firstView.cameraPosition.x,
+        firstView.cameraPosition.y,
+        firstView.cameraPosition.z
+      );
+      controls.target.set(
+        firstView.cameraTarget.x,
+        firstView.cameraTarget.y,
+        firstView.cameraTarget.z
+      );
+      controls.update();
+      updateActiveView(0);
+      camera.updateProjectionMatrix();
+      renderer.render(scene, camera);
+      return true;
+    }
+
+    /** Called once the exported scene is ready — starts autoplay from camera 1 if enabled. */
+    function beginPresentationPlayback() {
+      presentationReady = true;
+      const wantsAutoPlay = CONFIG.autoPlay === true;
+      if (wantsAutoPlay) {
+        goToFirstCameraViewImmediate();
+        startAutoPlay();
+      } else if (isPlaying) {
+        // User pressed Play during load — start now from camera 1
+        goToFirstCameraViewImmediate();
+        startAutoPlay();
       }
     }
     
     const playPauseBtn = document.getElementById('play-pause-btn');
     if (playPauseBtn) {
       playPauseBtn.addEventListener('click', () => {
-      isPlaying = !isPlaying;
-      updatePlayPauseButton();
       if (isPlaying) {
-        startAutoPlay();
-      } else {
         stopAutoPlay();
+        updatePlayPauseButton();
+      } else {
+        startAutoPlay();
       }
     });
     }
@@ -1968,11 +2045,15 @@ export function createStandaloneViewerHTML(
         }
       }
 
+      const standaloneWeatherActive = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
+
       // CRITICAL: Apply shadow settings to ALL directional lights with shadows
       // This works for BOTH ground projection and standard 360 HDR modes
       // The shadow settings are independent of the HDR projection type
       scene.traverse((light) => {
         if (light instanceof THREE.DirectionalLight && light.castShadow && light.shadow) {
+          const isSunLight = light.userData.isSun || light.userData.isGlobalSun ||
+            (standaloneWeatherActive && light.userData.lightId === 'light_1');
           // ANTI-ARTIFACT FIXES based on Three.js best practices:
           // 1. Calculate optimal bias based on shadow map resolution and scene scale
           //    This prevents shadow acne (self-shadowing artifacts) and peter panning
@@ -2041,7 +2122,12 @@ export function createStandaloneViewerHTML(
             shadowCamera.near = Math.max(currentShadowCameraNear, 0.0001);
             
             // Keep far plane tight to maximize shadow map resolution
-            shadowCamera.far = Math.min(currentShadowCameraFar, currentShadowDistance);
+            // Standalone weather sun: keep generous far plane so car + ground catcher stay in frustum
+            if (!standaloneWeatherActive || !isSunLight) {
+              shadowCamera.far = Math.min(currentShadowCameraFar, currentShadowDistance);
+            } else {
+              shadowCamera.far = Math.max(shadowCamera.far || 0, currentShadowCameraFar, currentShadowDistance);
+            }
             
             // CRITICAL: Update projection matrix and force shadow map regeneration
             // Shadow camera near/far changes require shadow map regeneration to be visible
@@ -2060,23 +2146,25 @@ export function createStandaloneViewerHTML(
           
           light.shadow.needsUpdate = true;
           
-          // Optionally adjust light distance and direction (sun azimuth/elevation)
-          const target = light.target || { position: new THREE.Vector3(0, 0, 0) };
-          const targetPos = target.position || new THREE.Vector3(0, 0, 0);
+          // Standalone weather owns sun direction from timeOfDay — do not override with tuning sliders
+          if (!standaloneWeatherActive || !isSunLight) {
+            const target = light.target || { position: new THREE.Vector3(0, 0, 0) };
+            const targetPos = target.position || new THREE.Vector3(0, 0, 0);
 
-          const azimuthRad = (currentSunAzimuthDeg * Math.PI) / 180;
-          const elevationRad = (currentSunElevationDeg * Math.PI) / 180;
+            const azimuthRad = (currentSunAzimuthDeg * Math.PI) / 180;
+            const elevationRad = (currentSunElevationDeg * Math.PI) / 180;
 
-          const distance = currentShadowLightDistance;
-          const dir = new THREE.Vector3(
-            Math.cos(elevationRad) * Math.cos(azimuthRad),
-            Math.sin(elevationRad),
-            Math.cos(elevationRad) * Math.sin(azimuthRad)
-          );
+            const distance = currentShadowLightDistance;
+            const dir = new THREE.Vector3(
+              Math.cos(elevationRad) * Math.cos(azimuthRad),
+              Math.sin(elevationRad),
+              Math.cos(elevationRad) * Math.sin(azimuthRad)
+            );
 
-          if (isFinite(dir.x) && isFinite(dir.y) && isFinite(dir.z)) {
-            const pos = targetPos.clone().add(dir.multiplyScalar(distance));
-            light.position.copy(pos);
+            if (isFinite(dir.x) && isFinite(dir.y) && isFinite(dir.z)) {
+              const pos = targetPos.clone().add(dir.multiplyScalar(distance));
+              light.position.copy(pos);
+            }
           }
         }
       });
@@ -2500,7 +2588,10 @@ export function createStandaloneViewerHTML(
     });
     
     if (CONFIG.autoPlay) {
-      startAutoPlay();
+      // Do not start here — model/HDR are still loading. beginPresentationPlayback()
+      // runs after the scene is ready and always begins on camera view 1.
+      isPlaying = true;
+      updatePlayPauseButton();
     }
     ` : ''}
     
@@ -2590,12 +2681,22 @@ export function createStandaloneViewerHTML(
     }
 
     function applyHotspotFrozenOrientation(object, frozen, objectPosition, cameraPosition) {
+      // Prefer stored freeze; otherwise freeze from this object's position at capture time.
+      // Callers should pass the same frozen quaternion to label + panel.
       if (frozen) {
         object.quaternion.set(frozen.x, frozen.y, frozen.z, frozen.w);
       } else if (cameraPosition) {
         object.quaternion.copy(computeBillboardQuaternion(objectPosition, cameraPosition));
       }
       object.updateMatrixWorld(true);
+    }
+
+    function resolveSharedFrozenRotation(faceCamera, existing, anchorPosition, cameraPosition) {
+      if (faceCamera) return undefined;
+      if (existing) return existing;
+      if (!cameraPosition) return undefined;
+      const q = computeBillboardQuaternion(anchorPosition, cameraPosition);
+      return { x: q.x, y: q.y, z: q.z, w: q.w };
     }
     
     // Create hotspot panel (matches main 3D viewer implementation)
@@ -3206,6 +3307,17 @@ export function createStandaloneViewerHTML(
             hotspot.position.y,
             hotspot.position.z
           );
+          const faceCamera = (hotspot.label && hotspot.label.faceCamera != null)
+            ? hotspot.label.faceCamera
+            : (hotspot.faceCamera !== false);
+          const labelAnchor = new THREE.Vector3(
+            position.x + ((hotspot.label && hotspot.label.offsetX) || 0),
+            position.y + ((hotspot.label && hotspot.label.offsetY) || 0),
+            position.z
+          );
+          const sharedFrozen = (typeof camera !== 'undefined' && camera)
+            ? resolveSharedFrozenRotation(faceCamera, hotspot.frozenRotation, labelAnchor, camera.position)
+            : hotspot.frozenRotation;
           const showIcon = hotspot.showIcon !== false;
           const group = createHotspotMarkerGroup(hotspot, position, showIcon);
           scene.add(group);
@@ -3336,7 +3448,13 @@ export function createStandaloneViewerHTML(
             
             const labelFaceCamera = hotspot.label.faceCamera ?? hotspot.faceCamera ?? true;
             const aspectRatio = baseWidth / baseHeight;
-            const baseScale = 0.4;
+            const pixelsToWorldUnits = 0.01;
+            let baseScale = 0.8;
+            if (hotspot.label.heightPixels != null && hotspot.label.heightPixels !== undefined) {
+              baseScale = hotspot.label.heightPixels * pixelsToWorldUnits;
+            } else if (hotspot.label.widthPixels != null && hotspot.label.widthPixels !== undefined) {
+              baseScale = (hotspot.label.widthPixels / 3) * pixelsToWorldUnits;
+            }
             const labelOffsetY = hotspot.label.offsetY || 0;
             const labelOffsetX = hotspot.label.offsetX || 0;
             const labelPosition = new THREE.Vector3(
@@ -3383,7 +3501,7 @@ export function createStandaloneViewerHTML(
                 labelObject.lookAt(camera.position);
               }
             } else if (typeof camera !== 'undefined' && camera) {
-              applyHotspotFrozenOrientation(labelObject, hotspot.frozenRotation, labelObject.position, camera.position);
+              applyHotspotFrozenOrientation(labelObject, sharedFrozen, labelObject.position, camera.position);
             }
             scene.add(labelObject);
           }
@@ -3414,7 +3532,7 @@ export function createStandaloneViewerHTML(
           // Create 3D panel if hotspot has content
           if (hotspot.content && hotspot.content.type && hotspot.content.data) {
             console.log('[WebExport] Hotspot has content, creating panel:', hotspot.id, 'contentType:', hotspot.content.type);
-            createHotspotPanel(hotspot, position, scene);
+            createHotspotPanel({ ...hotspot, frozenRotation: sharedFrozen, faceCamera }, position, scene);
           } else {
             console.log('[WebExport] Hotspot has no content, skipping panel:', hotspot.id, 'content:', hotspot.content);
           }
@@ -3705,8 +3823,11 @@ export function createStandaloneViewerHTML(
                 // Disable unnecessary features if not used
                 if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial) {
                   // Only enable features that are actually used
-                  if (mat.envMapIntensity === 0 || !mat.envMap) {
+                  if (!mat.envMap || mat.envMapIntensity === 0) {
                     mat.envMap = null;
+                    if (mat.envMapIntensity === 0) {
+                      mat.envMapIntensity = 1;
+                    }
                   }
                 }
               });
@@ -4208,7 +4329,10 @@ export function createStandaloneViewerHTML(
                 obj instanceof THREE.AmbientLight ||
                 userData.isAutoInteriorFill === true ||
                 userData.isIndirectLightingProbe === true ||
-                userData.isSystemLight === true
+                userData.isSystemLight === true ||
+                userData.isCSMLight === true ||
+                userData.isInternal === true ||
+                userData.isStandaloneWeatherLight === true
               );
             };
 
@@ -4480,8 +4604,8 @@ export function createStandaloneViewerHTML(
                   return;
                 }
 
-                // Skip auto-managed system lights (interior fill, HDR probe, etc.)
-                if (obj.userData && (obj.userData.isAutoInteriorFill || obj.userData.isIndirectLightingProbe || obj.userData.isSystemLight)) {
+                // Skip auto-managed system lights (interior fill, HDR probe, CSM, weather sun helpers)
+                if (obj.userData && (obj.userData.isAutoInteriorFill || obj.userData.isIndirectLightingProbe || obj.userData.isSystemLight || obj.userData.isCSMLight || obj.userData.isInternal || obj.userData.isStandaloneWeatherLight)) {
                   return;
                 }
                 
@@ -4867,6 +4991,43 @@ export function createStandaloneViewerHTML(
             
             // Initial build
             rebuildSceneTree();
+
+            // Lights/helpers have no mesh geometry — use car bounds or a small box at the light position
+            function webExportGetObjectFocusBox(object) {
+              if (!object) return null;
+              const ud = object.userData || {};
+              const isLight = object instanceof THREE.Light;
+              const isNonMeshHelper = !!(ud.isHelper || ud.isLightGizmo || ud.isLightHelper || ud.isTransformControls);
+              if (isLight || isNonMeshHelper) {
+                if (typeof renderLoopCarRoot !== 'undefined' && renderLoopCarRoot && typeof computeSubjectBounds === 'function') {
+                  const carBox = computeSubjectBounds(renderLoopCarRoot);
+                  if (!carBox.isEmpty()) return carBox;
+                }
+                if (object.position && isFinite(object.position.x)) {
+                  return new THREE.Box3().setFromCenterAndSize(
+                    object.position.clone(),
+                    new THREE.Vector3(2, 2, 2)
+                  );
+                }
+                return null;
+              }
+              try {
+                if (typeof object.updateWorldMatrix === 'function') {
+                  object.updateWorldMatrix(true, true);
+                } else if (typeof object.updateMatrixWorld === 'function') {
+                  object.updateMatrixWorld(true);
+                }
+                const box = new THREE.Box3().setFromObject(object);
+                if (!box.isEmpty()) return box;
+                if (typeof computeSubjectBounds === 'function') {
+                  const subjectBox = computeSubjectBounds(object);
+                  if (!subjectBox.isEmpty()) return subjectBox;
+                }
+              } catch (boxErr) {
+                console.warn('[WebExport] Failed to calculate bounding box for focus', object.name || 'unnamed', boxErr);
+              }
+              return null;
+            }
             
             // Render a node recursively - matching ObjectsPanel structure exactly
             const renderNode = (node, depth = 0) => {
@@ -4981,7 +5142,10 @@ export function createStandaloneViewerHTML(
               });
               actionsContainer.appendChild(visBtn);
 
-              // Focus button
+              // Focus button (skip for lights — they have no geometry)
+              const isFocusable = !(node.object instanceof THREE.Light) &&
+                !(node.object.userData && (node.object.userData.isHelper || node.object.userData.isLightGizmo || node.object.userData.isLightHelper));
+              if (isFocusable) {
               const focusBtn = document.createElement('button');
               focusBtn.className = 'objects-action-btn';
               focusBtn.textContent = '🎯';
@@ -5017,21 +5181,7 @@ export function createStandaloneViewerHTML(
                     return;
                   }
                   
-                  // Try to calculate bounding box directly - if it works, the object is valid
-                  let box;
-                  try {
-                    // Update world matrix if the method exists
-                    if (typeof node.object.updateWorldMatrix === 'function') {
-                      node.object.updateWorldMatrix(true, true);
-                    } else if (typeof node.object.updateMatrixWorld === 'function') {
-                      node.object.updateMatrixWorld(true);
-                    }
-                    box = new THREE.Box3().setFromObject(node.object);
-                  } catch (boxErr) {
-                    console.warn('[WebExport] Failed to calculate bounding box for focus', node.name, boxErr);
-                    return;
-                  }
-                  
+                  const box = webExportGetObjectFocusBox(node.object);
                   if (!box || box.isEmpty()) {
                     console.warn('[WebExport] Cannot focus: bounding box is empty', node.name);
                     return;
@@ -5066,6 +5216,7 @@ export function createStandaloneViewerHTML(
                 }
               });
               actionsContainer.appendChild(focusBtn);
+              }
               
               nodeContent.appendChild(actionsContainer);
               nodeDiv.appendChild(nodeContent);
@@ -5444,12 +5595,26 @@ export function createStandaloneViewerHTML(
         
         // MATCH WORKING EXPORT: Configure shadow plane to be transparent (only shows shadows) and fit it under the car
         const shadowConfig = CONFIG.shadows || {};
-        const shadowPlaneTransparent = shadowConfig.shadowPlaneTransparent !== undefined ? shadowConfig.shadowPlaneTransparent : true;
+        const lightingConfigEarly = CONFIG.lighting || {};
+        const shadowsEnabled = shadowConfig.enabled !== false && lightingConfigEarly.shadowsEnabled !== false;
+        const hdrActive = hdrConfig.enabled !== false;
+        const useShadowCatcher = (typeof webExportShouldUseShadowCatcher === 'function')
+          ? webExportShouldUseShadowCatcher(CONFIG.weather || {}, hdrActive, shadowsEnabled)
+          : (hdrActive && shadowsEnabled);
+        const shadowPlaneTransparent = useShadowCatcher
+          ? true
+          : (shadowConfig.shadowPlaneTransparent !== undefined ? shadowConfig.shadowPlaneTransparent : false);
         const shadowIntensity = shadowConfig.shadowIntensity !== undefined ? shadowConfig.shadowIntensity : 1.0;
+        const shadowPlaneVisible = (function() {
+          const showShadowPlane = shadowConfig.showShadowPlane === true;
+          const standaloneWeather = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
+          const autoShow = (hdrActive && shadowsEnabled) || (standaloneWeather && shadowsEnabled);
+          return showShadowPlane || autoShow;
+        })();
         
         // Configure found shadow plane (match working export setup)
         if (shadowPlane) {
-          shadowPlane.visible = true;
+          shadowPlane.visible = shadowPlaneVisible;
           shadowPlane.receiveShadow = true;
           shadowPlane.castShadow = false;
           
@@ -5467,7 +5632,11 @@ export function createStandaloneViewerHTML(
                   // Minimum 0.3 ensures shadows are always visible, even with low shadowIntensity
                   const shadowOpacity = Math.min(1.0, Math.max(0.3, 0.1 + (shadowIntensity / 2.0) * 0.9));
                   const shadowMaterial = new THREE.ShadowMaterial({ 
-                    opacity: shadowOpacity
+                    opacity: shadowOpacity,
+                    transparent: true,
+                    depthWrite: true,
+                    depthTest: true,
+                    side: THREE.DoubleSide
                   });
                   shadowMaterial.depthWrite = true;
                   // CRITICAL: Store base opacity for shadow color intensity adjustment
@@ -5523,7 +5692,11 @@ export function createStandaloneViewerHTML(
           // Minimum 0.3 ensures shadows are always visible, even with low shadowIntensity
           const shadowPlaneMaterial = shadowPlaneTransparent 
             ? new THREE.ShadowMaterial({ 
-                opacity: Math.min(1.0, Math.max(0.3, 0.1 + (shadowIntensity / 2.0) * 0.9))
+                opacity: Math.min(1.0, Math.max(0.3, 0.1 + (shadowIntensity / 2.0) * 0.9)),
+                transparent: true,
+                depthWrite: true,
+                depthTest: true,
+                side: THREE.DoubleSide
               })
             : new THREE.MeshStandardMaterial({ 
                 color: 0x333333,
@@ -5534,6 +5707,8 @@ export function createStandaloneViewerHTML(
               });
           if (shadowPlaneMaterial instanceof THREE.ShadowMaterial) {
             shadowPlaneMaterial.depthWrite = true;
+            shadowPlaneMaterial.depthTest = true;
+            shadowPlaneMaterial.side = THREE.FrontSide;
             // CRITICAL: Store base opacity for shadow color intensity adjustment
             shadowPlaneMaterial.userData.baseOpacity = shadowPlaneMaterial.opacity;
           }
@@ -5544,7 +5719,7 @@ export function createStandaloneViewerHTML(
           shadowPlane.receiveShadow = true;
           shadowPlane.castShadow = false;
           shadowPlane.userData.isShadowPlane = true;
-          shadowPlane.visible = true;
+          shadowPlane.visible = shadowPlaneVisible;
           
           // CRITICAL: Use renderOrder = 0 like main app (not 1)
           shadowPlane.renderOrder = 0; // Render early (before objects with positive renderOrder)
@@ -5556,7 +5731,7 @@ export function createStandaloneViewerHTML(
             // Shadow plane should be at ground surface: Y = -0.01
             shadowPlane.position.y = -0.01; // Match ground surface level (Y = (height - 0.01) - height)
           } else {
-            shadowPlane.position.y = -0.001; // Slightly below grid (matches main app)
+            shadowPlane.position.y = WEB_EXPORT_SHADOW_PLANE_GROUND_Y; // Slightly below grid (matches main app)
           }
           
           scene.add(shadowPlane);
@@ -5571,6 +5746,38 @@ export function createStandaloneViewerHTML(
             material: shadowPlane.material.constructor.name,
             groundProjectionEnabled: groundProjectionEnabled
           });
+        }
+        
+        // Grid ground (matches editor when standalone weather is active)
+        const helpersConfig = CONFIG.helpers || {};
+        const standaloneWeatherActive = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
+        if (standaloneWeatherActive && helpersConfig.showGrid !== false) {
+          const gridSize = 100;
+          const gridHelper = new THREE.GridHelper(10000, gridSize, 0x444444, 0x222222);
+          gridHelper.name = 'Grid';
+          gridHelper.userData.isGridHelper = true;
+          gridHelper.userData.isHelper = true;
+          gridHelper.renderOrder = 1;
+          gridHelper.position.y = 0;
+          if (typeof webExportConfigureGridHelperForShadows === 'function') {
+            webExportConfigureGridHelperForShadows(gridHelper);
+          } else {
+            const gridMats = Array.isArray(gridHelper.material) ? gridHelper.material : [gridHelper.material];
+            gridMats.forEach(function(mat) {
+              if (mat) { mat.depthWrite = false; mat.depthTest = true; mat.transparent = true; mat.needsUpdate = true; }
+            });
+          }
+          scene.add(gridHelper);
+          console.log('[WebExport] Grid helper added for standalone weather');
+          if (shadowPlane && typeof webExportApplyShadowCatcherMaterial === 'function') {
+            webExportApplyShadowCatcherMaterial(
+              shadowPlane,
+              shadowIntensity,
+              true,
+              scene
+            );
+            console.log('[WebExport] Shadow catcher reconfigured for grid composite (depthWrite=false, renderOrder=2)');
+          }
         }
         
         // Helper function to get shadow map size based on quality setting
@@ -5621,13 +5828,13 @@ export function createStandaloneViewerHTML(
             // Scale plane in X/Z so it extends beyond car footprint
             // For 10000x10000 geometry: scale = (carSize * 0.75) / 5 = radiusX / 5
             // This gives us a plane that's about 15% larger than the car in each direction
-            const targetScaleX = radiusX / 5;
-            const targetScaleZ = radiusZ / 5;
+            const targetScaleX = Math.max(radiusX / 5, 1);
+            const targetScaleZ = Math.max(radiusZ / 5, 1);
             shadowPlane.scale.x = targetScaleX;
             shadowPlane.scale.z = targetScaleZ;
             
             // CRITICAL: Ensure shadow plane is visible and configured for shadows (applies to both modes)
-            shadowPlane.visible = true;
+            shadowPlane.visible = shadowPlaneVisible;
             shadowPlane.receiveShadow = true;
             shadowPlane.castShadow = false;
             
@@ -5639,15 +5846,13 @@ export function createStandaloneViewerHTML(
               'Position: (' + shadowPlane.position.x.toFixed(2) + ', ' + shadowPlane.position.y.toFixed(2) + ', ' + shadowPlane.position.z.toFixed(2) + '), ' +
               'Ground projection: ' + groundProjectionEnabled);
             
-            // CRITICAL: For standard 360 HDR, verify shadow plane is below car
+            // CRITICAL: For standard 360 HDR, keep shadow plane at subject bottom (matches editor)
             if (!groundProjectionEnabled) {
-              const carMinY = carBox.min.y;
-              if (shadowPlane.position.y >= carMinY) {
-                console.warn('[WebExport] Standard 360 HDR - Shadow plane Y position (' + shadowPlane.position.y.toFixed(3) + ') is not below car min Y (' + carMinY.toFixed(3) + '), adjusting...');
-                shadowPlane.position.y = carMinY - 0.1; // Ensure plane is below car
-                shadowPlane.updateMatrixWorld(true);
-                console.log('[WebExport] Standard 360 HDR - Shadow plane Y adjusted to:', shadowPlane.position.y.toFixed(3));
-              }
+              shadowPlane.position.y = typeof webExportResolveShadowCatcherY === 'function'
+                ? webExportResolveShadowCatcherY(carRoot, false)
+                : WEB_EXPORT_SHADOW_PLANE_GROUND_Y;
+              shadowPlane.updateMatrixWorld(true);
+              console.log('[WebExport] Standard 360 HDR - Shadow plane Y at subject bottom:', shadowPlane.position.y.toFixed(3));
               
               // Verify shadow plane configuration
               const material = Array.isArray(shadowPlane.material) ? shadowPlane.material[0] : shadowPlane.material;
@@ -5667,45 +5872,56 @@ export function createStandaloneViewerHTML(
                 'MaterialOpacity: ' + (material?.opacity?.toFixed(3) || 'N/A') + ', ' +
                 'DepthWrite: ' + (material?.depthWrite !== false) + ', ' +
                 'InScene: ' + (scene.children.includes(shadowPlane) || scene.getObjectById(shadowPlane.id) !== undefined));
-              
-              // Verify lights are casting shadows
-              let lightsCastingShadows = 0;
-              scene.traverse((light) => {
-                if (light instanceof THREE.DirectionalLight && light.castShadow) {
-                  lightsCastingShadows++;
-                  if (light.shadow) {
-                    const cam = light.shadow.camera;
-                    console.log('[WebExport] Standard 360 HDR - Light shadow camera:', 
-                      'Light: ' + (light.name || 'unnamed') + ', ' +
-                      'CastShadow: ' + light.castShadow + ', ' +
-                      'Bounds: L=' + (cam.left?.toFixed(2) || 'N/A') + ', R=' + (cam.right?.toFixed(2) || 'N/A') + ', ' +
-                      'T=' + (cam.top?.toFixed(2) || 'N/A') + ', B=' + (cam.bottom?.toFixed(2) || 'N/A') + ', ' +
-                      'Near=' + cam.near + ', Far=' + cam.far);
-                  }
-                }
-              });
-              console.log('[WebExport] Standard 360 HDR - Total lights casting shadows:', lightsCastingShadows);
-              
-              // Verify renderer shadow maps
-              console.log('[WebExport] Standard 360 HDR - Renderer shadow maps:', 
-                'Enabled: ' + renderer.shadowMap.enabled + ', ' +
-                'AutoUpdate: ' + renderer.shadowMap.autoUpdate + ', ' +
-                'Type: ' + renderer.shadowMap.type);
             }
           }
         }
         
+        function logWebExportShadowLightDiagnostics(label) {
+          let lightsCastingShadows = 0;
+          scene.traverse((light) => {
+            if (light instanceof THREE.DirectionalLight && light.castShadow) {
+              lightsCastingShadows++;
+              if (light.shadow) {
+                const cam = light.shadow.camera;
+                console.log('[WebExport] ' + label + ' - Light shadow camera:',
+                  'Light: ' + (light.userData.lightId || light.name || 'unnamed') + ', ' +
+                  'CastShadow: ' + light.castShadow + ', ' +
+                  'Bounds: L=' + (cam.left?.toFixed(2) || 'N/A') + ', R=' + (cam.right?.toFixed(2) || 'N/A') + ', ' +
+                  'T=' + (cam.top?.toFixed(2) || 'N/A') + ', B=' + (cam.bottom?.toFixed(2) || 'N/A') + ', ' +
+                  'Near=' + cam.near + ', Far=' + cam.far);
+              }
+            }
+          });
+          console.log('[WebExport] ' + label + ' - Total lights casting shadows:', lightsCastingShadows);
+          console.log('[WebExport] ' + label + ' - Renderer shadow maps:',
+            'Enabled: ' + renderer.shadowMap.enabled + ', ' +
+            'AutoUpdate: ' + renderer.shadowMap.autoUpdate + ', ' +
+            'Type: ' + renderer.shadowMap.type);
+          return lightsCastingShadows;
+        }
+        
         // Add directional lights from config
+        const standaloneWeatherNoCsm = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
         if (lightingConfig.directionalLights && lightingConfig.directionalLights.length > 0) {
-          lightingConfig.directionalLights.forEach(lightConfig => {
+          lightingConfig.directionalLights.forEach((lightConfig, lightIndex) => {
             if (lightConfig.enabled) {
               const light = new THREE.DirectionalLight(
                 new THREE.Color(lightConfig.color.r, lightConfig.color.g, lightConfig.color.b),
                 lightConfig.intensity
               );
               light.position.set(lightConfig.position.x, lightConfig.position.y, lightConfig.position.z);
-              // CRITICAL: Explicitly enable shadow casting
-              light.castShadow = lightConfig.castShadow !== false ? true : false;
+              if (lightConfig.id) light.userData.lightId = lightConfig.id;
+              // Editor disables sun castShadow when CSM is active; export has no CSM — force sun shadows on
+              const isSunLight =
+                lightConfig.id === 'sun' ||
+                lightConfig.isSun === true ||
+                (standaloneWeatherNoCsm && lightIndex === 0);
+              if (isSunLight) light.userData.isSun = true;
+              let shouldCastShadow = lightConfig.castShadow !== false;
+              if (standaloneWeatherNoCsm && isSunLight) {
+                shouldCastShadow = true;
+              }
+              light.castShadow = shouldCastShadow;
               
               if (light.castShadow) {
                 // Use shadow map size based on quality setting
@@ -5737,7 +5953,11 @@ export function createStandaloneViewerHTML(
               }
               
               scene.add(light);
+              scene.add(light.target);
             }
+          });
+          scene.traverse(function(obj) {
+            if (obj instanceof THREE.Light) obj.visible = true;
           });
         } else if (lightingConfig.sceneLights && lightingConfig.sceneLights.length > 0) {
           // Fallback to scene lights if directional lights not available
@@ -5750,8 +5970,11 @@ export function createStandaloneViewerHTML(
               if (lightConfig.position) {
                 light.position.set(lightConfig.position.x, lightConfig.position.y, lightConfig.position.z);
               }
-              // CRITICAL: Explicitly enable shadow casting
-              light.castShadow = lightConfig.castShadow !== false ? true : false;
+              let shouldCastShadow = lightConfig.castShadow !== false;
+              if (standaloneWeatherNoCsm && lightConfig.castShadow === false) {
+                shouldCastShadow = true;
+              }
+              light.castShadow = shouldCastShadow;
               if (lightConfig.shadow) {
                 // Use shadow map size based on quality setting
                 const lightShadowMapSize = lightConfig.shadow?.mapSize?.width || shadowMapSize;
@@ -5780,6 +6003,7 @@ export function createStandaloneViewerHTML(
                 // Don't set bias here - it will be set in updateLightShadowCamera
               }
               scene.add(light);
+              scene.add(light.target);
             }
           });
         } else {
@@ -5811,6 +6035,7 @@ export function createStandaloneViewerHTML(
           directionalLight.shadow.camera.updateProjectionMatrix();
           
           scene.add(directionalLight);
+          scene.add(directionalLight.target);
           console.log('Default directional light (sun) with shadows added (matches main app):', {
             shadowMapSize: lightShadowMapSize,
             bias: directionalLight.shadow.bias,
@@ -5822,6 +6047,10 @@ export function createStandaloneViewerHTML(
 
           // Note: Main app doesn't create a separate detail light
           // Only create default sun light to match main app behavior
+        }
+
+        if (!groundProjectionEnabled && typeof logWebExportShadowLightDiagnostics === 'function') {
+          logWebExportShadowLightDiagnostics('After lights configured');
         }
         
         // After lights are created, tighten shadow camera to the exported model bounds
@@ -6290,18 +6519,23 @@ export function createStandaloneViewerHTML(
               }
               renderer.shadowMap.autoUpdate = true;
               
-              // Verify all directional lights are casting shadows
-              scene.traverse((light) => {
-                if (light instanceof THREE.DirectionalLight) {
-                  if (!light.castShadow) {
-                    light.castShadow = true;
-                    console.warn('[WebExport] Directional light was not casting shadows, enabled:', light.name || 'unnamed');
+              // Verify sun directional light casts shadows (standalone weather: sun only)
+              if (typeof webExportSyncSunOnlyShadowCasters === 'function') {
+                webExportSyncSunOnlyShadowCasters(scene);
+              } else {
+                scene.traverse((light) => {
+                  if (light instanceof THREE.DirectionalLight) {
+                    const isSun = light.userData.isSun || light.userData.isGlobalSun;
+                    if (isSun && !light.castShadow) {
+                      light.castShadow = true;
+                      console.warn('[WebExport] Sun light was not casting shadows, enabled:', light.name || 'unnamed');
+                    }
+                    if (light.shadow) {
+                      light.shadow.needsUpdate = true;
+                    }
                   }
-                  if (light.shadow) {
-                    light.shadow.needsUpdate = true;
-                  }
-                }
-              });
+                });
+              }
               
               // Force shadow map update
               renderer.shadowMap.needsUpdate = true;
@@ -6457,9 +6691,22 @@ export function createStandaloneViewerHTML(
         }
         ` : '// No HDR - set default background\n        scene.background = new THREE.Color(0x1a1a1a);\n        '}
         
-        // MATCH WORKING EXPORT: Set initial camera position (prefer currentCamera, then first camera view)
-        // Set camera AFTER HDR loads to ensure everything is ready
-        if (CONFIG.currentCamera && CONFIG.currentCamera.position && CONFIG.currentCamera.target) {
+        // Set initial camera: with Auto-play, always start on camera view 1.
+        // Otherwise prefer the editor's current framing, then fall back to the first view.
+        const preferFirstCameraForAutoPlay =
+          CONFIG.autoPlay === true &&
+          Array.isArray(CONFIG.cameraViews) &&
+          CONFIG.cameraViews.length > 0;
+
+        if (preferFirstCameraForAutoPlay) {
+          const firstView = CONFIG.cameraViews[0];
+          camera.position.set(firstView.cameraPosition.x, firstView.cameraPosition.y, firstView.cameraPosition.z);
+          controls.target.set(firstView.cameraTarget.x, firstView.cameraTarget.y, firstView.cameraTarget.z);
+          controls.update();
+          if (typeof updateActiveView === 'function') {
+            updateActiveView(0);
+          }
+        } else if (CONFIG.currentCamera && CONFIG.currentCamera.position && CONFIG.currentCamera.target) {
           // Use current camera position from export
           camera.position.set(
             CONFIG.currentCamera.position.x,
@@ -6496,13 +6743,79 @@ export function createStandaloneViewerHTML(
         if (typeof initializeWebExportWeather === 'function') {
           initializeWebExportWeather({ scene, camera, renderer });
         }
+
+        if (typeof webExportEnsureExportLightsVisible === 'function') {
+          const restoredLights = webExportEnsureExportLightsVisible(scene);
+          if (restoredLights > 0) {
+            console.log('[WebExport] Restored visibility on', restoredLights, 'scene light(s) after weather init');
+          }
+        }
+
+        if (typeof webExportApplyHdrShadowContrastToMaterials === 'function' && window.__hdrTextureLoaded) {
+          const hdrCfg = CONFIG.hdr || {};
+          const shadowsOn = (CONFIG.shadows || {}).enabled !== false && (CONFIG.lighting || {}).shadowsEnabled !== false;
+          const contrastCount = webExportApplyHdrShadowContrastToMaterials(scene, hdrCfg.intensity || 1.0, shadowsOn);
+          if (contrastCount > 0) {
+            console.log('[WebExport] Post-weather HDR shadow contrast on', contrastCount, 'material(s)');
+          }
+        }
+
+        // Re-apply shadow tuning now that lights exist (standalone sun keeps fitted frustum)
+        applyShadowTuning();
+
+        if (standaloneWeatherNoCsm && renderLoopCarRoot && typeof webExportFitSunShadowCameraToSubject === 'function') {
+          webExportFitSunShadowCameraToSubject(scene, renderLoopCarRoot);
+        }
+
+        // Standalone weather uses CSM in editor; export must keep sun directional shadows enabled
+        if (standaloneWeatherNoCsm) {
+          if (typeof webExportSyncSunOnlyShadowCasters === 'function') {
+            webExportSyncSunOnlyShadowCasters(scene);
+          } else {
+            let sunShadowEnabled = false;
+            scene.traverse((obj) => {
+              if (obj instanceof THREE.DirectionalLight && (obj.userData.isSun || obj.userData.isGlobalSun)) {
+                if (!obj.castShadow) {
+                  obj.castShadow = true;
+                  if (obj.shadow) obj.shadow.needsUpdate = true;
+                  console.log('[WebExport] Enabled sun shadow casting for standalone weather (no CSM in export)');
+                }
+                sunShadowEnabled = true;
+              }
+            });
+            if (!sunShadowEnabled) {
+              for (let i = 0; i < scene.children.length; i++) {
+                const obj = scene.children[i];
+                if (obj instanceof THREE.DirectionalLight) {
+                  obj.userData.isSun = true;
+                  obj.castShadow = true;
+                  if (obj.shadow) obj.shadow.needsUpdate = true;
+                  console.log('[WebExport] Enabled first directional as sun for standalone weather shadows:', obj.userData.lightId || obj.name || 'default');
+                  break;
+                }
+              }
+            }
+          }
+        }
         
-        // Configure shadows on ALL meshes (including interior surfaces like car interiors)
-        // CRITICAL: All materials need to cast shadows for interior shadows to work
+        // Configure shadows on ALL meshes after weather init (car castShadow must stay on)
         let shadowConfiguredCount = 0;
         let interiorMeshCount = 0;
+        if (renderLoopCarRoot && typeof webExportEnsureSubjectCastShadow === 'function') {
+          shadowConfiguredCount = webExportEnsureSubjectCastShadow(renderLoopCarRoot);
+        } else if (renderLoopCarRoot) {
+          renderLoopCarRoot.traverse((obj) => {
+            if (obj instanceof THREE.Mesh && obj.castShadow) shadowConfiguredCount++;
+          });
+        }
         
-        const lightsWithShadows = scene.children.filter(child => child instanceof THREE.DirectionalLight && child.castShadow).length;
+        let lightsWithShadows = 0;
+        scene.traverse((obj) => {
+          if (obj instanceof THREE.DirectionalLight && obj.castShadow) lightsWithShadows++;
+        });
+        if (!groundProjectionEnabled && typeof logWebExportShadowLightDiagnostics === 'function') {
+          logWebExportShadowLightDiagnostics('Shadow configuration complete');
+        }
         console.log('Shadow configuration complete:', 
           'Meshes configured: ' + shadowConfiguredCount + ', ' +
           'Interior meshes: ' + interiorMeshCount + ', ' +
@@ -6526,6 +6839,11 @@ export function createStandaloneViewerHTML(
           // Re-setup camera view handlers now that scene is ready
           if (typeof setupCameraViewHandlers === 'function') {
             setupCameraViewHandlers();
+          }
+
+          // Start presentation autoplay only after load — begins on camera view 1
+          if (typeof beginPresentationPlayback === 'function') {
+            beginPresentationPlayback();
           }
           
           // CRITICAL: Force shadow map update but keep autoUpdate enabled
@@ -6859,14 +7177,16 @@ export function createStandaloneViewerHTML(
             }
           }
           
-          // ANTI-FLICKERING: Don't update shadow maps on every frame
-          // Shadow maps are static - they only need to update when lights or objects move
-          // Updating them on every frame causes flickering when camera moves
-          // CRITICAL: Disable auto-update to prevent flickering, only update when needed
-          if (renderer.shadowMap.autoUpdate && frameCount % 2 === 0) {
-            // Only update shadow maps every other frame to reduce flickering
+          // Keep shadow maps updating whenever shadows are enabled
+          const exportShadowsEnabled = (CONFIG.shadows || {}).enabled !== false &&
+            (CONFIG.lighting || {}).shadowsEnabled !== false;
+          if (standaloneWeatherNoCsm || exportShadowsEnabled) {
+            if (!renderer.shadowMap.autoUpdate) {
+              renderer.shadowMap.autoUpdate = true;
+            }
+          } else if (renderer.shadowMap.autoUpdate && frameCount % 2 === 0) {
+            // Only throttle auto-update when shadows are off
             renderer.shadowMap.autoUpdate = false;
-            // Force update once, then disable
             renderer.shadowMap.needsUpdate = true;
           }
           
@@ -6911,28 +7231,40 @@ export function createStandaloneViewerHTML(
                       transmission > 0 ||
                       (transparentFlag && opacity < 1.0) ||
                       isGlassLike;
+                    const isShadowCatcher = obj.userData.isShadowPlane ||
+                      mat instanceof THREE.ShadowMaterial ||
+                      (mat.userData && mat.userData.isHdrGroundShadowCatcher);
                     
                     // Ensure proper depth settings to prevent z-fighting
                     if (mat.depthTest === false) {
                       mat.depthTest = true;
                     }
                     
-                    // CRITICAL: Preserve depthWrite = false for transparent materials so light can pass through
-                    // Transparent materials should NOT write to depth buffer to allow interior lighting
-                    if (isTransparent && mat.depthWrite !== false) {
+                    // ShadowMaterial is transparent; depthWrite depends on standalone grid composite mode
+                    if (isTransparent && !isShadowCatcher && mat.depthWrite !== false) {
                       mat.depthWrite = false;
                       mat.needsUpdate = true;
                     }
                     
-                    // Ensure shadow plane has proper depth write (shadow planes are NOT transparent)
-                    if (obj.userData.isShadowPlane && !isTransparent && mat.depthWrite === false) {
-                      mat.depthWrite = true;
-                      mat.needsUpdate = true;
+                    if (isShadowCatcher) {
+                      const compositeOverGrid = mat.userData && mat.userData.webExportStandaloneGridComposite === true;
+                      const desiredDepthWrite = compositeOverGrid ? false : true;
+                      if (mat.depthWrite !== desiredDepthWrite) {
+                        mat.depthWrite = desiredDepthWrite;
+                        mat.needsUpdate = true;
+                      }
+                      if (mat.depthTest !== true) {
+                        mat.depthTest = true;
+                        mat.needsUpdate = true;
+                      }
                     }
                     
-                    // Fix render order for objects that might overlap
-                    if (obj.userData.isShadowPlane && obj.renderOrder !== 0) {
-                      obj.renderOrder = 0;
+                    // Fix render order for shadow plane (composite mode renders above grid)
+                    if (obj.userData.isShadowPlane) {
+                      const compositeOrder = mat.userData && mat.userData.webExportStandaloneGridComposite === true ? 2 : 0;
+                      if (obj.renderOrder !== compositeOrder) {
+                        obj.renderOrder = compositeOrder;
+                      }
                     }
                   });
                 }
@@ -6985,25 +7317,31 @@ export function createStandaloneViewerHTML(
                   }
                   
                   // CRITICAL: Use renderOrder = 0 like main app (not 1) - only check when needed
-                  if (obj.renderOrder !== 0) {
-                    obj.renderOrder = 0; // Render early (before objects with positive renderOrder)
+                  const shadowMat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+                  const compositeOrder = shadowMat && shadowMat.userData && shadowMat.userData.webExportStandaloneGridComposite === true ? 2 : 0;
+                  if (obj.renderOrder !== compositeOrder) {
+                    obj.renderOrder = compositeOrder;
                   }
                   
                   // PERFORMANCE: Only do expensive operations every 10 frames
                   if (shouldUpdateShadowPlane) {
-                    // CRITICAL: Ensure material is properly configured for shadows
-                    const material = Array.isArray(obj.material) ? obj.material[0] : obj.material;
-                    if (material) {
-                      // Only update if values are wrong (don't force update every frame)
-                      if (!material.visible) {
-                        material.visible = true;
+                      // CRITICAL: Ensure material has depthWrite configured for shadow composite mode
+                      if (shadowMat) {
+                        if (!shadowMat.visible) {
+                          shadowMat.visible = true;
+                        }
+                        if (shadowMat instanceof THREE.ShadowMaterial) {
+                          const compositeOverGrid = shadowMat.userData && shadowMat.userData.webExportStandaloneGridComposite === true;
+                          const desiredDepthWrite = compositeOverGrid ? false : true;
+                          if (shadowMat.depthWrite !== desiredDepthWrite) {
+                            shadowMat.depthWrite = desiredDepthWrite;
+                            shadowMat.needsUpdate = true;
+                          }
+                        } else if (shadowMat.depthWrite !== true) {
+                          shadowMat.depthWrite = true;
+                          shadowMat.needsUpdate = true;
+                        }
                       }
-                      // CRITICAL: Ensure material has depthWrite = true (match main app)
-                      if (material.depthWrite !== true) {
-                        material.depthWrite = true;
-                        material.needsUpdate = true;
-                      }
-                    }
                     
                     // CRITICAL: Position based on mode (match main app behavior)
                     // Only recalculate position when needed (not every frame)
@@ -7058,12 +7396,15 @@ export function createStandaloneViewerHTML(
                         renderer.shadowMap.needsUpdate = true;
                       }
                       
-                      // CRITICAL: Always ensure Y position is correct (check every frame, not just every 30)
-                      if (Math.abs(obj.position.y - (-0.001)) > 0.01) {
-                        obj.position.y = -0.001;
+                      // CRITICAL: Keep Y just below subject bottom (matches editor shadow catcher)
+                      const targetCatcherY = typeof webExportResolveShadowCatcherY === 'function'
+                        ? webExportResolveShadowCatcherY(renderLoopCarRoot, false)
+                        : WEB_EXPORT_SHADOW_PLANE_GROUND_Y;
+                      if (Math.abs(obj.position.y - targetCatcherY) > 0.01) {
+                        obj.position.y = targetCatcherY;
                         needsUpdate = true;
                         if (frameCount % 60 === 0) {
-                          console.log('[WebExport] Standard 360 HDR - Shadow plane Y position corrected to -0.001');
+                          console.log('[WebExport] Standard 360 HDR - Shadow plane Y corrected to subject bottom:', targetCatcherY.toFixed(3));
                         }
                       }
                       
@@ -7206,14 +7547,19 @@ export function createStandaloneViewerHTML(
                               console.warn('[WebExport] Standard 360 HDR - Shadow plane opacity was too low, fixed to', material.opacity.toFixed(3));
                             }
                           }
-                          // CRITICAL: ShadowMaterial must have depthWrite = true
-                          if (material.depthWrite !== true) {
+                          // ShadowMaterial depthWrite depends on standalone grid composite mode
+                          if (material instanceof THREE.ShadowMaterial) {
+                            const compositeOverGrid = material.userData && material.userData.webExportStandaloneGridComposite === true;
+                            const desiredDepthWrite = compositeOverGrid ? false : true;
+                            if (material.depthWrite !== desiredDepthWrite) {
+                              material.depthWrite = desiredDepthWrite;
+                              material.needsUpdate = true;
+                              needsUpdate = true;
+                            }
+                          } else if (material.depthWrite !== true) {
                             material.depthWrite = true;
                             material.needsUpdate = true;
                             needsUpdate = true;
-                            if (frameCount % 60 === 0) {
-                              console.warn('[WebExport] Standard 360 HDR - Shadow plane depthWrite was false, set to true');
-                            }
                           }
                         } else {
                           // CRITICAL: If material is not ShadowMaterial, log warning
@@ -7359,7 +7705,11 @@ export function createStandaloneViewerHTML(
                   const objType = obj.type || '';
                   
                   // Re-check if object should be hidden (in case it was missed earlier)
-                  const shouldBeHidden = 
+                  // Keep runtime standalone-weather grid visible (added after GLTF helper purge)
+                  const isStandaloneWeatherGrid =
+                    standaloneWeatherNoCsm &&
+                    (userData.isGridHelper === true || obj instanceof THREE.GridHelper);
+                  const shouldBeHidden = !isStandaloneWeatherGrid && (
                     objType === 'TransformControlsGizmo' ||
                     objType === 'TransformControlsPlane' ||
                     objType.includes('Gizmo') ||
@@ -7373,10 +7723,10 @@ export function createStandaloneViewerHTML(
                     userData.isLightHelper === true ||
                     userData.isTransformControls === true ||
                     userData.isDemoShaderScreen === true ||
-                    userData.lightId !== undefined ||
+                    (userData.lightId !== undefined && !(obj instanceof THREE.Light)) ||
                     userData.gizmoKind !== undefined ||
                     userData.skipExport === true ||
-                    (objName && (objName.includes('helper') || objName.includes('gizmo') || objName.includes('cineshader')));
+                    (objName && (objName.includes('helper') || objName.includes('gizmo') || objName.includes('cineshader'))));
                   
                   if (shouldBeHidden) {
                     obj.visible = false;
@@ -7401,32 +7751,46 @@ export function createStandaloneViewerHTML(
               // Don't use autoUpdate=true as it causes flickering - manually trigger updates
               renderer.shadowMap.needsUpdate = true;
               
-              // CRITICAL: Ensure directional lights are casting shadows
-              // This applies to BOTH ground projection and standard 360 HDR modes
-              scene.traverse((light) => {
-                if (light instanceof THREE.DirectionalLight) {
-                  const lightConfig = lightingConfig.directionalLights?.find(l => l.id === light.userData.lightId);
-                  // If light should cast shadows (from config or default), ensure it does
-                  const shouldCastShadow = (lightConfig && lightConfig.castShadow !== false) || (!lightConfig && light.userData.isSun) || (!lightConfig && !light.userData.lightId);
-                  if (shouldCastShadow) {
-                    if (!light.castShadow) {
-                      light.castShadow = true;
-                      if (light.shadow) {
-                        light.shadow.needsUpdate = true;
+              // CRITICAL: Ensure directional lights cast shadows appropriately
+              if (typeof webExportSyncSunOnlyShadowCasters === 'function') {
+                webExportSyncSunOnlyShadowCasters(scene);
+              }
+              if (typeof webExportEnsureExportLightsVisible === 'function') {
+                webExportEnsureExportLightsVisible(scene);
+              } else {
+                scene.traverse((light) => {
+                  if (light instanceof THREE.DirectionalLight) {
+                    const lightConfig = lightingConfig.directionalLights?.find(l => l.id === light.userData.lightId);
+                    const isFirstConfiguredLight =
+                      lightingConfig.directionalLights &&
+                      lightingConfig.directionalLights.length > 0 &&
+                      lightingConfig.directionalLights[0].id === light.userData.lightId;
+                    const shouldCastShadow = (lightConfig && lightConfig.castShadow !== false) ||
+                      (!lightConfig && light.userData.isSun) ||
+                      (!lightConfig && !light.userData.lightId) ||
+                      (CONFIG.weather && CONFIG.weather.enableStandaloneWeather && (light.userData.isSun || light.userData.isGlobalSun || isFirstConfiguredLight));
+                    if (shouldCastShadow) {
+                      if (!light.castShadow) {
+                        light.castShadow = true;
+                        if (light.shadow) {
+                          light.shadow.needsUpdate = true;
+                        }
+                        console.log('[WebExport] Re-enabled shadow casting for light:', light.userData.lightId || light.name || 'default');
                       }
-                      console.log('[WebExport] Re-enabled shadow casting for light:', light.userData.lightId || light.name || 'default');
-                    }
-                    // Ensure shadow map size is set
-                    if (light.shadow && (light.shadow.mapSize.width === 0 || light.shadow.mapSize.height === 0)) {
-                      const shadowMapSize = window.getShadowMapSize ? window.getShadowMapSize(CONFIG.shadowQuality || 'high') : 4096;
-                      light.shadow.mapSize.width = shadowMapSize;
-                      light.shadow.mapSize.height = shadowMapSize;
-                      light.shadow.needsUpdate = true;
-                      console.warn('[WebExport] Light shadow map size was 0, fixed:', light.userData.lightId || light.name || 'default');
+                      if (light.shadow && (light.shadow.mapSize.width === 0 || light.shadow.mapSize.height === 0)) {
+                        const shadowMapSize = window.getShadowMapSize ? window.getShadowMapSize(CONFIG.shadowQuality || 'high') : 4096;
+                        light.shadow.mapSize.width = shadowMapSize;
+                        light.shadow.mapSize.height = shadowMapSize;
+                        light.shadow.needsUpdate = true;
+                        console.warn('[WebExport] Light shadow map size was 0, fixed:', light.userData.lightId || light.name || 'default');
+                      }
+                    } else if (light.castShadow) {
+                      light.castShadow = false;
+                      if (light.shadow) light.shadow.needsUpdate = true;
                     }
                   }
-                }
-              });
+                });
+              }
               
               // CRITICAL: Ensure shadow plane is visible and receiving shadows
               // This applies to BOTH ground projection and standard 360 HDR modes
@@ -7615,6 +7979,7 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
     includeAnimations: true,
     presentationMode: true,
     transitionDuration: 2.0,
+    viewHoldDuration: 1.0,
     autoPlay: false,
     loop: true,
     quality: 'high',
@@ -7914,6 +8279,11 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
     exportedAt: exportDate,
     exportTimestamp: exportTimestamp, // Add timestamp for cache-busting
     options: defaultOptions,
+    // Top-level presentation timing (standalone HTML player reads these directly)
+    transitionDuration: defaultOptions.transitionDuration,
+    viewHoldDuration: defaultOptions.viewHoldDuration,
+    autoPlay: defaultOptions.autoPlay,
+    loop: defaultOptions.loop,
 
     assets: {
       basePath: './',
@@ -7973,16 +8343,26 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
       shadowColor: store.shadowColor,
       shadowOpacity: store.shadowOpacity,
       shadowOpacityEnabled: store.shadowOpacityEnabled,
-      directionalLights: Array.isArray(store.directionalLights) ? store.directionalLights.map(light => ({
-        id: light.id,
-        enabled: light.enabled,
-        color: light.color,
-        intensity: light.intensity,
-        position: light.position,
-        target: light.target,
-        castShadow: light.castShadow,
-        shadowRadius: light.shadowRadius
-      })) : [],
+      directionalLights: Array.isArray(store.directionalLights)
+        ? store.directionalLights.map((light, index) => {
+            const standaloneWeather = store.enableStandaloneWeather === true
+            const isSun = standaloneWeather
+              ? webExportIsSunLightConfig(light, index, true)
+              : light.isSun
+            return {
+              id: light.id,
+              enabled: light.enabled,
+              isSun,
+              color: light.color,
+              intensity: light.intensity,
+              position: light.position,
+              target: light.target,
+              // CSM disables sun castShadow in editor; export has no CSM — sun must cast shadows
+              castShadow: isSun && standaloneWeather ? true : light.castShadow,
+              shadowRadius: light.shadowRadius
+            }
+          })
+        : [],
       sceneLights: sceneLights // Lights actually in the scene
     },
     
@@ -7991,8 +8371,14 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
       enabled: store.shadowsEnabled,
       shadowIntensity: store.shadowIntensity,
       shadowPlaneTransparent: store.shadowPlaneTransparent,
+      showShadowPlane: store.showShadowPlane,
       shadowBias: store.shadowBias,
       shadowMapSize: store.shadowMapSize
+    },
+
+    // Scene helpers (grid matches editor ground reference)
+    helpers: {
+      showGrid: store.showGrid
     },
     
     // Weather Settings
@@ -8001,7 +8387,7 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
       preset: store.weatherPreset,
       timeOfDay: store.timeOfDay,
       northOffset: store.northOffset,
-      dynamicSkyEnabled: store.dynamicSkyEnabled,
+      dynamicSkyEnabled: store.enableStandaloneWeather ? true : store.dynamicSkyEnabled,
       sunSize: store.sunSize,
       moonSize: store.moonSize,
       weatherQuality: store.weatherQuality,

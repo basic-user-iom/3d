@@ -8,9 +8,8 @@ import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS, resolveHotspot
 import {
   createHotspotLabelObject,
   updateHotspotLabelTexture,
-  computeBillboardQuaternion,
-  quaternionToFrozen,
   applyFrozenOrientation,
+  resolveSharedFrozenRotation,
   type FrozenRotation
 } from '../utils/hotspotLabel'
 import { createHotspot3DPanel, updateHotspot3DPanelTexture, updateHotspotCSS3DPanelStyle, cleanupVideoResourcesForCanvas, cleanupAllVideoResources, type Hotspot3DPanelConfig } from '../utils/hotspot3DPanel'
@@ -173,17 +172,17 @@ export default function HotspotsPanel() {
   const [hotspots, setHotspots] = useState<Hotspot[]>([])
   const [hotspotsLoaded, setHotspotsLoaded] = useState(false) // Track if hotspots have been loaded
   
-  // Load hotspots from storage when panel opens for the first time
+  // Load hotspots from storage once on mount (runtime stays alive even when panel UI is closed)
   useEffect(() => {
-    if (!showHotspotsPanel || hotspotsLoaded) return
-    
+    if (hotspotsLoaded) return
+
     const loadedHotspots = loadHotspotsFromStorage()
     if (loadedHotspots.length > 0) {
       setHotspots(loadedHotspots)
       console.log('[HotspotsPanel] Loaded', loadedHotspots.length, 'hotspots from storage')
     }
     setHotspotsLoaded(true)
-  }, [showHotspotsPanel, hotspotsLoaded, loadHotspotsFromStorage])
+  }, [hotspotsLoaded, loadHotspotsFromStorage])
   
   // Listen for panel close/open events from ViewerCanvas
   useEffect(() => {
@@ -227,9 +226,8 @@ export default function HotspotsPanel() {
   }, [saveHotspotsToStorage])
   
   // Clean up only orphaned hotspot objects (those not in current hotspots list)
-  // This runs when panel opens to remove any leftover objects from previous sessions
   useEffect(() => {
-    if (!showHotspotsPanel || !viewer?.scene) return
+    if (!hotspotsLoaded || !viewer?.scene) return
     
     // Get current hotspot IDs
     const currentHotspotIds = new Set(hotspots.map(h => h.id))
@@ -300,12 +298,13 @@ export default function HotspotsPanel() {
     if (objectsToRemove.length > 0) {
       console.log('[HotspotsPanel] Cleaned up', objectsToRemove.length, 'orphaned hotspot objects')
     }
-  }, [showHotspotsPanel, viewer, hotspots])
+  }, [hotspotsLoaded, viewer, hotspots])
   
-  // Save hotspots to storage whenever they change
+  // Save hotspots to storage whenever they change — never before initial load (avoids wiping storage with [])
   useEffect(() => {
+    if (!hotspotsLoaded) return
     saveHotspotsToStorage(hotspots)
-  }, [hotspots, saveHotspotsToStorage])
+  }, [hotspots, hotspotsLoaded, saveHotspotsToStorage])
   const [hotspotMarkers, setHotspotMarkers] = useState<Map<string, THREE.Sprite>>(new Map())
   const [hotspotLabels, setHotspotLabels] = useState<Map<string, THREE.Object3D>>(new Map())
   const [hotspotPanels, setHotspotPanels] = useState<Map<string, THREE.Object3D>>(new Map()) // 3D floating panels
@@ -345,20 +344,17 @@ export default function HotspotsPanel() {
     setHotspots(prev => prev.map(h => {
       if (h.id !== editingHotspotId) return h
 
-      const wasFaceCamera = h.faceCamera ?? h.label?.faceCamera ?? true
-      let frozenRotation = h.frozenRotation
-      if (!checked && wasFaceCamera) {
-        const labelPos = new THREE.Vector3(
-          h.position.x + labelOffsetX,
-          h.position.y + labelOffsetY,
-          h.position.z
-        )
-        frozenRotation = quaternionToFrozen(
-          computeBillboardQuaternion(labelPos, viewer.camera!.position)
-        )
-      } else if (checked) {
-        frozenRotation = undefined
-      }
+      const labelPos = new THREE.Vector3(
+        h.position.x + labelOffsetX,
+        h.position.y + labelOffsetY,
+        h.position.z
+      )
+      const frozenRotation = resolveSharedFrozenRotation(
+        checked,
+        checked ? undefined : h.frozenRotation,
+        labelPos,
+        viewer.camera!.position
+      )
 
       return {
         ...h,
@@ -465,21 +461,22 @@ export default function HotspotsPanel() {
         const nextLabelText = labelText || nextName
         const nextFaceCamera = labelFaceCamera
         const currentLabel = hotspot.label
-        const wasFaceCamera = hotspot.faceCamera ?? currentLabel?.faceCamera ?? true
 
-        let nextFrozenRotation = hotspot.frozenRotation
-        if (wasFaceCamera && !nextFaceCamera && viewer?.camera) {
-          const labelPos = new THREE.Vector3(
-            hotspot.position.x + labelOffsetX,
-            hotspot.position.y + labelOffsetY,
-            hotspot.position.z
-          )
-          nextFrozenRotation = quaternionToFrozen(
-            computeBillboardQuaternion(labelPos, viewer.camera.position)
-          )
-        } else if (nextFaceCamera) {
-          nextFrozenRotation = undefined
-        }
+        const labelPos = new THREE.Vector3(
+          hotspot.position.x + labelOffsetX,
+          hotspot.position.y + labelOffsetY,
+          hotspot.position.z
+        )
+        const nextFrozenRotation = viewer?.camera
+          ? resolveSharedFrozenRotation(
+              nextFaceCamera,
+              nextFaceCamera ? undefined : hotspot.frozenRotation,
+              labelPos,
+              viewer.camera.position
+            )
+          : nextFaceCamera
+            ? undefined
+            : hotspot.frozenRotation
 
         const frozenRotationChanged =
           JSON.stringify(hotspot.frozenRotation ?? null) !== JSON.stringify(nextFrozenRotation ?? null)
@@ -1370,16 +1367,17 @@ export default function HotspotsPanel() {
             if (faceCameraModeChanged) {
               let frozenRotation = hotspot.frozenRotation
               if (!wantsBillboard && viewer.camera) {
-                if (!frozenRotation) {
-                  const labelPos = new THREE.Vector3(
-                    position.x + effectiveLabelOffsetX,
-                    position.y + effectiveLabelOffsetY,
-                    position.z
-                  )
-                  frozenRotation = quaternionToFrozen(
-                    computeBillboardQuaternion(labelPos, viewer.camera.position)
-                  )
-                }
+                const labelPos = new THREE.Vector3(
+                  position.x + effectiveLabelOffsetX,
+                  position.y + effectiveLabelOffsetY,
+                  position.z
+                )
+                frozenRotation = resolveSharedFrozenRotation(
+                  false,
+                  frozenRotation,
+                  labelPos,
+                  viewer.camera.position
+                )
                 const panel = panelsMap.get(hotspot.id)
                 if (panel) {
                   panel.userData.isBillboard = false
@@ -1405,9 +1403,15 @@ export default function HotspotsPanel() {
             activeLabel.userData.faceCamera = effectiveFaceCamera
 
             if (!wantsBillboard && viewer.camera) {
+              const sharedFrozen = resolveSharedFrozenRotation(
+                false,
+                hotspot.frozenRotation,
+                activeLabel.position,
+                viewer.camera.position
+              )
               applyFrozenOrientation(
                 activeLabel,
-                hotspot.frozenRotation,
+                sharedFrozen,
                 activeLabel.position,
                 viewer.camera.position
               )
@@ -1595,9 +1599,20 @@ export default function HotspotsPanel() {
             panel.userData.isBillboard = panelFaceCamera
           }
           if (!panelFaceCamera && viewer.camera) {
+            const labelAnchor = new THREE.Vector3(
+              position.x + effectiveLabelOffsetX,
+              position.y + effectiveLabelOffsetY,
+              position.z
+            )
+            const sharedFrozen = resolveSharedFrozenRotation(
+              false,
+              hotspot.frozenRotation,
+              labelAnchor,
+              viewer.camera.position
+            )
             applyFrozenOrientation(
               panel,
-              hotspot.frozenRotation,
+              sharedFrozen,
               panel.position,
               viewer.camera.position
             )
@@ -1679,9 +1694,20 @@ export default function HotspotsPanel() {
               const panelFaceCamera = hotspot.faceCamera !== false
               panel.userData.isBillboard = panelFaceCamera
               if (!panelFaceCamera && viewer.camera) {
+                const labelAnchor = new THREE.Vector3(
+                  position.x + effectiveLabelOffsetX,
+                  position.y + effectiveLabelOffsetY,
+                  position.z
+                )
+                const sharedFrozen = resolveSharedFrozenRotation(
+                  false,
+                  hotspot.frozenRotation,
+                  labelAnchor,
+                  viewer.camera.position
+                )
                 applyFrozenOrientation(
                   panel,
-                  hotspot.frozenRotation,
+                  sharedFrozen,
                   panel.position,
                   viewer.camera.position
                 )
@@ -1746,9 +1772,20 @@ export default function HotspotsPanel() {
                   const panelFaceCamera = hotspot.faceCamera !== false
                   newPanel.userData.isBillboard = panelFaceCamera
                   if (!panelFaceCamera && viewer.camera) {
+                    const labelAnchor = new THREE.Vector3(
+                      position.x + effectiveLabelOffsetX,
+                      position.y + effectiveLabelOffsetY,
+                      position.z
+                    )
+                    const sharedFrozen = resolveSharedFrozenRotation(
+                      false,
+                      hotspot.frozenRotation,
+                      labelAnchor,
+                      viewer.camera.position
+                    )
                     applyFrozenOrientation(
                       newPanel,
-                      hotspot.frozenRotation,
+                      sharedFrozen,
                       newPanel.position,
                       viewer.camera.position
                     )
@@ -2077,8 +2114,10 @@ export default function HotspotsPanel() {
       cancelAnimationFrame(updateFrame)
       isUpdatingRef.current = false
     }
+  }, [hotspots, viewer?.scene, setActiveHotspot, hotspotLines, hoveredHotspotId, activeHotspot, labelFontSize, labelColor, labelBackgroundColor, labelBorderWidth, labelBorderColor])
 
-    // Expose hotspots globally for ViewerCanvas to handle clicks, hover, and position updates
+  // Bridge hotspot data/handlers to ViewerCanvas (must stay outside the scene-sync early-return path)
+  useEffect(() => {
     ;(window as any).__hotspots = hotspots
     ;(window as any).__setActiveHotspot = setActiveHotspot
     ;(window as any).__setHoveredHotspotId = setHoveredHotspotId
@@ -2093,7 +2132,6 @@ export default function HotspotsPanel() {
       }))
     }
 
-    // Expose function to update hotspot endpoint position (for draggable line endpoint)
     ;(window as any).__updateHotspotEndpointPosition = (id: string, position: { x: number; y: number; z: number }) => {
       console.log('[HotspotsPanel] __updateHotspotEndpointPosition called:', { id, position })
       setHotspots(prev => prev.map(h => {
@@ -2106,14 +2144,45 @@ export default function HotspotsPanel() {
     }
 
     return () => {
-      // Cleanup on unmount - cleanup is handled by setState cleanup
       ;(window as any).__hotspots = []
       ;(window as any).__setActiveHotspot = null
       ;(window as any).__setHoveredHotspotId = null
       ;(window as any).__updateHotspotPosition = null
       ;(window as any).__updateHotspotEndpointPosition = null
     }
-  }, [hotspots, viewer?.scene, setActiveHotspot, hotspotLines, hoveredHotspotId, activeHotspot, labelFontSize, labelColor, labelBackgroundColor, labelBorderWidth, labelBorderColor])
+  }, [hotspots, setActiveHotspot])
+
+  // Persist missing frozenRotation when billboard is off so label + panel stay in sync across frames/reloads
+  useEffect(() => {
+    if (!viewer?.camera || !hotspotsLoaded) return
+
+    const needingFreeze = hotspots.filter((h) => {
+      const faceCamera = h.label?.faceCamera ?? h.faceCamera ?? true
+      return faceCamera === false && !h.frozenRotation
+    })
+    if (needingFreeze.length === 0) return
+
+    setHotspots((prev) =>
+      prev.map((h) => {
+        const faceCamera = h.label?.faceCamera ?? h.faceCamera ?? true
+        if (faceCamera !== false || h.frozenRotation) return h
+        const labelPos = new THREE.Vector3(
+          h.position.x + (h.label?.offsetX ?? 0),
+          h.position.y + (h.label?.offsetY ?? 0),
+          h.position.z
+        )
+        return {
+          ...h,
+          frozenRotation: resolveSharedFrozenRotation(
+            false,
+            undefined,
+            labelPos,
+            viewer.camera!.position
+          )
+        }
+      })
+    )
+  }, [hotspots, hotspotsLoaded, viewer?.camera])
 
   // Cache meshes for raycasting (only update when scene changes significantly)
   useEffect(() => {
@@ -3411,7 +3480,8 @@ export default function HotspotsPanel() {
   }, [hotspotEndpoints, viewer])
 
   if (!showHotspotsPanel) {
-    return null
+    // Keep runtime + popup alive when the editor panel is closed
+    return <HotspotPopup hotspot={activeHotspot} onClose={() => setActiveHotspot(null)} />
   }
 
   return (

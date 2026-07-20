@@ -49,6 +49,7 @@ export default function ObjectsPanel() {
     setObjectVisible,
     streetsGLBridge
   } = useAppStore()
+  const updateProjectObject = useAppStore((s) => s.updateProjectObject)
   const { viewer, frameObject } = useViewer()
   // Stable proxy Object3Ds for registry descriptors that have no live scene object
   // (city mode). Reusing the same proxy per id across rebuilds keeps node identity
@@ -231,11 +232,28 @@ export default function ObjectsPanel() {
       if (extra?.streetsGLAdded) {
         ;(proxy.userData as any).streetsGLAdded = true
       }
+      if (extra?.renderInStreetsGL) {
+        ;(proxy.userData as any).renderInStreetsGL = true
+      }
+      if (extra?.streetsGLVisible !== undefined) {
+        ;(proxy.userData as any).streetsGLVisible = extra.streetsGLVisible
+      }
+      // City/hybrid imports hide the Three.js root; heal registry proxies that inherited
+      // visible=false from that hide so gizmo sync does not send visible:false to the iframe.
+      if (descriptor.kind === 'imported') {
+        const cachedScene = getCachedImportedModelScene(descriptor.id)
+        if (extra?.renderInStreetsGL === true || (cachedScene?.userData as any)?.renderInStreetsGL === true) {
+          ;(proxy.userData as any).renderInStreetsGL = true
+          if (descriptor.visible === false && (proxy.userData as any).streetsGLVisible === undefined) {
+            proxy.visible = true
+          }
+        }
+      }
       nodes.push({
         object: proxy,
         name: descriptor.name,
         type: descriptor.primitiveType ? `Primitive (${descriptor.primitiveType})` : descriptor.kind === 'imported' ? 'Imported Model' : descriptor.kind,
-        visible: descriptor.visible,
+        visible: proxy.visible,
         children: [],
         useCount: 1
       })
@@ -739,12 +757,27 @@ export default function ObjectsPanel() {
       if (!projectObjectId) return
       const newVisible = !node.object.visible
       node.object.visible = newVisible
-      if ((node.object.userData as any).renderInStreetsGL === true) {
-        ;(node.object.userData as any).streetsGLVisible = newVisible
-      }
+      // Mirror into streetsGLVisible so transform sync / registry rebuild cannot confuse
+      // Three.js hide with an Objects Panel hide for city/hybrid iframe objects.
+      ;(node.object.userData as any).streetsGLVisible = newVisible
       setObjectVisible(projectObjectId, newVisible)
+      const existing = useAppStore.getState().projectObjects.find((p) => p.id === projectObjectId)
+      if (existing) {
+        updateProjectObject(projectObjectId, {
+          visible: newVisible,
+          userData: {
+            ...(existing.userData || {}),
+            streetsGLVisible: newVisible,
+            ...((node.object.userData as any).renderInStreetsGL === true
+              ? { renderInStreetsGL: true }
+              : {})
+          }
+        })
+      }
       if (streetsGLBridge && streetsGLId) {
-        streetsGLBridge.updateObject(streetsGLId, { visible: newVisible }).catch(() => {})
+        streetsGLBridge.updateObject(streetsGLId, { visible: newVisible }).catch((err) => {
+          console.warn('[ObjectsPanel] Streets GL visibility update failed:', streetsGLId, err)
+        })
       }
       setTimeout(() => setSceneTree(buildSceneTree()), 0)
       return
@@ -757,6 +790,18 @@ export default function ObjectsPanel() {
     // Keep the registry descriptor in sync for objects that have one.
     if (projectObjectId) {
       setObjectVisible(projectObjectId, newVisible)
+      const existing = useAppStore.getState().projectObjects.find((p) => p.id === projectObjectId)
+      if (existing && ((node.object.userData as any).renderInStreetsGL === true || existing.userData?.renderInStreetsGL === true)) {
+        ;(node.object.userData as any).streetsGLVisible = newVisible
+        updateProjectObject(projectObjectId, {
+          visible: newVisible,
+          userData: {
+            ...(existing.userData || {}),
+            renderInStreetsGL: true,
+            streetsGLVisible: newVisible
+          }
+        })
+      }
     }
     
     // Set visibility on the object
@@ -769,7 +814,9 @@ export default function ObjectsPanel() {
     node.object.updateMatrixWorld(true)
 
     if (streetsGLBridge && streetsGLId) {
-      streetsGLBridge.updateObject(streetsGLId, { visible: newVisible }).catch(() => {})
+      streetsGLBridge.updateObject(streetsGLId, { visible: newVisible }).catch((err) => {
+        console.warn('[ObjectsPanel] Streets GL visibility update failed:', streetsGLId, err)
+      })
     }
     
     // If it's a group, also toggle visibility of all children recursively
@@ -791,7 +838,7 @@ export default function ObjectsPanel() {
       const tree = buildSceneTree()
       setSceneTree(tree)
     }, 0)
-  }, [viewer, buildSceneTree, setObjectVisible, streetsGLBridge])
+  }, [viewer, buildSceneTree, setObjectVisible, updateProjectObject, streetsGLBridge])
 
   const handleToggleLock = useCallback((node: SceneNode, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -842,7 +889,9 @@ export default function ObjectsPanel() {
       removeCachedImportedModelScene(projectObjectId)
       const streetsGLId = getStreetsGLObjectId(node.object)
       if (streetsGLBridge && streetsGLId) {
-        streetsGLBridge.removeObject(streetsGLId).catch(() => {})
+        streetsGLBridge.removeObject(streetsGLId).catch((err) => {
+          console.warn('[ObjectsPanel] Streets GL remove failed:', streetsGLId, err)
+        })
       }
       if (selectedObject === node.object) {
         setSelectedObject(null)
@@ -1011,7 +1060,9 @@ export default function ObjectsPanel() {
       removeCachedImportedModelScene(registryId, false)
       const streetsGLId = getStreetsGLObjectId(modelRoot)
       if (streetsGLBridge && streetsGLId) {
-        streetsGLBridge.removeObject(streetsGLId).catch(() => {})
+        streetsGLBridge.removeObject(streetsGLId).catch((err) => {
+          console.warn('[ObjectsPanel] Streets GL remove failed:', streetsGLId, err)
+        })
       }
       const fileName = (modelRoot.userData as any).fileName as string | undefined
       if (fileName) {

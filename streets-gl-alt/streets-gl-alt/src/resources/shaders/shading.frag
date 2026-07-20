@@ -395,20 +395,11 @@ void main() {
 	}
 	#endif
 
-	// Check if this is an external object (has significant glow)
-	vec3 glow = texture(tGlow, vUv).rgb;
-	if (length(glow) > 0.1) {
-		// This is an external object - bypass all lighting and use glow directly
-		// Make it EXTREMELY bright so it's impossible to miss
-		color = glow * 10000.0; // Direct glow output, bypass lighting entirely
-		color = min(color, vec3(1000000.)); // Very high clamp for external objects
-	} else {
-		// Normal rendering for other objects
-		color += getIBLContribution(materialInfo, worldNormal, worldView, reflectionColor);
-		color += applyDirectionalLight(light, materialInfo, worldNormal, worldView) * shadowFactor;
-		color += glow * 2.0; // Normal glow for other objects
-		color = min(color, vec3(500.)); // Normal clamp for other objects
-	}
+	color += getIBLContribution(materialInfo, worldNormal, worldView, reflectionColor);
+	color += applyDirectionalLight(light, materialInfo, worldNormal, worldView) * shadowFactor;
+	color += texture(tGlow, vUv).rgb * 2.;
+
+	color = min(color, vec3(500.));
 
 	#if SSAO_ENABLED == 1
 		color += materialInfo.diffuseColor * 0.2 * texture(tSSAO, vUv).r;
