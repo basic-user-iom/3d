@@ -11,11 +11,45 @@ import { StreetsGLBridge } from '../utils/streetsGLBridge'
 import { fileRegistry } from '../utils/projectPersistence'
 import { calculateMaterialIntensity } from './utils/materialIntensityHelper'
 import { cacheImportedModelScene, getCachedImportedModelScene } from './importedModelCache'
-import { buildMeshFromDescriptor, descriptorFromImportedModel } from './objectRegistry'
+import {
+  buildMeshFromDescriptor,
+  descriptorFromImportedModel,
+  findSceneObjectByProjectId
+} from './objectRegistry'
 import { attachModelAnimations } from './utils/modelAnimations'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { refreshHdrGroundShadowState, resolveGroundProjectionActive } from './utils/hdrGroundShadowCatcher'
 import { wakeViewerRender } from './utils/wakeViewerRender'
+import {
+  ensureStreetsGLIframeVisibilityChannel,
+  getIframeVisible,
+  isStreetsGLIframeRenderable,
+  resolveIframeVisibleForBridge,
+  setIframePresence,
+  setIframeVisible
+} from './streetsGLIframeVisibility'
+import {
+  bindResyncRunner,
+  requestRegistryResync,
+  type StreetsGLResyncReason
+} from './streetsGLResyncCoordinator'
+
+export {
+  ensureStreetsGLIframeVisibilityChannel,
+  getIframePresence,
+  getIframeVisible,
+  getStreetsGLVisibleFromObject,
+  isStreetsGLIframeRenderable,
+  resolveIframeVisibleForBridge,
+  setIframePresence,
+  setIframeVisible,
+  type StreetsGLIframePresence
+} from './streetsGLIframeVisibility'
+
+export {
+  requestRegistryResync,
+  type StreetsGLResyncReason
+} from './streetsGLResyncCoordinator'
 
 export interface LoadedModel {
   scene: THREE.Object3D
@@ -53,66 +87,22 @@ const _streetsGLTargetWorld = new THREE.Vector3()
 const _streetsGLLocalPos = new THREE.Vector3()
 
 /**
- * True when this object (or its registry/cached mesh) is authored for iframe display
- * while the Three.js root may be hidden (city/hybrid).
- */
-export function isStreetsGLIframeRenderable(
-  obj: THREE.Object3D,
-  descriptor?: ProjectObject
-): boolean {
-  const ud = obj.userData as any
-  const descUd = descriptor?.userData as any
-  if (ud.renderInStreetsGL === true || descUd?.renderInStreetsGL === true) return true
-  if (ud.streetsGLVisible !== undefined || descUd?.streetsGLVisible !== undefined) return true
-  const projectId = (ud.projectObjectId as string | undefined) || descriptor?.id
-  if (projectId) {
-    const cached = getCachedImportedModelScene(projectId)
-    if ((cached?.userData as any)?.renderInStreetsGL === true) return true
-  }
-  // City registry proxies often omit renderInStreetsGL but still represent iframe objects.
-  if (descUd?.streetsGLAdded === true || ud.streetsGLAdded === true) return true
-  return false
-}
-
-/**
- * Resolve whether an object should render in the Streets GL iframe.
- * Hybrid/city imports hide the Three.js root (visible=false) while still expecting
- * iframe rendering — do not propagate that flag to bridge updates.
+ * Streets GL sync invariants — keep visibility and gizmo transforms from fighting:
  *
- * Registry descriptors used to record visible=false from that Three.js hide; treat
- * panel/iframe visibility via streetsGLVisible (and descriptor.visible only when the
- * object is not an iframe-renderable import).
+ * 1. Three.js `visible=false` on city/hybrid imports means "product viewer hidden; iframe
+ *    owns the draw". NEVER copy it into bridge payloads or treat it as an Objects Panel hide.
+ * 2. Mesh `streetsGLVisible` is the ONLY iframe visibility channel (see streetsGLIframeVisibility.ts).
+ *    Transform sync is pose-only — never send `visible` unless setIframeVisible(..., { pushToBridge }).
+ * 3. `streetsGLPosition` is the immutable Mercator placement anchor after first add.
+ *    GPS / live local transform are the moving pose — never rewrite the anchor from GPS
+ *    on heal/resync (that shifts CityTransformOverlay off the car).
+ * 4. Resync may re-add missing iframe objects and heal invisible shells, but must not
+ *    rewrite anchors or clobber mid-drag proxy/manipulator state. All resync entry points
+ *    go through requestRegistryResync (ResyncCoordinator: single-flight + one follow-up).
+ * 5. Bridge `{ visible }` RPCs only via setIframeVisible(..., { pushToBridge: true }).
+ * 6. Phase 2: project files persist registry anchors + streetsGLVisible; on load presence
+ *    is Absent until ResyncCoordinator re-adds — never rewrite restored anchors from GPS.
  */
-export function getStreetsGLVisibleFromObject(
-  obj: THREE.Object3D,
-  descriptor?: ProjectObject
-): boolean {
-  const ud = obj.userData as any
-  const descUd = descriptor?.userData as any
-
-  if (isStreetsGLIframeRenderable(obj, descriptor)) {
-    if (ud.streetsGLVisible === false || descUd?.streetsGLVisible === false) return false
-    // Objects Panel hide for city proxies sets descriptor.visible / proxy.visible without
-    // always setting streetsGLVisible — honor an explicit panel hide when present.
-    if (descriptor?.visible === false && ud.streetsGLVisible === undefined && descUd?.streetsGLVisible === undefined) {
-      // Distinguish import pollution (Three.js hide copied into descriptor) from a real
-      // panel hide: polluted imports also have renderInStreetsGL on the cached mesh and
-      // never got an explicit streetsGLVisible=false from the user.
-      const projectId = (ud.projectObjectId as string | undefined) || descriptor?.id
-      const cached = projectId ? getCachedImportedModelScene(projectId) : null
-      const cachedHiddenForIframe = (cached?.userData as any)?.renderInStreetsGL === true
-      if (cachedHiddenForIframe || ud.renderInStreetsGL === true || descUd?.renderInStreetsGL === true) {
-        return true
-      }
-      return false
-    }
-    return true
-  }
-
-  const descriptorVisible = descriptor?.visible
-  if (descriptorVisible === false) return false
-  return obj.visible !== false
-}
 
 /**
  * Validate Web-Mercator position before sync. Returns null when coords are unusable.
@@ -557,6 +547,9 @@ export function applyStreetsGLWorldToProxy(
 /**
  * Push transform changes from a registry proxy (or mesh) to the project store and Streets GL bridge.
  * Used in city mode where ViewerCanvas / TransformControls are unavailable.
+ *
+ * Phase 0: pose-only bridge RPC — never include `visible`. Visibility is owned by
+ * setIframeVisible / add / resync heal. Writing visible here reintroduced the show→hide loop.
  */
 export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void {
   const store = useAppStore.getState()
@@ -599,7 +592,9 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
     z: obj.scale.z * STREETS_GL_OBJECT_SCALE
   }
 
-  const streetsGLVisible = getStreetsGLVisibleFromObject(obj, descriptor)
+  // Keep mesh channel healthy for later reads — do not RPC visibility from transform sync.
+  ensureStreetsGLIframeVisibilityChannel(obj, descriptor)
+  const iframeRenderable = isStreetsGLIframeRenderable(obj, descriptor)
 
   let gps: { lat: number; lon: number } | undefined = descriptor?.gps
   try {
@@ -614,12 +609,9 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
   }
 
   if (projectId) {
-    const renderInStreetsGL =
-      ud.renderInStreetsGL === true || descriptor?.userData?.renderInStreetsGL === true
     store.updateProjectObject(projectId, {
-      // Keep registry panel visibility aligned with iframe visibility for hybrid/city imports
-      // (descriptor.visible was historically polluted by Three.js hide).
-      visible: renderInStreetsGL ? streetsGLVisible : descriptor?.visible,
+      // Pose + anchors only — do not rewrite registry visible / streetsGLVisible here
+      // (that re-polluted the channel from Three.js hide and fed the show→hide loop).
       transform: {
         position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
         rotation: registryRotation,
@@ -628,20 +620,28 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
       gps,
       userData: {
         ...(descriptor?.userData || {}),
-        ...(renderInStreetsGL ? { renderInStreetsGL: true } : {}),
+        ...(iframeRenderable ? { renderInStreetsGL: true } : {}),
         streetsGLBaseTransform: ud.streetsGLBaseTransform ?? descriptor?.userData?.streetsGLBaseTransform,
         streetsGLPlacementWorldPosition:
           placementWorld ?? descriptor?.userData?.streetsGLPlacementWorldPosition,
+        // Anchor only — never invent/overwrite from GPS here.
         streetsGLPosition: ud.streetsGLPosition ?? descriptor?.userData?.streetsGLPosition,
-        streetsGLAdded: true
+        // Pose sync implies the object is already in the iframe; keep presence coherent
+        // without inventing Absent→Present via setIframePresence (would fight pending adds).
+        streetsGLAdded: true,
+        streetsGLIframePresence:
+          ud.streetsGLVisible === false
+            ? 'hidden'
+            : (ud.streetsGLIframePresence as string | undefined) === 'pending'
+              ? 'pending'
+              : 'present'
       }
     })
   }
 
-  streetsGLDebugLog('[StreetsGLSync] Transform sync → Streets GL:', {
+  streetsGLDebugLog('[StreetsGLSync] Transform sync → Streets GL (pose only):', {
     objectId,
     position,
-    visible: streetsGLVisible,
     scale
   })
 
@@ -649,8 +649,8 @@ export function syncProjectObjectTransformToStreetsGL(obj: THREE.Object3D): void
     .updateObject(objectId, {
       position,
       rotation,
-      scale,
-      visible: streetsGLVisible
+      scale
+      // Phase 0: omit visible — transform sync must not touch iframe visibility.
     })
     .then((success) => {
       if (!success) {
@@ -730,41 +730,174 @@ export async function mergeStreetsGLObjectsIntoRegistry(
 }
 
 /**
- * After an iframe reload the bridge starts empty while the registry still lists objects as added.
- * Re-sync any registry objects that are missing from the live iframe scene.
+ * Resolve a live mesh for Streets GL sync: imported-model cache, then the Three.js
+ * scene (hybrid / product), then a primitive rebuild from the descriptor.
+ */
+function resolveMeshForStreetsGLResync(descriptor: ProjectObject): THREE.Object3D | null {
+  if (descriptor.kind === 'imported') {
+    const cached = getCachedImportedModelScene(descriptor.id)
+    if (cached) return cached
+    const viewer = getSharedViewer()
+    if (viewer?.scene) {
+      return findSceneObjectByProjectId(viewer.scene, descriptor.id)
+    }
+    return null
+  }
+  const built = buildMeshFromDescriptor(descriptor)
+  if (built) return built
+  const viewer = getSharedViewer()
+  if (viewer?.scene) {
+    return findSceneObjectByProjectId(viewer.scene, descriptor.id)
+  }
+  return null
+}
+
+/**
+ * Ensure imported models that are live in the Three.js scene but missing from
+ * projectObjects get registered (so Objects panel + Streets GL share one source of truth).
+ */
+function ensureLiveSceneImportsAreRegistered(): void {
+  const viewer = getSharedViewer()
+  if (!viewer?.scene) return
+  const store = useAppStore.getState()
+  const known = new Set(store.projectObjects.map((o) => o.id))
+  const overlayActive = !!store.streetsGLIframeOverlay
+
+  viewer.scene.traverse((obj) => {
+    if (obj.userData?.isGaussianSplatViewer || obj.userData?.excludeFromStreetsGLHiding) return
+    // Root imports: isModel + fileName, not a child mesh of another named import.
+    if (obj.userData?.isModel !== true || !obj.userData?.fileName) return
+    if (obj.parent && (obj.parent as any).userData?.fileName && (obj.parent as any).userData?.isModel) {
+      return
+    }
+    const existingId = (obj.userData.projectObjectId || obj.userData.streetsGLObjectId) as
+      | string
+      | undefined
+    if (existingId && known.has(existingId)) {
+      cacheImportedModelScene(existingId, obj)
+      return
+    }
+    const ud = obj.userData as any
+    // Phase 3: under Streets GL, do not seed registry/channel hide from Three.js product-hide.
+    const preferIframeChannelDefaults =
+      overlayActive ||
+      ud.renderInStreetsGL === true ||
+      ud.streetsGLVisible !== undefined ||
+      !!ud.streetsGLPosition
+    const fileName = String(obj.userData.fileName)
+    const objectId = registerImportedModelInRegistry(obj, fileName, {
+      preferIframeChannelDefaults
+    })
+    known.add(objectId)
+  })
+}
+
+/**
+ * After an iframe reload / Streets GL open the bridge may be empty (or hold stale
+ * invisible shells) while the registry / live viewer still has imports. Push every
+ * imported/primitive object that should appear on the map — sequentially so multi-GLB
+ * postMessage payloads do not race each other.
+ *
+ * All open/ready/reload/mode-enter triggers go through ResyncCoordinator
+ * (`requestRegistryResync`) — single-flight + one coalesced follow-up.
  */
 export async function resyncRegistryObjectsAfterBridgeReload(
+  bridge: StreetsGLBridge,
+  reason: StreetsGLResyncReason = 'manual'
+): Promise<number> {
+  return requestRegistryResync(bridge, reason)
+}
+
+async function resyncRegistryObjectsAfterBridgeReloadImpl(
   bridge: StreetsGLBridge
 ): Promise<number> {
-  if (!bridge.isReady) return 0
+  // Hybrid: models may exist only as scene children until registered/cached.
+  ensureLiveSceneImportsAreRegistered()
 
   const iframeObjects = await bridge.getObjects()
-  const iframeIds = new Set(iframeObjects.map((o) => o.id))
+  const iframeById = new Map(iframeObjects.map((o) => [o.id, o]))
   const store = useAppStore.getState()
+  const overlayActive = !!store.streetsGLIframeOverlay
   let resynced = 0
 
   for (const descriptor of store.projectObjects) {
-    const streetsId = descriptor.streetsGLObjectId || descriptor.id
+    // All imported models + primitives belong in Streets GL when the overlay is used.
+    // Also keep legacy streetsGL* flags so external/other kinds still re-sync.
     const shouldBeInStreetsGL =
+      descriptor.kind === 'imported' ||
+      descriptor.kind === 'primitive' ||
       descriptor.userData?.streetsGLAdded === true ||
       descriptor.userData?.streetsGLPending === true ||
+      descriptor.userData?.streetsGLIframePresence === 'present' ||
+      descriptor.userData?.streetsGLIframePresence === 'hidden' ||
+      descriptor.userData?.streetsGLIframePresence === 'pending' ||
       !!descriptor.streetsGLObjectId
 
     if (!shouldBeInStreetsGL) continue
-    if (iframeIds.has(streetsId)) continue
-
-    let mesh: THREE.Object3D | null = null
-    if (descriptor.kind === 'imported') {
-      mesh = getCachedImportedModelScene(descriptor.id) ?? null
-    } else {
-      mesh = buildMeshFromDescriptor(descriptor)
+    if (descriptor.userData?.excludeFromStreetsGLHiding || descriptor.userData?.isGaussianSplatViewer) {
+      continue
     }
-    if (!mesh) continue
+
+    const streetsId = descriptor.streetsGLObjectId || descriptor.id
+    const mesh = resolveMeshForStreetsGLResync(descriptor)
+    if (!mesh) {
+      console.warn(
+        '[StreetsGLSync] No mesh available to sync into Streets GL:',
+        descriptor.id,
+        descriptor.name
+      )
+      continue
+    }
 
     mesh.userData.streetsGLObjectId = streetsId
-    mesh.userData.streetsGLAdded = false
+    mesh.userData.projectObjectId = descriptor.id
+    // City/hybrid hide the Three.js root; establish iframe visibility channel before
+    // serialize so fromThreeJSObject / heal never copy visible=false into the bridge.
+    ensureStreetsGLIframeVisibilityChannel(mesh, descriptor, {
+      markRenderable: overlayActive || mesh.visible === false || descriptor.kind === 'imported'
+    })
 
-    if (descriptor.gps) {
+    const existing = iframeById.get(streetsId)
+    if (existing) {
+      // Present but possibly invisible from a polluted Three.js hide copy — heal visibility
+      // ONLY. Do NOT rewrite streetsGLPosition from GPS (immutable placement anchor).
+      const wantVisible = getIframeVisible(mesh, descriptor)
+      // Presence: shell exists in iframe → Present or Hidden (not Absent/Pending).
+      setIframePresence(mesh, wantVisible ? 'present' : 'hidden', {
+        projectId: descriptor.id,
+        persistRegistry: true
+      })
+      // Heal reasserts through setIframeVisible — sole allowed visible RPC path.
+      setIframeVisible(mesh, wantVisible, {
+        projectId: descriptor.id,
+        persistRegistry: true,
+        pushToBridge: wantVisible,
+        bridge,
+        streetsGLId: streetsId
+      })
+      if (wantVisible) resynced++
+      continue
+    }
+
+    // Re-add path only: restore registry pose/anchors onto the cached mesh (city gizmo
+    // updates the registry proxy, not the cache), then seed GPS only when no anchor exists.
+    const t = descriptor.transform
+    if (t) {
+      mesh.position.set(t.position.x, t.position.y, t.position.z)
+      mesh.rotation.set(t.rotation.x, t.rotation.y, t.rotation.z)
+      mesh.scale.set(t.scale.x, t.scale.y, t.scale.z)
+    }
+    const descUd = descriptor.userData as any
+    const existingAnchor = (descUd?.streetsGLPosition ?? mesh.userData.streetsGLPosition) as
+      | { x: number; y: number; z: number }
+      | undefined
+    if (existingAnchor && typeof existingAnchor.x === 'number' && typeof existingAnchor.z === 'number') {
+      mesh.userData.streetsGLPosition = {
+        x: existingAnchor.x,
+        y: existingAnchor.y,
+        z: existingAnchor.z
+      }
+    } else if (descriptor.gps) {
       try {
         mesh.userData.streetsGLPosition = latLonToStreetsGL(
           descriptor.gps.lat,
@@ -775,22 +908,49 @@ export async function resyncRegistryObjectsAfterBridgeReload(
         /* syncModelToStreetsGL falls back to map center */
       }
     }
+    if (descUd?.streetsGLBaseTransform) {
+      mesh.userData.streetsGLBaseTransform = descUd.streetsGLBaseTransform
+    }
+    if (descUd?.streetsGLPlacementWorldPosition) {
+      mesh.userData.streetsGLPlacementWorldPosition = descUd.streetsGLPlacementWorldPosition
+    }
+
+    setIframePresence(mesh, 'pending', { projectId: descriptor.id, persistRegistry: false })
+    mesh.userData.streetsGLAdded = false
 
     try {
       await syncModelToStreetsGL(mesh, bridge)
       const ud = mesh.userData as any
+      const wantVisible = getIframeVisible(mesh, descriptor)
+      setIframePresence(mesh, wantVisible ? 'present' : 'hidden', {
+        projectId: descriptor.id,
+        persistRegistry: false
+      })
+      setIframeVisible(mesh, wantVisible, {
+        projectId: descriptor.id,
+        persistRegistry: false,
+        pushToBridge: false
+      })
       store.updateProjectObject(descriptor.id, {
         streetsGLObjectId: ud.streetsGLObjectId || streetsId,
         userData: {
           streetsGLAdded: true,
           streetsGLPending: false,
+          streetsGLIframePresence: wantVisible ? 'present' : 'hidden',
+          renderInStreetsGL: true,
+          streetsGLVisible: wantVisible,
           streetsGLPosition: ud.streetsGLPosition,
           streetsGLBaseTransform: ud.streetsGLBaseTransform,
           streetsGLPlacementWorldPosition: ud.streetsGLPlacementWorldPosition
         }
       })
+      iframeById.set(ud.streetsGLObjectId || streetsId, {
+        id: ud.streetsGLObjectId || streetsId,
+        visible: wantVisible
+      } as any)
       resynced++
     } catch (err) {
+      setIframePresence(mesh, 'absent', { projectId: descriptor.id, persistRegistry: false })
       console.warn('[StreetsGLSync] Failed to re-sync after iframe reload:', descriptor.id, err)
     }
   }
@@ -801,6 +961,9 @@ export async function resyncRegistryObjectsAfterBridgeReload(
   }
   return resynced
 }
+
+// Bind heal impl so React call sites go through ResyncCoordinator only.
+bindResyncRunner(resyncRegistryObjectsAfterBridgeReloadImpl)
 
 /** Mirror Streets GL placement (GPS, transform) from a loaded model back into the registry. */
 function mirrorImportedModelPlacementToRegistry(objectId: string, scene: THREE.Object3D): void {
@@ -837,7 +1000,11 @@ function mirrorImportedModelPlacementToRegistry(objectId: string, scene: THREE.O
 export function registerImportedModelInRegistry(
   scene: THREE.Object3D,
   fileName: string,
-  options: { fileUrl?: string; markStreetsGLPending?: boolean } = {}
+  options: {
+    fileUrl?: string
+    markStreetsGLPending?: boolean
+    preferIframeChannelDefaults?: boolean
+  } = {}
 ): string {
   const ud = scene.userData as any
   const objectId =
@@ -856,13 +1023,20 @@ export function registerImportedModelInRegistry(
         id: objectId,
         fileName,
         fileUrl: options.fileUrl,
+        preferIframeChannelDefaults: options.preferIframeChannelDefaults,
         // Pending ≠ added: reconciler must still sync if positionModelOnGround never ran.
         extraUserData: options.markStreetsGLPending ? { streetsGLPending: true } : {}
       })
     )
     store.markSceneRevision()
-  } else {
-    store.updateProjectObject(objectId, { visible: true })
+  } else if (options.preferIframeChannelDefaults) {
+    // Already registered — do not clobber an explicit user hide with visible:true.
+    const existing = store.projectObjects.find((o) => o.id === objectId)
+    const channelHidden =
+      existing?.userData?.streetsGLVisible === false || ud.streetsGLVisible === false
+    if (!channelHidden && existing?.visible === false) {
+      store.updateProjectObject(objectId, { visible: true })
+    }
   }
   return objectId
 }
@@ -1341,14 +1515,28 @@ export function syncModelToStreetsGL(model: THREE.Object3D, bridge: StreetsGLBri
   // Wait for embedded GLB/GLTF texture images before serializing materials for the iframe.
   await StreetsGLBridge.ensureTexturesReady(model)
 
+  // Establish iframe visibility channel BEFORE serialize so city/hybrid Three.js hide
+  // (visible=false) is never copied into the bridge payload.
+  const modelUd = model.userData as any
+  const projectId = (modelUd.projectObjectId as string | undefined) || objectId
+  const descriptor = store.projectObjects.find((o) => o.id === projectId)
+  ensureStreetsGLIframeVisibilityChannel(model, descriptor, {
+    markRenderable:
+      store.streetsGLIframeOverlay ||
+      modelUd.renderInStreetsGL === true ||
+      descriptor?.userData?.renderInStreetsGL === true
+  })
+
   // Convert Three.js object to Streets GL format (use consistent ID)
   let streetsGLObject = StreetsGLBridge.fromThreeJSObject(model, objectId)
 
-  const modelUd = model.userData as any
+  // Always resolve iframe visibility from the mesh channel (never raw Three.js hide).
+  streetsGLObject.visible = resolveIframeVisibleForBridge(model, descriptor)
   if (modelUd.renderInStreetsGL === true && model.visible === false) {
-    console.log('[StreetsGLSync] Model hidden in Three.js viewer; forcing Streets GL visible=true:', {
+    console.log('[StreetsGLSync] Model hidden in Three.js viewer; Streets GL uses streetsGLVisible channel:', {
       objectId,
-      name: model.name || modelUd.fileName
+      name: model.name || modelUd.fileName,
+      streetsGLVisible: streetsGLObject.visible
     })
   }
 
@@ -1507,8 +1695,9 @@ function syncObjectToStreetsGLInternal(
     bridge.updateObject(objectId, {
       position: streetsGLObject.position,
       rotation: streetsGLObject.rotation,
-      scale: streetsGLObject.scale,
-      visible: getStreetsGLVisibleFromObject(model)
+      scale: streetsGLObject.scale
+      // Phase 0: pose-only on update path. Visibility belongs to add payload /
+      // setIframeVisible / resync heal — never reintroduce polluted visible:false here.
     }).then((success) => {
       if (success) {
         streetsGLDebugLog('[StreetsGLSync] ✅ Object successfully updated in Streets GL:', objectId)
@@ -1516,6 +1705,10 @@ function syncObjectToStreetsGLInternal(
       } else {
         // Iframe may have reloaded and dropped objects — fall back to add.
         console.warn('[StreetsGLSync] Update failed (object missing in iframe?) — re-adding:', objectId)
+        setIframePresence(model, 'absent', {
+          projectId: (model.userData.projectObjectId as string | undefined) || objectId,
+          persistRegistry: false
+        })
         model.userData.streetsGLAdded = false
         syncObjectToStreetsGLInternal(model, bridge, streetsGLObject, objectId, false, resolve, reject)
       }
@@ -1548,6 +1741,11 @@ function syncObjectToStreetsGLInternal(
       if (result.success || result.queued) {
         model.userData.streetsGLObjectId = objectId
         model.userData.streetsGLAdded = true
+        const wantVisible = getIframeVisible(model)
+        setIframePresence(model, wantVisible ? 'present' : 'hidden', {
+          projectId: (model.userData.projectObjectId as string | undefined) || objectId,
+          persistRegistry: false
+        })
         streetsGLDebugLog(
           result.queued
             ? '[StreetsGLSync] ⏳ Model queued for Streets GL (will flush on ready):'
@@ -1561,6 +1759,10 @@ function syncObjectToStreetsGLInternal(
         if (model.userData.streetsGLObjectId === objectId) {
           delete model.userData.streetsGLObjectId
         }
+        setIframePresence(model, 'absent', {
+          projectId: (model.userData.projectObjectId as string | undefined) || objectId,
+          persistRegistry: false
+        })
         const vertexCount = streetsGLObject.geometry?.positions?.length
           ? Math.floor(streetsGLObject.geometry.positions.length / 3)
           : 0

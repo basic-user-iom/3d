@@ -6,6 +6,7 @@
 import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { simpleDecimation } from './geometryRepair'
+import { resolveIframeVisibleForBridge } from '../viewer/streetsGLIframeVisibility'
 
 const isStreetsGLDebugEnabled = (): boolean =>
   typeof window !== 'undefined' && (window as any).__streetsGLDebug === true
@@ -914,13 +915,8 @@ export class StreetsGLBridge {
       },
       // City/hybrid paths hide the Three.js root (visible=false) while still expecting
       // Streets GL rendering — do not propagate that flag to the iframe object.
-      visible: (() => {
-        const ud = threeObject.userData || {}
-        if (ud.renderInStreetsGL === true) {
-          return ud.streetsGLVisible !== false
-        }
-        return threeObject.visible !== false
-      })(),
+      // Visibility: mesh streetsGLVisible channel only (see streetsGLIframeVisibility.ts).
+      visible: resolveIframeVisibleForBridge(threeObject),
       color: primaryPart?.color ?? material?.color,
       parts: parts.length > 0 ? parts : undefined,
       metadata: {

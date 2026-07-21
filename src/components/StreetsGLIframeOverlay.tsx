@@ -9,7 +9,7 @@ import { useEffect, useRef } from 'react'
 import { StreetsGLBridge } from '../utils/streetsGLBridge'
 import { shouldLoadStreetsGLIframe } from '../utils/streetsGLIframeLifecycle'
 import { useAppStore } from '../store/useAppStore'
-import { resyncRegistryObjectsAfterBridgeReload } from '../viewer/useViewer'
+import { requestRegistryResync } from '../viewer/useViewer'
 
 const STREETS_GL_ALT_URL = 'http://localhost:8081'
 
@@ -170,15 +170,16 @@ export function StreetsGLIframeOverlay({
 
           // Always re-sync ObjectRegistry → ExternalObjectBridge after any iframe restart
           // (manual reload key, ground change remount, or unexpected WebGL recovery).
-          // ObjectRegistryReconciler also does this when the store bridge changes; calling
-          // here covers the race where city-mode models exist only in the registry/cache
-          // (not as Three.js scene children with isModel).
+          // This overlay owns bridge-ready / iframe-reload triggers; mode-enter is owned
+          // by ObjectRegistryReconciler. ResyncCoordinator coalesces overlapping calls.
           const bridge = streetsGLBridgeRef.current
           if (bridge) {
-            void resyncRegistryObjectsAfterBridgeReload(bridge)
+            const reason =
+              streetsGLIframeReloadKey > 0 ? 'iframe-reload' : 'bridge-ready'
+            void requestRegistryResync(bridge, reason)
               .then((n) => {
                 if (n > 0) {
-                  console.log(`[StreetsGLIframe] Re-synced ${n} registry object(s) after bridge ready`)
+                  console.log(`[StreetsGLIframe] Re-synced ${n} registry object(s) after ${reason}`)
                 }
               })
               .catch((err) => {

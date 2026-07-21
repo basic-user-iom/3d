@@ -236,14 +236,16 @@ export function CityTransformOverlay() {
       return
     }
 
+    // Transform sync updates projectObjects / sceneRevision while dragging. Re-attaching
+    // TransformControls mid-drag resets internal pointer state and breaks the gizmo.
+    if (isDraggingRef.current) return
+
     const projectId = (selectedObject.userData as any).projectObjectId as string | undefined
     const descriptor = projectId
       ? projectObjects.find((p) => p.id === projectId)
       : undefined
 
-    if (!isDraggingRef.current) {
-      syncManipulatorFromProxy(selectedObject, manipulator, descriptor)
-    }
+    syncManipulatorFromProxy(selectedObject, manipulator, descriptor)
 
     transformControls.setMode(transformMode)
     try {

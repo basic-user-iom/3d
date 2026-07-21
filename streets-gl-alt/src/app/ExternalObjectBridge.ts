@@ -221,6 +221,21 @@ export class ExternalObjectBridge {
     try {
       this.debugLog('[ExternalObjectBridge] Adding object:', data)
 
+      // Replace any prior shell with the same id (concurrent resync / re-add races).
+      // Leaving the old object parented while overwriting the map caused orphan meshes
+      // and empty containers fighting for the same logical id.
+      const prior = this.externalObjects.get(data.id)
+      if (prior) {
+        try {
+          if (prior.parent) {
+            prior.parent.remove(prior)
+          }
+        } catch (e) {
+          console.warn('[ExternalObjectBridge] Failed to remove prior object before re-add:', data.id, e)
+        }
+        this.externalObjects.delete(data.id)
+      }
+
       if (data.position) {
         const { x, y, z } = data.position
         if (

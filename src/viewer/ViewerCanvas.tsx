@@ -52,7 +52,7 @@ import { ToneMappingType } from './postprocessing/ToneMappingShader'
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js'
 import { ShadowMapViewer } from 'three/addons/utils/ShadowMapViewer.js'
 import type { DirectionalLightConfig, LightType } from '../store/useAppStore'
-import { disposeTexturesFromMaterial, syncModelToStreetsGL, clearSharedViewer, computeStreetsGLPositionFromObject, STREETS_GL_OBJECT_SCALE, syncProjectObjectTransformToStreetsGL, isObjectInSceneGraph, safeAttachTransformControls } from './useViewer'
+import { disposeTexturesFromMaterial, syncModelToStreetsGL, clearSharedViewer, computeStreetsGLPositionFromObject, STREETS_GL_OBJECT_SCALE, syncProjectObjectTransformToStreetsGL, isObjectInSceneGraph, safeAttachTransformControls, setIframeVisible, getIframeVisible, getIframePresence, ensureStreetsGLIframeVisibilityChannel } from './useViewer'
 import { runShadowDiagnostics } from '../utils/shadowDiagnostics'
 import { autoFixShadowIssues } from '../utils/shadowAutoFixer'
 import { shadowOpacityModifierRegistry } from './materials/ShadowOpacityModifierRegistry'
@@ -9211,6 +9211,8 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
       )
       // Hide all models in main scene (they will be rendered in Streets GL)
       // BUT: Keep primitives and Gaussian splats visible (splats cannot be rendered in Streets GL)
+      const bridge = useAppStore.getState().streetsGLBridge
+      const reassertedIds = new Set<string>()
       scene.traverse((obj) => {
         if (obj.userData.excludeFromStreetsGLHiding || obj.userData.isGaussianSplatViewer) {
           obj.visible = true
@@ -9222,8 +9224,34 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
             obj.visible = true
             obj.userData.renderInStreetsGL = true // Still sync to Streets GL
           } else {
+            // Ownership: Three.js product-hide; Streets GL draws via ExternalObjectBridge.
+            // Visibility ONLY via setIframeVisible; pose via transform sync (pose-only).
             obj.visible = false
             obj.userData.renderInStreetsGL = true
+          }
+          // Open/respect the mesh streetsGLVisible channel. Do not invent show when user hid.
+          // Heal pushes only for objects already Present/Hidden in the iframe (flash-hide fix);
+          // Absent objects are re-added by ResyncCoordinator — no competing visible writer here.
+          const projectId = obj.userData.projectObjectId as string | undefined
+          const streetsId = (obj.userData.streetsGLObjectId || projectId) as string | undefined
+          ensureStreetsGLIframeVisibilityChannel(obj, undefined, { markRenderable: true })
+          const wantVisible = getIframeVisible(obj)
+          const presence = getIframePresence(obj)
+          const inIframe = presence === 'present' || presence === 'hidden'
+          if (wantVisible && inIframe) {
+            const shouldPush =
+              !!bridge?.isReady &&
+              !!streetsId &&
+              !reassertedIds.has(streetsId) &&
+              (obj.userData.isModel === true || !!obj.userData.streetsGLObjectId)
+            if (streetsId && shouldPush) reassertedIds.add(streetsId)
+            setIframeVisible(obj, true, {
+              projectId,
+              persistRegistry: !!projectId,
+              pushToBridge: shouldPush,
+              bridge: shouldPush ? bridge : undefined,
+              streetsGLId: streetsId
+            })
           }
         }
         // Force hide grid helper, axes helper, and shadow plane - they should not overlay Streets GL

@@ -31,4 +31,22 @@ describe('descriptorFromImportedModel (city/hybrid hide)', () => {
     expect(descriptor.visible).toBe(false)
     expect(descriptor.userData?.renderInStreetsGL).toBeUndefined()
   })
+
+  it('preferIframeChannelDefaults ignores Three.js product-hide', () => {
+    const scene = new THREE.Object3D()
+    scene.name = 'Car'
+    scene.visible = false
+    scene.userData.isModel = true
+
+    const descriptor = descriptorFromImportedModel(scene, {
+      id: 'obj-3',
+      fileName: 'car.glb',
+      preferIframeChannelDefaults: true
+    })
+
+    expect(descriptor.visible).toBe(true)
+    expect(descriptor.userData?.renderInStreetsGL).toBe(true)
+    expect(descriptor.userData?.streetsGLVisible).toBe(true)
+    expect(descriptor.userData?.streetsGLIframePresence).toBe('absent')
+  })
 })
