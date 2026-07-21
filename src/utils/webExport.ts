@@ -21,6 +21,11 @@ import { getCameraBoundsClampSource } from '../viewer/utils/cameraBounds'
 import { ExportWorkerPool } from './webExportWorker'
 import { generateHotspotMarkerRuntimeJs } from './hotspotMarkerRuntime'
 import { generateWebExportWeatherRuntimeJs, webExportIsSunLightConfig } from './webExportWeatherRuntime'
+import {
+  encodeJsonForScriptTag,
+  escapeHtmlAttr,
+  escapeHtmlText
+} from './hotspotContentSafety'
 
 export interface WebExportOptions {
   includeModel: boolean
@@ -460,35 +465,31 @@ export function createStandaloneViewerHTML(
     cameraViews: safeCameraViews
   }
   
-  // Build config string - if config is provided, merge presentation settings on top
-  // CRITICAL: Ensure configString is always valid JSON to prevent syntax errors
-  let configString: string
+  // Build config payload - if config is provided, merge presentation settings on top.
+  // Encode for safe embedding inside <script> (blocks </script> breakouts, etc.).
+  let configPayload: unknown = presentationConfig
   try {
     if (config) {
-      configString = JSON.stringify({
+      configPayload = {
         ...config,
         ...presentationConfig,
         // Prefer explicit cameraViews already on config when present
         cameraViews: Array.isArray(config.cameraViews) ? config.cameraViews : safeCameraViews
-      }, null, 2)
-    } else {
-      configString = JSON.stringify(presentationConfig, null, 2)
-    }
-    // Ensure configString is not empty or undefined
-    if (!configString || configString.trim() === '') {
-      configString = JSON.stringify(presentationConfig, null, 2)
+      }
     }
   } catch (error) {
-    console.error('[WebExport] Error stringifying config:', error)
-    // Fallback to minimal valid config
-    configString = JSON.stringify(presentationConfig, null, 2)
+    console.error('[WebExport] Error preparing config:', error)
+    configPayload = presentationConfig
   }
+  const configString = encodeJsonForScriptTag(configPayload)
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com blob:; style-src 'unsafe-inline'; img-src data: blob: https: http:; media-src data: blob: https: http:; connect-src data: blob: https: http:; font-src data: https:; frame-src https: http:; worker-src blob:; child-src blob:; object-src 'none'; base-uri 'none'">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -511,6 +512,96 @@ export function createStandaloneViewerHTML(
       width: 100vw;
       height: 100vh;
       position: relative;
+    }
+
+    .yt-hotspot-overlay-root {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .yt-hotspot-overlay-root.is-open {
+      pointer-events: auto;
+    }
+    .yt-hotspot-overlay-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .yt-hotspot-overlay-shell {
+      position: relative;
+      z-index: 1;
+      width: min(92vw, 960px);
+      max-height: 90vh;
+      background: rgba(18, 18, 22, 0.98);
+      border: 2px solid #00AAFF;
+      border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .yt-hotspot-overlay-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.35);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .yt-hotspot-overlay-header h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .yt-hotspot-overlay-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .yt-hotspot-overlay-actions button {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid rgba(74, 158, 255, 0.7);
+      background: rgba(0, 0, 0, 0.65);
+      color: #9fd0ff;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .yt-hotspot-overlay-actions button.close-btn {
+      border-color: rgba(255, 80, 80, 0.8);
+      color: #fff;
+      background: rgba(180, 0, 0, 0.75);
+    }
+    .yt-hotspot-overlay-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+    }
+    .yt-hotspot-overlay-frame iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+    .yt-hotspot-overlay-shell:fullscreen,
+    .yt-hotspot-overlay-shell:-webkit-full-screen {
+      width: 100vw;
+      max-height: 100vh;
+      border-radius: 0;
     }
     
     #canvas {
@@ -1237,13 +1328,15 @@ export function createStandaloneViewerHTML(
       </div>
       <div class="camera-views-list" id="camera-views-list" style="min-width: ${safeCameraViews.length * 132}px;">
         ${safeCameraViews.map((view, index) => {
-          const viewNameEscaped = (view.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-          const thumbnailUrl = thumbnails.get(view.id) || '';
+          const viewName = escapeHtmlText(view.name || '')
+          const viewNameAttr = escapeHtmlAttr(view.name || '')
+          const viewIdAttr = escapeHtmlAttr(view.id || '')
+          const thumbnailUrl = escapeHtmlAttr(thumbnails.get(view.id) || '')
           return `
-          <div class="camera-view-item" data-view-id="${view.id}" data-index="${index}">
-            <img src="${thumbnailUrl}" alt="${viewNameEscaped}" class="camera-view-thumbnail" onerror="this.style.display='none'; this.parentElement.innerHTML='<div style=\\'padding:20px;text-align:center;color:#888;\\'>📹<br>' + '${viewNameEscaped}' + '</div>'">
+          <div class="camera-view-item" data-view-id="${viewIdAttr}" data-index="${index}">
+            <img src="${thumbnailUrl}" alt="${viewNameAttr}" class="camera-view-thumbnail" onerror="this.style.display='none'">
             <div class="camera-view-number">${index + 1}</div>
-            <div class="camera-view-name">${view.name || ''}</div>
+            <div class="camera-view-name">${viewName}</div>
           </div>
         `;
         }).join('')}
@@ -1610,16 +1703,22 @@ export function createStandaloneViewerHTML(
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10000);
     
-    // Initialize CSS3D renderer for YouTube videos
+    // Initialize CSS3D renderer for YouTube videos (above the WebGL canvas)
     const css3dRenderer = new CSS3DRenderer();
     css3dRenderer.setSize(window.innerWidth, window.innerHeight);
     css3dRenderer.domElement.style.position = 'absolute';
     css3dRenderer.domElement.style.top = '0';
     css3dRenderer.domElement.style.left = '0';
+    css3dRenderer.domElement.style.width = '100%';
+    css3dRenderer.domElement.style.height = '100%';
     css3dRenderer.domElement.style.pointerEvents = 'none';
-    css3dRenderer.domElement.style.zIndex = '21';
-    css3dRenderer.domElement.style.overflow = 'hidden';
+    css3dRenderer.domElement.style.zIndex = '40';
+    css3dRenderer.domElement.style.overflow = 'visible';
     document.getElementById('viewer-container').appendChild(css3dRenderer.domElement);
+    // Keep WebGL canvas under the CSS3D layer
+    canvas.style.position = 'absolute';
+    canvas.style.inset = '0';
+    canvas.style.zIndex = '1';
     
     // Controls
     const controls = new OrbitControls(camera, canvas);
@@ -2627,16 +2726,19 @@ export function createStandaloneViewerHTML(
       percentageEl.textContent = Math.round(overallProgress) + '%';
     }
     
-    // Helper function to extract YouTube video ID
+    // Helper function to extract YouTube video ID (matches editor hotspotUtils)
     function extractYouTubeId(url) {
       if (!url) return null;
+      const trimmed = String(url).trim();
+      if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
       const patterns = [
-        new RegExp('(?:youtube\\.com/watch\\?v=|youtu\\.be/|youtube\\.com/embed/)([^&\\n?#]+)'),
-        new RegExp('youtube\\.com/watch\\?.*v=([^&\\n?#]+)'),
-        new RegExp('youtu\\.be/([^?\\n#]+)')
+        new RegExp('(?:youtube\\.com/watch\\?v=|youtu\\.be/|youtube\\.com/embed/|youtube\\.com/live/)([a-zA-Z0-9_-]{11})'),
+        new RegExp('youtube\\.com/watch\\?.*v=([a-zA-Z0-9_-]{11})'),
+        new RegExp('youtube\\.com/live/([a-zA-Z0-9_-]{11})'),
+        new RegExp('youtube\\.com/shorts/([a-zA-Z0-9_-]{11})')
       ];
       for (const pattern of patterns) {
-        const match = url.match(pattern);
+        const match = trimmed.match(pattern);
         if (match && match[1]) return match[1];
       }
       return null;
@@ -2698,36 +2800,318 @@ export function createStandaloneViewerHTML(
       const q = computeBillboardQuaternion(anchorPosition, cameraPosition);
       return { x: q.x, y: q.y, z: q.z, w: q.w };
     }
+
+    function isDomElement(el) {
+      return !!(el && typeof el === 'object' && el.nodeType === 1 && el.style);
+    }
+
+    function setDomVisibility(el, visible) {
+      if (!isDomElement(el)) return;
+      el.style.display = visible ? 'block' : 'none';
+      el.style.visibility = visible ? 'visible' : 'hidden';
+      el.style.opacity = visible ? '1' : '0';
+    }
+
+    // YouTube in preview/online uses a reliable HTML overlay (CSS3D is fragile with GLB leftovers).
+    const youtubeOverlays = new Map();
+
+    function setHotspotLineVisible(scene, hotspotId, visible) {
+      scene.traverse((obj) => {
+        if (obj.userData && obj.userData.isHotspotLine && obj.userData.hotspotId === hotspotId) {
+          obj.visible = visible;
+        }
+      });
+    }
+
+    function removeStaleHotspotPanels(scene, hotspotId) {
+      const toRemove = [];
+      scene.traverse((obj) => {
+        if (!obj.userData) return;
+        if (obj.userData.hotspotId !== hotspotId) return;
+        if (!obj.userData.isHotspotPanel) return;
+        // Keep only runtime-created panels; drop GLB leftovers / broken CSS3D shells.
+        const hasLiveDom = isDomElement(obj.userData.divElement) || isDomElement(obj.element);
+        const hasCanvas = !!obj.userData.canvas;
+        if (obj.userData.isCSS3DPanel || obj.userData.isYouTubeHtmlOverlay || (!hasLiveDom && !hasCanvas)) {
+          toRemove.push(obj);
+        }
+      });
+      toRemove.forEach((obj) => {
+        try {
+          const div = isDomElement(obj.userData.divElement) ? obj.userData.divElement
+            : (isDomElement(obj.element) ? obj.element : null);
+          if (div && div.parentNode) div.parentNode.removeChild(div);
+        } catch (_) {}
+        if (obj.parent) obj.parent.remove(obj);
+      });
+      return toRemove.length;
+    }
+
+    function findInWorldYouTubeIframe(scene, hotspotId) {
+      if (!scene) return null;
+      let found = null;
+      scene.traverse((obj) => {
+        if (found) return;
+        if (obj.userData && obj.userData.isCSS3DPanel && obj.userData.hotspotId === hotspotId) {
+          const iframe = obj.userData.iframeElement;
+          if (iframe) found = iframe;
+        }
+      });
+      return found;
+    }
+
+    function youtubeEmbedSrcWithoutAutoplay(src) {
+      try {
+        const u = new URL(src);
+        u.searchParams.delete('autoplay');
+        u.searchParams.delete('mute');
+        return u.toString();
+      } catch (_) {
+        return String(src || '')
+          .replace(/([?&])autoplay=1&?/g, '$1')
+          .replace(/([?&])mute=1&?/g, '$1')
+          .replace(/[?&]$/, '');
+      }
+    }
+
+    /** Stop in-world CSS3D YouTube so overlay does not dual-play audio. */
+    function pauseInWorldYouTube(scene, hotspotId) {
+      const iframe = findInWorldYouTubeIframe(scene, hotspotId);
+      if (!iframe) return;
+      const current = iframe.src || '';
+      if (current && current !== 'about:blank' && !iframe.dataset.baseSrc) {
+        iframe.dataset.baseSrc = current;
+      }
+      try { iframe.src = 'about:blank'; } catch (_) { iframe.src = ''; }
+    }
+
+    /** Restore in-world panel after overlay closes (paused, no autoplay). */
+    function resumeInWorldYouTube(scene, hotspotId) {
+      const iframe = findInWorldYouTubeIframe(scene, hotspotId);
+      if (!iframe || !iframe.dataset.baseSrc) return;
+      applyYouTubeIframeEmbedFlags(iframe);
+      iframe.src = youtubeEmbedSrcWithoutAutoplay(iframe.dataset.baseSrc);
+    }
+
+    function closeYouTubeOverlay(hotspotId, scene) {
+      const entry = youtubeOverlays.get(hotspotId);
+      if (!entry) return;
+      entry.root.classList.remove('is-open');
+      entry.root.style.display = 'none';
+      entry.isOpen = false;
+      // Stop overlay player so it cannot keep audio after close.
+      if (entry.iframe) {
+        const base = entry.iframe.dataset.baseSrc || entry.iframe.src;
+        try { entry.iframe.src = 'about:blank'; } catch (_) { entry.iframe.src = ''; }
+        entry.iframe.dataset.baseSrc = base;
+      }
+      if (scene) {
+        resumeInWorldYouTube(scene, hotspotId);
+        setHotspotLineVisible(scene, hotspotId, true);
+        scene.traverse((obj) => {
+          if (obj.userData && obj.userData.isYouTubeHtmlOverlay && obj.userData.hotspotId === hotspotId) {
+            obj.userData.isVisible = false;
+          }
+        });
+      }
+      console.log('[WebExport] Closed YouTube overlay:', hotspotId);
+    }
+
+    function openYouTubeOverlay(hotspotId, scene) {
+      const entry = youtubeOverlays.get(hotspotId);
+      if (!entry) return false;
+      // Pause in-world CSS3D first so only the overlay plays.
+      pauseInWorldYouTube(scene, hotspotId);
+      entry.root.style.display = 'flex';
+      entry.root.classList.add('is-open');
+      entry.isOpen = true;
+      if (entry.iframe && entry.iframe.dataset.baseSrc) {
+        const base = entry.iframe.dataset.baseSrc;
+        const joiner = base.includes('?') ? '&' : '?';
+        applyYouTubeIframeEmbedFlags(entry.iframe);
+        entry.iframe.src = base + joiner + 'autoplay=1&mute=1';
+      }
+      if (scene) {
+        setHotspotLineVisible(scene, hotspotId, false);
+        scene.traverse((obj) => {
+          if (obj.userData && obj.userData.isYouTubeHtmlOverlay && obj.userData.hotspotId === hotspotId) {
+            obj.userData.isVisible = true;
+          }
+        });
+      }
+      console.log('[WebExport] Opened YouTube overlay:', hotspotId);
+      return true;
+    }
+
+    function buildYouTubeEmbedSrc(videoId, siParam, autoplay) {
+      const params = new URLSearchParams({
+        controls: '1',
+        rel: '0',
+        modestbranding: '1',
+        playsinline: '1',
+        enablejsapi: '1'
+      });
+      if (siParam) params.set('si', siParam);
+      if (autoplay) {
+        params.set('autoplay', '1');
+        params.set('mute', '1');
+      }
+      try {
+        if (typeof location !== 'undefined' && location.protocol && location.protocol.indexOf('http') === 0) {
+          params.set('origin', location.origin);
+        }
+      } catch (_) {}
+      // nocookie reduces Error 153 in strict embed environments
+      return 'https://www.youtube-nocookie.com/embed/' + videoId + '?' + params.toString();
+    }
+
+    /** Lift COEP iframe embedding rules when parent still has COEP (e.g. blob: fallback). */
+    function applyYouTubeIframeEmbedFlags(iframe) {
+      try {
+        iframe.credentialless = true;
+      } catch (_) {}
+      try {
+        iframe.setAttribute('credentialless', '');
+      } catch (_) {}
+    }
+
+    function createYouTubeHtmlOverlay(hotspot, contentData, scene) {
+      const videoId = extractYouTubeId(contentData);
+      if (!videoId) {
+        console.warn('[WebExport] Could not extract YouTube video ID from:', contentData);
+        return null;
+      }
+      const existing = youtubeOverlays.get(hotspot.id);
+      if (existing && existing.root && existing.root.parentNode) {
+        existing.scene = scene;
+        return existing;
+      }
+      if (existing) {
+        youtubeOverlays.delete(hotspot.id);
+      }
+
+      const siParam = extractYouTubeSi(contentData) || '';
+      const baseSrc = buildYouTubeEmbedSrc(videoId, siParam, false);
+
+      const root = document.createElement('div');
+      root.className = 'yt-hotspot-overlay-root';
+      root.style.display = 'none';
+      root.setAttribute('data-hotspot-id', hotspot.id);
+      root.setAttribute('role', 'dialog');
+      root.setAttribute('aria-modal', 'true');
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'yt-hotspot-overlay-backdrop';
+
+      const shell = document.createElement('div');
+      shell.className = 'yt-hotspot-overlay-shell';
+
+      const header = document.createElement('div');
+      header.className = 'yt-hotspot-overlay-header';
+      const title = document.createElement('h3');
+      title.textContent = hotspot.name || (hotspot.label && hotspot.label.text) || 'Video';
+      const actions = document.createElement('div');
+      actions.className = 'yt-hotspot-overlay-actions';
+
+      const fsBtn = document.createElement('button');
+      fsBtn.type = 'button';
+      fsBtn.title = 'Fullscreen';
+      fsBtn.textContent = '⛶';
+      fsBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          if (document.fullscreenElement) await document.exitFullscreen();
+          else await shell.requestFullscreen();
+        } catch (err) {
+          console.warn('[WebExport] Fullscreen failed:', err);
+        }
+      });
+
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'close-btn';
+      closeBtn.title = 'Close';
+      closeBtn.textContent = '✕';
+
+      const frame = document.createElement('div');
+      frame.className = 'yt-hotspot-overlay-frame';
+      const iframe = document.createElement('iframe');
+      applyYouTubeIframeEmbedFlags(iframe);
+      iframe.src = baseSrc;
+      iframe.dataset.baseSrc = baseSrc;
+      iframe.title = hotspot.name || 'YouTube video player';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+      iframe.setAttribute('allowfullscreen', '');
+
+      actions.appendChild(fsBtn);
+      actions.appendChild(closeBtn);
+      header.appendChild(title);
+      header.appendChild(actions);
+      frame.appendChild(iframe);
+      shell.appendChild(header);
+      shell.appendChild(frame);
+      root.appendChild(backdrop);
+      root.appendChild(shell);
+      document.body.appendChild(root);
+
+      const entry = { root, shell, iframe, isOpen: false, hotspotId: hotspot.id, scene: scene };
+      youtubeOverlays.set(hotspot.id, entry);
+
+      const doClose = (e) => {
+        if (e) e.stopPropagation();
+        const live = youtubeOverlays.get(hotspot.id);
+        closeYouTubeOverlay(hotspot.id, (live && live.scene) ? live.scene : scene);
+      };
+      closeBtn.addEventListener('click', doClose);
+      backdrop.addEventListener('click', doClose);
+
+      return entry;
+    }
     
     // Create hotspot panel (matches main 3D viewer implementation)
     function createHotspotPanel(hotspot, position, scene) {
-      // DUPLICATE PREVENTION: Check if panel already exists for this hotspot
+      const contentType = hotspot.content && hotspot.content.type;
+      const contentData = hotspot.content && hotspot.content.data;
+      // YouTube must always start visible in preview/online.
+      const isOpen = contentType === 'youtube' ? true : ((hotspot.panelState || 'closed') === 'open');
+
+      // Drop GLB leftover / broken CSS3D shells before creating a live panel
+      if (contentType === 'youtube') {
+        removeStaleHotspotPanels(scene, hotspot.id);
+      }
+
+      // If a live panel already exists for non-YouTube, skip duplicate creation.
       let existingPanel = null;
       scene.traverse((obj) => {
-        if (obj.userData.hotspotId === hotspot.id && obj.userData.isHotspotPanel) {
-          existingPanel = obj;
+        if (obj.userData.hotspotId === hotspot.id && obj.userData.isHotspotPanel && !obj.userData.isYouTubeHtmlOverlay) {
+          if (obj.userData.canvas || isDomElement(obj.userData.divElement) || isDomElement(obj.element)) {
+            existingPanel = obj;
+          }
         }
       });
       
       if (existingPanel) {
-        console.log('[WebExport] Panel already exists for hotspot:', hotspot.id, '- skipping duplicate creation');
+        if (contentType === 'youtube') {
+          existingPanel.visible = true;
+          existingPanel.userData.isVisible = true;
+          setDomVisibility(existingPanel.userData.divElement || existingPanel.element, true);
+          setHotspotLineVisible(scene, hotspot.id, false);
+          console.log('[WebExport] Reusing existing YouTube CSS3D panel:', hotspot.id);
+        } else {
+          console.log('[WebExport] Panel already exists for hotspot:', hotspot.id, '- skipping duplicate creation');
+        }
         return;
       }
       
-      // Check panelState - only create visible panel if state is 'open', otherwise create hidden panel
-      const panelState = hotspot.panelState || 'closed'; // Default to closed (matches main viewer)
-      const isOpen = panelState === 'open';
-      
-      console.log('[WebExport] Creating panel for hotspot:', hotspot.id, 'type:', (hotspot.content && hotspot.content.type) || 'unknown', 'panelState:', panelState, 'isOpen:', isOpen);
-        const contentType = hotspot.content.type;
-        const contentData = hotspot.content.data;
+      console.log('[WebExport] Creating panel for hotspot:', hotspot.id, 'type:', contentType || 'unknown', 'isOpen:', isOpen);
         const panelConfig = hotspot.panelDimensions || {};
         const panelWidthPixels = panelConfig.widthPixels || null;
         const panelHeightPixels = panelConfig.heightPixels || null;
         
         // Get formatting settings (matches main viewer)
-        const formatting = hotspot.content.formatting || {};
-        const popupSettings = hotspot.content.popupSettings || {};
+        const formatting = (hotspot.content && hotspot.content.formatting) || {};
+        const popupSettings = (hotspot.content && hotspot.content.popupSettings) || {};
         const fontSize = formatting.fontSize || 16;
         const fontFamily = formatting.fontFamily || 'Arial, sans-serif';
         const textColor = formatting.color || '#ffffff';
@@ -2740,54 +3124,46 @@ export function createStandaloneViewerHTML(
           ? formatting.backgroundColor 
           : (popupSettings.backgroundColor || 'rgba(25, 25, 30, 0.98)');
         const borderRadius = popupSettings.borderRadius || 12;
-        const borderWidth = hotspot.panelBorder?.width || 2;
-        const borderColor = hotspot.panelBorder?.color || '#00AAFF';
+        const borderWidth = (hotspot.panelBorder && hotspot.panelBorder.width) || 2;
+        const borderColor = (hotspot.panelBorder && hotspot.panelBorder.color) || '#00AAFF';
         const maxWidth = popupSettings.maxWidth || 300;
         const maxHeight = popupSettings.maxHeight || 400;
       
       // Position panel below marker (matches main viewer: -1.2 units below)
       const panelPosition = position.clone().add(new THREE.Vector3(0, -1.2, 0));
       
-      // For YouTube videos, use CSS3D panel (matches main 3D viewer implementation)
+      // For YouTube videos, use in-world CSS3D hotspot panel (not a centered modal)
       if (contentType === 'youtube' && contentData) {
         const videoId = extractYouTubeId(contentData);
-        const siParam = extractYouTubeSi(contentData) || 'TRivzqXJKfnNdTo6';
+        const siParam = extractYouTubeSi(contentData) || '';
         
         if (videoId) {
-          // Calculate panel dimensions (matches main viewer CSS3D panel logic)
           const videoMaxWidth = popupSettings.maxWidth || 400;
-          const videoMaxHeight = popupSettings.maxHeight || 600;
           const videoPadding = padding;
           
           let panelWidth, panelHeight, videoWidth, videoHeight;
           
           if (panelWidthPixels !== null && panelWidthPixels !== undefined) {
-            // Use provided width
             panelWidth = panelWidthPixels;
             if (panelHeightPixels !== null && panelHeightPixels !== undefined) {
-              // Use provided height
               panelHeight = panelHeightPixels;
             } else {
-              // Calculate height from width using 16:9 aspect ratio
               panelHeight = (panelWidth - videoPadding * 2) / (16 / 9) + videoPadding * 2;
             }
-            // Calculate video dimensions from panel dimensions (subtract padding)
             videoWidth = panelWidth - videoPadding * 2;
             videoHeight = panelHeight - videoPadding * 2;
           } else {
-            // Calculate from defaults (3x multiplier for CSS3D panels, matches main viewer)
-            const sizeMultiplier = 3;
-            videoWidth = Math.min((videoMaxWidth * sizeMultiplier) - videoPadding * 2, 1200);
+            // Preview / online: larger default YouTube panel than the editor.
+            const sizeMultiplier = 5;
+            videoWidth = Math.min((videoMaxWidth * sizeMultiplier) - videoPadding * 2, 1600);
             videoHeight = videoWidth / (16 / 9);
             panelWidth = videoWidth + videoPadding * 2;
-            panelHeight = panelHeightPixels ?? (videoHeight + videoPadding * 2);
-            // If height was provided, recalculate video height
+            panelHeight = (panelHeightPixels != null) ? panelHeightPixels : (videoHeight + videoPadding * 2);
             if (panelHeightPixels !== null && panelHeightPixels !== undefined) {
               videoHeight = panelHeight - videoPadding * 2;
             }
           }
           
-          // Create container div (matches main viewer styling)
           const div = document.createElement('div');
           div.style.width = panelWidth + 'px';
           div.style.height = panelHeight + 'px';
@@ -2806,16 +3182,18 @@ export function createStandaloneViewerHTML(
           div.style.webkitUserSelect = 'none';
           div.setAttribute('data-css3d-panel', 'true');
           
-          // Create YouTube iframe (matches main viewer)
           const iframe = document.createElement('iframe');
           iframe.width = videoWidth;
           iframe.height = videoHeight;
-          iframe.src = 'https://www.youtube.com/embed/' + videoId + '?si=' + siParam + '&controls=1';
+          applyYouTubeIframeEmbedFlags(iframe);
+          // Keep a non-autoplay base for restore after "Play on screen" overlay closes.
+          iframe.dataset.baseSrc = buildYouTubeEmbedSrc(videoId, siParam, false);
+          iframe.src = buildYouTubeEmbedSrc(videoId, siParam, isOpen);
           iframe.title = hotspot.name || 'YouTube video player';
           iframe.setAttribute('frameborder', '0');
-          iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+          iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
           iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-          iframe.allowFullscreen = true;
+          iframe.setAttribute('allowfullscreen', '');
           iframe.style.width = '100%';
           iframe.style.height = '100%';
           iframe.style.border = 'none';
@@ -2826,7 +3204,6 @@ export function createStandaloneViewerHTML(
           iframe.style.position = 'relative';
           iframe.style.overflow = 'visible';
           
-          // Add close button for CSS3D panel
           const closeButton = document.createElement('div');
           closeButton.style.position = 'absolute';
           closeButton.style.top = '8px';
@@ -2844,11 +3221,38 @@ export function createStandaloneViewerHTML(
           closeButton.style.fontSize = '16px';
           closeButton.style.fontWeight = 'bold';
           closeButton.style.lineHeight = '1';
+          closeButton.style.pointerEvents = 'auto';
           closeButton.textContent = '×';
           closeButton.title = 'Close panel';
           closeButton.setAttribute('data-hotspot-id', hotspot.id);
+
+          const screenButton = document.createElement('div');
+          screenButton.style.position = 'absolute';
+          screenButton.style.top = '8px';
+          screenButton.style.right = '40px';
+          screenButton.style.width = '24px';
+          screenButton.style.height = '24px';
+          screenButton.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+          screenButton.style.border = '1px solid rgba(74, 158, 255, 0.8)';
+          screenButton.style.borderRadius = '50%';
+          screenButton.style.display = 'flex';
+          screenButton.style.alignItems = 'center';
+          screenButton.style.justifyContent = 'center';
+          screenButton.style.cursor = 'pointer';
+          screenButton.style.zIndex = '1000';
+          screenButton.style.color = '#9fd0ff';
+          screenButton.style.fontSize = '12px';
+          screenButton.style.fontWeight = 'bold';
+          screenButton.style.lineHeight = '1';
+          screenButton.style.pointerEvents = 'auto';
+          screenButton.textContent = '⛶';
+          screenButton.title = 'Play on screen';
+          screenButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            createYouTubeHtmlOverlay(hotspot, contentData, scene);
+            openYouTubeOverlay(hotspot.id, scene);
+          });
           
-          // Add hover effect
           closeButton.addEventListener('mouseenter', () => {
             closeButton.style.backgroundColor = 'rgba(255, 0, 0, 0.9)';
           });
@@ -2856,46 +3260,35 @@ export function createStandaloneViewerHTML(
             closeButton.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
           });
           
-          // Add click handler to close panel
+          // Create CSS3D object first so close handler can reference it
+          const css3dObject = new CSS3DObject(div);
+          css3dObject.position.copy(panelPosition);
+          
           closeButton.addEventListener('click', (e) => {
             e.stopPropagation();
             css3dObject.visible = false;
             css3dObject.userData.isVisible = false;
-            renderer.render(scene, camera);
+            setDomVisibility(div, false);
+            setHotspotLineVisible(scene, hotspot.id, true);
+            if (typeof renderer !== 'undefined' && renderer) renderer.render(scene, camera);
             if (css3dRenderer) css3dRenderer.render(scene, camera);
             console.log('[WebExport] Closed CSS3D panel for hotspot:', hotspot.id);
           });
           
           div.appendChild(iframe);
+          div.appendChild(screenButton);
           div.appendChild(closeButton);
           
-          // Create CSS3D object
-          const css3dObject = new CSS3DObject(div);
-          css3dObject.position.copy(panelPosition);
-          
-          // CSS3D scale calculation (matches main viewer)
-          // Target height in 3D units (increased to 2.0 for better visibility)
-          const targetHeight3DUnits = 2.0;
+          const targetHeight3DUnits = 3.2;
           let scale = targetHeight3DUnits / panelHeight;
-          
-          // Ensure minimum scale for very large panels
-          const minHeight3DUnits = 1.5;
+          const minHeight3DUnits = 2.4;
           const minScale = minHeight3DUnits / panelHeight;
-          if (scale < minScale) {
-            scale = minScale;
-          }
-          
-          // Cap maximum scale
-          const maxHeight3DUnits = 3.0;
+          if (scale < minScale) scale = minScale;
+          const maxHeight3DUnits = 4.5;
           const maxScale = maxHeight3DUnits / panelHeight;
-          if (scale > maxScale) {
-            scale = maxScale;
-          }
-          
-          // Use uniform scale to maintain aspect ratio
+          if (scale > maxScale) scale = maxScale;
           css3dObject.scale.set(scale, scale, 1);
           
-          // Store metadata (matches main viewer)
           css3dObject.userData.isCSS3DPanel = true;
           css3dObject.userData.isHotspotPanel = true;
           css3dObject.userData.hotspotId = hotspot.id;
@@ -2907,24 +3300,23 @@ export function createStandaloneViewerHTML(
           css3dObject.userData.actualHeight = panelHeight;
           css3dObject.userData.divElement = div;
           css3dObject.userData.iframeElement = iframe;
-          css3dObject.userData.isVisible = isOpen; // Track panel visibility (matches main viewer panelState)
-          css3dObject.userData.closeButton = closeButton; // Store close button reference
+          css3dObject.userData.isVisible = isOpen;
+          css3dObject.userData.closeButton = closeButton;
           
-          // Set visibility based on panelState (matches main viewer)
           css3dObject.visible = isOpen;
-          if (!isOpen) {
-            div.style.display = 'none'; // Hide the DOM element for CSS3D
-          }
+          setDomVisibility(div, isOpen);
+          if (isOpen) setHotspotLineVisible(scene, hotspot.id, false);
           
           scene.add(css3dObject);
-          if (hotspot.faceCamera !== false) {
-            if (typeof camera !== 'undefined' && camera) {
-              css3dObject.lookAt(camera.position);
+          // Face camera immediately (CSS3D billboards copy camera quaternion each frame)
+          if (typeof camera !== 'undefined' && camera) {
+            if (hotspot.faceCamera !== false) {
+              css3dObject.quaternion.copy(camera.quaternion);
+            } else {
+              applyHotspotFrozenOrientation(css3dObject, hotspot.frozenRotation, css3dObject.position, camera.position);
             }
-          } else if (typeof camera !== 'undefined' && camera) {
-            applyHotspotFrozenOrientation(css3dObject, hotspot.frozenRotation, css3dObject.position, camera.position);
           }
-          console.log('[WebExport] Created CSS3D panel for YouTube video:', hotspot.id, 'videoId:', videoId, 'visible:', isOpen);
+          console.log('[WebExport] Created CSS3D hotspot panel for YouTube:', hotspot.id, 'videoId:', videoId, 'visible:', isOpen);
         } else {
           console.warn('[WebExport] Could not extract YouTube video ID from:', contentData);
         }
@@ -6863,6 +7255,26 @@ export function createStandaloneViewerHTML(
           if (CONFIG.hotspots && Array.isArray(CONFIG.hotspots) && CONFIG.hotspots.length > 0) {
             console.log('[WebExport] Initializing', CONFIG.hotspots.length, 'hotspots');
             initializeHotspots(CONFIG.hotspots, scene, camera, renderer);
+            // Force in-world YouTube CSS3D hotspot panels visible (not a centered modal).
+            scene.traverse((obj) => {
+              if (obj.userData && obj.userData.isCSS3DPanel && obj.userData.isHotspotPanel) {
+                obj.visible = true;
+                obj.userData.isVisible = true;
+                setDomVisibility(obj.userData.divElement || obj.element, true);
+                if (obj.userData.hotspotId) setHotspotLineVisible(scene, obj.userData.hotspotId, false);
+                console.log('[WebExport] Forced CSS3D hotspot panel visible:', obj.userData.hotspotId);
+              }
+            });
+            // Cache must include panels created above — rebuild after functions are defined
+            setTimeout(() => {
+              if (typeof window !== 'undefined' && typeof window.__rebuildCSS3DCache === 'function') {
+                window.__rebuildCSS3DCache();
+                console.log('[WebExport] Rebuilt CSS3D cache after hotspot init');
+              }
+            }, 0);
+            if (css3dRenderer) {
+              css3dRenderer.render(scene, camera);
+            }
           }
           
           // Setup hotspot panel click handling (X button and label clicks)
@@ -6875,14 +7287,32 @@ export function createStandaloneViewerHTML(
             
             panel.userData.isVisible = isVisible;
             panel.visible = isVisible;
-            
-            // For CSS3D panels, also update the DOM element visibility
-            if (panel.userData.isCSS3DPanel && panel.userData.divElement) {
-              panel.userData.divElement.style.display = isVisible ? 'block' : 'none';
+
+            if (panel.userData.isYouTubeHtmlOverlay) {
+              if (isVisible) openYouTubeOverlay(panel.userData.hotspotId, scene);
+              else closeYouTubeOverlay(panel.userData.hotspotId, scene);
+              return;
             }
             
-            // For canvas panels, we could regenerate texture, but for now just toggle visibility
-            // The X button is always drawn, clicking it just hides the panel
+            // For CSS3D panels, also update the DOM element visibility
+            if (panel.userData.isCSS3DPanel) {
+              setDomVisibility(panel.userData.divElement, isVisible);
+            } else if (panel.material) {
+              // For canvas panels, update material opacity
+              if (Array.isArray(panel.material)) {
+                panel.material.forEach(mat => {
+                  if (mat) {
+                    mat.opacity = isVisible ? 0.95 : 0;
+                    mat.transparent = true;
+                    mat.needsUpdate = true;
+                  }
+                });
+              } else {
+                panel.material.opacity = isVisible ? 0.95 : 0;
+                panel.material.transparent = true;
+                panel.material.needsUpdate = true;
+              }
+            }
           }
           
           // Function to handle mouse clicks
@@ -6905,18 +7335,19 @@ export function createStandaloneViewerHTML(
               
               // Check if clicked on label (to open panel)
               if (obj.userData.isHotspotLabel && obj.userData.canClickToOpen) {
-                // Find the panel for this hotspot (both canvas and CSS3D panels)
+                // Prefer in-world CSS3D / canvas hotspot panel
+                let opened = false;
                 scene.traverse((panel) => {
-                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId) {
+                  if (opened) return;
+                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId && !panel.userData.isYouTubeHtmlOverlay) {
                     if (!panel.userData.isVisible) {
                       updatePanelVisibility(panel, true);
-                      // For CSS3D panels, also update the DOM element visibility
-                      if (panel.userData.isCSS3DPanel && panel.userData.divElement) {
-                        panel.userData.divElement.style.display = 'block';
-                      }
+                      setDomVisibility(panel.userData.divElement || panel.element, true);
+                      if (panel.userData.isCSS3DPanel) setHotspotLineVisible(scene, hotspotId, false);
                       renderer.render(scene, camera);
                       if (css3dRenderer) css3dRenderer.render(scene, camera);
                       console.log('[WebExport] Opened panel for hotspot via label click:', hotspotId);
+                      opened = true;
                     }
                   }
                 });
@@ -6926,19 +7357,18 @@ export function createStandaloneViewerHTML(
               
               // Check if clicked on hotspot marker/icon (to open panel)
               if (obj.userData.isHotspot || obj.userData.isHotspotHelper) {
-                // Find the panel for this hotspot (both canvas and CSS3D panels)
+                let toggled = false;
                 scene.traverse((panel) => {
-                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId) {
-                    // Toggle panel visibility
+                  if (toggled) return;
+                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId && !panel.userData.isYouTubeHtmlOverlay) {
                     const newVisibility = !panel.userData.isVisible;
                     updatePanelVisibility(panel, newVisibility);
-                    // For CSS3D panels, also update the DOM element visibility
-                    if (panel.userData.isCSS3DPanel && panel.userData.divElement) {
-                      panel.userData.divElement.style.display = newVisibility ? 'block' : 'none';
-                    }
+                    setDomVisibility(panel.userData.divElement || panel.element, newVisibility);
+                    if (panel.userData.isCSS3DPanel) setHotspotLineVisible(scene, hotspotId, !newVisibility);
                     renderer.render(scene, camera);
                     if (css3dRenderer) css3dRenderer.render(scene, camera);
                     console.log('[WebExport] Toggled panel for hotspot via icon click:', hotspotId, 'visible:', newVisibility);
+                    toggled = true;
                   }
                 });
                 event.stopPropagation();
@@ -7041,6 +7471,7 @@ export function createStandaloneViewerHTML(
             }
           });
         }
+        window.__rebuildCSS3DCache = rebuildCSS3DCache;
         
         // MATCH WORKING EXPORT: Start render loop AFTER model loads and loading overlay is hidden
         // CRITICAL: Must run continuously to prevent black screen
@@ -7096,16 +7527,13 @@ export function createStandaloneViewerHTML(
               }
             });
             
-            // PERFORMANCE: Update CSS3D panels (more expensive, so throttled)
+            // PERFORMANCE: Update CSS3D panels — match camera rotation so they face the viewer like labels
             css3dPanels.forEach((panel) => {
               try {
-                if (panel.userData.isBillboard && panel.visible) {
-                  // Check if panel is roughly in view (simple distance check)
-                  const distance = camera.position.distanceTo(panel.position);
-                  // Only update if panel is within reasonable distance (100 units)
-                  if (distance < 100) {
-                    panel.lookAt(camera.position);
-                  }
+                if (!panel.visible) return;
+                // Always billboard YouTube/CSS3D panels toward the camera (same behavior as Sprite labels)
+                if (panel.userData.isBillboard !== false) {
+                  panel.quaternion.copy(camera.quaternion);
                 }
               } catch (e) {
                 // Silently handle errors
@@ -7117,10 +7545,7 @@ export function createStandaloneViewerHTML(
             canvasPanels.forEach((panel) => {
               try {
                 if (panel.userData.isBillboard && panel.visible) {
-                  const distance = camera.position.distanceTo(panel.position);
-                  if (distance < 100) {
-                    panel.lookAt(camera.position);
-                  }
+                  panel.lookAt(camera.position);
                 }
               } catch (e) {
                 // Silently handle errors
@@ -7128,19 +7553,9 @@ export function createStandaloneViewerHTML(
             });
           }
           
-          // PERFORMANCE: Only render CSS3D if there are visible panels
+          // PERFORMANCE: Always render CSS3D when panels exist (visibility is handled per-object)
           if (css3dRenderer && css3dPanels.size > 0) {
-            // Quick check if any CSS3D panel is visible
-            let hasVisiblePanel = false;
-            for (const panel of css3dPanels) {
-              if (panel.visible) {
-                hasVisiblePanel = true;
-                break;
-              }
-            }
-            if (hasVisiblePanel) {
             css3dRenderer.render(scene, camera);
-            }
           }
           
           frameCount++; // DEBUG: Increment frame count
@@ -7933,6 +8348,10 @@ export function createStandaloneViewerHTML(
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height);
+          if (css3dRenderer) {
+            css3dRenderer.setSize(width, height);
+            css3dRenderer.render(scene, camera);
+          }
           renderer.render(scene, camera);
         }
         window.addEventListener('resize', handleResize);
@@ -8680,53 +9099,91 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
   // The cache clearing script above ensures fresh state on each preview
   console.log('[WebExport] Preview HTML prepared with cache clearing, export timestamp:', exportTimestamp);
   
-  // Create blob and open in new browser tab (not popup)
-  // OPTIMIZATION: Use requestIdleCallback or setTimeout to avoid blocking UI
-  const openPreview = () => {
+  // Open via localhost HTTP preview WITHOUT COEP (YouTube blocked under COEP;
+  // blob: also inherits parent COEP and triggers Error 153 / sad-file icon).
+  const openPreview = async () => {
     try {
       const htmlBlob = new Blob([htmlWithBlobUrls], { type: 'text/html' })
-      const htmlUrl = URL.createObjectURL(htmlBlob)
-      
-      // Open in new tab with unique name to prevent reusing old window
       const previewWindowName = `web-export-preview-${Date.now()}`
+      let previewUrl = ''
+      let usedLocalhost = false
+
+      // Prefer same-origin Vite preview host: valid HTTP Referer + no COEP on that path.
+      const isHttpOrigin = typeof window !== 'undefined'
+        && (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+      if (isHttpOrigin) {
+        const publishUrl = new URL('/__web-export-preview/publish', window.location.origin).toString()
+        let lastPublishError: unknown = null
+        for (let attempt = 0; attempt < 2 && !usedLocalhost; attempt++) {
+          try {
+            const response = await fetch(publishUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/html; charset=utf-8' },
+              body: htmlWithBlobUrls
+            })
+            if (response.ok) {
+              previewUrl = new URL('/__web-export-preview/', window.location.origin).toString()
+              usedLocalhost = true
+              console.log('[WebExport] Preview hosted on localhost (no COEP) for YouTube embeds:', previewUrl)
+            } else {
+              lastPublishError = new Error(`publish HTTP ${response.status}`)
+              console.warn('[WebExport] Localhost preview publish failed:', response.status)
+            }
+          } catch (publishError) {
+            lastPublishError = publishError
+            console.warn('[WebExport] Localhost preview publish attempt failed:', publishError)
+          }
+        }
+        // Do NOT fall back to blob: on http(s) — blob inherits the app's COEP and blocks YouTube.
+        if (!usedLocalhost) {
+          throw new Error(
+            'Web-export preview requires the Vite /__web-export-preview/ host (no COEP). ' +
+            'Restart the Vite dev server and try Preview again. ' +
+            (lastPublishError instanceof Error ? lastPublishError.message : '')
+          )
+        }
+      } else {
+        // Non-http origins (e.g. file:) cannot use the Vite preview route.
+        // Blob inherits creator COEP; YouTube iframes use credentialless attr as mitigation.
+        previewUrl = URL.createObjectURL(htmlBlob)
+        console.warn(
+          '[WebExport] Preview using blob: URL (non-http origin). YouTube may still fail if the opener has COEP; prefer http://localhost Vite preview.'
+        )
+      }
+
       let previewWindow: Window | null = null
-      
       try {
-        previewWindow = window.open(htmlUrl, previewWindowName)
+        previewWindow = window.open(previewUrl, previewWindowName)
       } catch (e) {
         console.warn('[WebExport] window.open failed, trying alternative method:', e)
       }
-      
-      // Focus the new window/tab
+
       if (previewWindow && !previewWindow.closed) {
         try {
           previewWindow.focus()
         } catch (e) {
-          // Ignore focus errors (may fail if window is blocked)
+          // Ignore focus errors
         }
       } else {
-        // Window was blocked by popup blocker - try alternative method
-        // Create a link and click it programmatically
         const link = document.createElement('a')
-        link.href = htmlUrl
+        link.href = previewUrl
         link.target = '_blank'
         link.rel = 'noopener noreferrer'
         link.style.display = 'none'
         document.body.appendChild(link)
         link.click()
-        // Remove link after a short delay to allow click to process
         setTimeout(() => {
           document.body.removeChild(link)
         }, 100)
       }
-      
-      // Clean up URLs when window closes (non-blocking)
+
       const cleanup = () => {
         try {
-          URL.revokeObjectURL(htmlUrl)
+          if (!usedLocalhost) {
+            URL.revokeObjectURL(previewUrl)
+          }
           if (modelBlobUrl) URL.revokeObjectURL(modelBlobUrl)
           if (hdrBlobUrl) URL.revokeObjectURL(hdrBlobUrl)
-          // Clean up thumbnail blob URLs
           for (const blobUrl of thumbnailBlobUrls.values()) {
             URL.revokeObjectURL(blobUrl)
           }
@@ -8734,9 +9191,8 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
           console.warn('[WebExport] Cleanup error (non-critical):', e)
         }
       }
-      
+
       if (previewWindow && !previewWindow.closed) {
-        // Try to detect when window closes (non-blocking)
         const checkClosed = setInterval(() => {
           try {
             if (previewWindow.closed) {
@@ -8744,30 +9200,26 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
               cleanup()
             }
           } catch (e) {
-            // Window may be cross-origin, cleanup anyway
             clearInterval(checkClosed)
             cleanup()
           }
         }, 1000)
-        
-        // Also cleanup after 5 minutes as fallback
+
         setTimeout(() => {
           clearInterval(checkClosed)
           cleanup()
         }, 5 * 60 * 1000)
       } else {
-        // Cleanup after a delay (user should have opened the tab)
-        setTimeout(cleanup, 2000);
+        setTimeout(cleanup, 2000)
       }
     } catch (error) {
       console.error('[WebExport] Failed to open preview window:', error)
       throw error
     }
   }
-  
+
   // OPTIMIZATION: Use setTimeout to avoid blocking the UI thread
-  // This ensures the preview opens even if the export process was heavy
-  setTimeout(openPreview, 0)
+  setTimeout(() => { void openPreview() }, 0)
   } catch (error) {
     console.error('Preview export error:', error)
     throw new Error(`Preview failed: ${error instanceof Error ? error.message : 'Unknown error'}`)

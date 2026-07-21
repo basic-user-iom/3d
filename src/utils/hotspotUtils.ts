@@ -453,3 +453,80 @@ export function extractYouTubeSi(input: string): string | null {
   return null
 }
 
+/**
+ * Mark a YouTube iframe as credentialless so it can load under parent COEP
+ * (Vite sets Cross-Origin-Embedder-Policy: credentialless for SharedArrayBuffer).
+ * Must be applied before assigning src when possible.
+ */
+export function applyYouTubeIframeEmbedFlags(iframe: HTMLIFrameElement): void {
+  try {
+    ;(iframe as HTMLIFrameElement & { credentialless?: boolean }).credentialless = true
+  } catch {
+    // ignore unsupported browsers
+  }
+  try {
+    iframe.setAttribute('credentialless', '')
+  } catch {
+    // ignore
+  }
+}
+
+/** Strip autoplay/mute so a restored in-world embed stays paused. */
+export function youtubeEmbedSrcWithoutAutoplay(src: string): string {
+  try {
+    const url = new URL(src)
+    url.searchParams.delete('autoplay')
+    url.searchParams.delete('mute')
+    return url.toString()
+  } catch {
+    return src
+      .replace(/([?&])autoplay=1&?/g, '$1')
+      .replace(/([?&])mute=1&?/g, '$1')
+      .replace(/[?&]$/, '')
+      .replace(/\?&/, '?')
+  }
+}
+
+/**
+ * Pause in-world CSS3D YouTube iframes (clear src) so a screen overlay
+ * cannot play at the same time. Optionally scope to one hotspotId.
+ */
+export function pauseInWorldYouTubeIframes(
+  scene: THREE.Object3D,
+  hotspotId?: string
+): void {
+  scene.traverse((obj) => {
+    if (!obj.userData?.isCSS3DPanel) return
+    if (hotspotId && obj.userData.hotspotId !== hotspotId) return
+    const iframe = obj.userData.iframeElement as HTMLIFrameElement | undefined
+    if (!iframe) return
+    const current = iframe.src || ''
+    if (current && current !== 'about:blank' && !iframe.dataset.baseSrc) {
+      iframe.dataset.baseSrc = current
+    }
+    try {
+      iframe.src = 'about:blank'
+    } catch {
+      iframe.src = ''
+    }
+  })
+}
+
+/**
+ * Restore in-world CSS3D YouTube iframes after the screen overlay closes.
+ * Reloads without autoplay so audio stays off until the user presses play.
+ */
+export function resumeInWorldYouTubeIframes(
+  scene: THREE.Object3D,
+  hotspotId?: string
+): void {
+  scene.traverse((obj) => {
+    if (!obj.userData?.isCSS3DPanel) return
+    if (hotspotId && obj.userData.hotspotId !== hotspotId) return
+    const iframe = obj.userData.iframeElement as HTMLIFrameElement | undefined
+    if (!iframe?.dataset.baseSrc) return
+    applyYouTubeIframeEmbedFlags(iframe)
+    iframe.src = youtubeEmbedSrcWithoutAutoplay(iframe.dataset.baseSrc)
+  })
+}
+

@@ -506,8 +506,6 @@ export interface AppState {
   hdrBackgroundVisible: boolean
   hdrLoading: boolean
   hdrLoadProgress: number
-  replicateApiKey: string | null
-  setReplicateApiKey: (key: string | null) => void
   
   // Camera Views
   cameraViews: CameraView[]
@@ -1087,8 +1085,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     hdrBackgroundVisible: true,
     hdrLoading: false,
     hdrLoadProgress: 0,
-    replicateApiKey: (import.meta.env.VITE_REPLICATE_API_TOKEN ?? '').trim() || null,
-    
     // Camera Views defaults
   cameraViews: [],
   showCameraViewsPanel: false,
@@ -2329,11 +2325,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setHdrBackgroundVisible: (visible) => set({ hdrBackgroundVisible: visible }),
   setHdrLoading: (loading) => set({ hdrLoading: loading }),
   setHdrLoadProgress: (progress) => set({ hdrLoadProgress: progress }),
-  setReplicateApiKey: (key) =>
-    set({
-      replicateApiKey: key ? key.trim() || null : null
-    }),
-  
   // Camera Views actions
       addCameraView: (view) => {
         const id = `view-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`

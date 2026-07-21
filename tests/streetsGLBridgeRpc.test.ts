@@ -4,6 +4,7 @@ import { StreetsGLBridge } from '../src/utils/streetsGLBridge'
 function makeIframe(): HTMLIFrameElement {
   const postMessage = vi.fn()
   return {
+    src: 'http://localhost:8081/?sgb=0123456789abcdef0123456789abcdef&parent=http%3A%2F%2Flocalhost%3A3000',
     contentWindow: { postMessage }
   } as unknown as HTMLIFrameElement
 }

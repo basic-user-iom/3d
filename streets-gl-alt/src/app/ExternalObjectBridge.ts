@@ -21,6 +21,16 @@ import ControlsSystem from './systems/ControlsSystem'
 import TerrainSystem from './systems/TerrainSystem'
 import TileObjectsSystem from './systems/TileObjectsSystem'
 import Tile from './objects/Tile'
+import {
+  STREETS_GL_BRIDGE_MAX_HIDDEN_BUILDINGS,
+  envelopeHasCapability,
+  isAllowedParentOrigin,
+  parseBridgeEnvelope,
+  readCapabilityFromLocation,
+  readParentOriginFromLocation,
+  validateExternalObjectGeometry,
+  validateSyncObjectsPayload
+} from './bridgeSecurity'
 
 const isBridgeDebugEnabled = (): boolean =>
   typeof window !== 'undefined' && (window as any).__streetsGLDebug === true
@@ -62,6 +72,11 @@ export class ExternalObjectBridge {
   private static readonly EXTERNAL_PICKING_ID_BASE = 0x7f000000
   private nextPickingId: number = ExternalObjectBridge.EXTERNAL_PICKING_ID_BASE
   private pickingSelectionWired: boolean = false
+  /** Per-session capability from iframe URL (?sgb=...). Required on every parent message. */
+  private readonly capability: string | null
+  /** Exact parent origin for postMessage replies. */
+  private readonly parentOrigin: string | null
+  private trustedParentSource: MessageEventSource | null = null
 
   private debugLog(...args: unknown[]): void {
     if (isBridgeDebugEnabled()) {
@@ -71,6 +86,13 @@ export class ExternalObjectBridge {
 
   constructor(systemManager: SystemManager) {
     this.systemManager = systemManager
+    this.capability = readCapabilityFromLocation(window.location.search)
+    this.parentOrigin = readParentOriginFromLocation(window.location.search)
+    if (!this.capability || !this.parentOrigin) {
+      console.warn(
+        '[ExternalObjectBridge] Missing bridge capability or parent origin in URL — bridge will ignore messages until reloaded with secure params'
+      )
+    }
     this.init()
   }
 
@@ -102,15 +124,33 @@ export class ExternalObjectBridge {
   private setupMessageListener(): void {
     window.addEventListener('message', (event) => {
       try {
-        // Security: In production, check event.origin === 'http://localhost:3000'
-        if (!event.data || typeof event.data !== 'object') return
+        // SEC-5: exact parent origin + source + capability; reject before geometry alloc
+        if (!this.capability || !this.parentOrigin) return
+        if (!isAllowedParentOrigin(event.origin) || event.origin !== this.parentOrigin) return
+        if (event.source !== window.parent) return
 
-        const { type, payload } = event.data
+        const envelope = parseBridgeEnvelope(event.data)
+        if (!envelope) return
+        if (!envelopeHasCapability(envelope, this.capability)) return
+
+        this.trustedParentSource = event.source
+
+        const { type, payload } = envelope
 
         switch (type) {
-        case 'STREETS_GL_ADD_OBJECT':
-          this.handleAddObject(payload)
+        case 'STREETS_GL_ADD_OBJECT': {
+          const validation = validateExternalObjectGeometry(payload)
+          if (!validation.ok) {
+            this.sendResponse('STREETS_GL_OBJECT_ADDED', {
+              success: false,
+              error: validation.error || 'Invalid geometry payload',
+              objectId: (payload as { id?: string } | null)?.id
+            })
+            return
+          }
+          this.handleAddObject(payload as ExternalObject)
           break
+        }
         case 'STREETS_GL_UPDATE_OBJECT':
           this.handleUpdateObject(payload)
           break
@@ -132,15 +172,33 @@ export class ExternalObjectBridge {
         case 'STREETS_GL_SHOW_BUILDING':
           this.handleShowBuilding(payload)
           break
-        case 'STREETS_GL_SYNC_HIDDEN_BUILDINGS':
+        case 'STREETS_GL_SYNC_HIDDEN_BUILDINGS': {
+          const ids = (payload as { buildingIds?: unknown } | null)?.buildingIds
+          if (Array.isArray(ids) && ids.length > STREETS_GL_BRIDGE_MAX_HIDDEN_BUILDINGS) {
+            this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS_SYNCED', {
+              success: false,
+              error: `Too many hidden buildings (${ids.length})`
+            })
+            return
+          }
           this.handleSyncHiddenBuildings(payload)
           break
+        }
         case 'STREETS_GL_GET_HIDDEN_BUILDINGS':
           this.handleGetHiddenBuildings()
           break
-        case 'STREETS_GL_SYNC_OBJECTS':
+        case 'STREETS_GL_SYNC_OBJECTS': {
+          const validation = validateSyncObjectsPayload(payload)
+          if (!validation.ok) {
+            this.sendResponse('STREETS_GL_OBJECTS_SYNCED', {
+              success: false,
+              error: validation.error || 'Invalid sync payload'
+            })
+            return
+          }
           this.handleSyncObjects(payload)
           break
+        }
         case 'STREETS_GL_SET_SHADOW_QUALITY':
           this.handleSetShadowQuality(payload)
           break
@@ -157,19 +215,16 @@ export class ExternalObjectBridge {
           this.handleNavigateTo(payload)
           break
         default:
-          // Unknown message type - log but don't error; ignore webpack HMR messages
-          if (type && !type.startsWith('STREETS_GL_') && type !== 'webpackInvalid' && type !== 'webpackOk') {
-            console.warn('[ExternalObjectBridge] Unknown message type:', type)
-          }
+          // Unknown STREETS_GL_* type — ignore quietly
           break
       }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error'
         console.error('[ExternalObjectBridge] ❌ Error handling message:', {
-          type: event.data?.type,
+          type: (event.data as { type?: string } | null)?.type,
           error: errorMsg,
           stack: error instanceof Error ? error.stack : undefined,
-          payload: event.data?.payload
+          payload: (event.data as { payload?: unknown } | null)?.payload
         })
       }
     })
@@ -197,12 +252,20 @@ export class ExternalObjectBridge {
 
   private notifyParentReady(): void {
     this.ensurePickingSelectionWired()
+    if (!this.capability || !this.parentOrigin) {
+      console.warn('[ExternalObjectBridge] Skipping BRIDGE_READY — missing capability/parent origin')
+      return
+    }
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type: 'STREETS_GL_BRIDGE_READY',
-        ready: true,
-        timestamp: Date.now()
-      }, '*') // In production, specify exact origin: 'http://localhost:3000'
+      window.parent.postMessage(
+        {
+          type: 'STREETS_GL_BRIDGE_READY',
+          ready: true,
+          capability: this.capability,
+          timestamp: Date.now()
+        },
+        this.parentOrigin
+      )
       this.debugLog('[ExternalObjectBridge] Notified parent that bridge is ready')
     }
   }
@@ -1405,12 +1468,18 @@ export class ExternalObjectBridge {
   }
 
   private sendResponse(type: string, payload: any): void {
+    if (!this.capability || !this.parentOrigin) return
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type,
-        payload,
-        timestamp: Date.now()
-      }, '*') // In production, specify exact origin
+      const target = this.trustedParentSource || window.parent
+      ;(target as Window).postMessage(
+        {
+          type,
+          payload,
+          capability: this.capability,
+          timestamp: Date.now()
+        },
+        this.parentOrigin
+      )
     }
   }
 }

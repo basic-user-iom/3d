@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js'
-import { extractYouTubeId, extractYouTubeSi } from './hotspotUtils'
+import { applyYouTubeIframeEmbedFlags, extractYouTubeId, extractYouTubeSi } from './hotspotUtils'
 import { useAppStore } from '../store/useAppStore'
 
 // Video manager to handle video element lifecycle and frame updates
@@ -94,6 +94,8 @@ export interface Hotspot3DPanelConfig {
   labelBorderRadius?: number // Label border radius (default: 6)
   panelWidthPixels?: number | null // Panel width in pixels (null = auto based on content)
   panelHeightPixels?: number | null // Panel height in pixels (null = auto based on content)
+  /** Prefer mesh thumbnail (overlay mode) instead of live CSS3D iframe. */
+  videoDisplayMode?: 'in-world' | 'overlay'
 }
 
 /**
@@ -1274,8 +1276,8 @@ export function createHotspotCSS3DPanel(
   const iframe = document.createElement('iframe')
   iframe.width = `${videoWidth}`
   iframe.height = `${videoHeight}`
-  // Add controls=1 to ensure YouTube controls are always visible
-  iframe.src = `https://www.youtube.com/embed/${videoId}?si=${siParam}&controls=1`
+  // COEP credentialless on the parent blocks non-CORP embeds unless the iframe is credentialless.
+  applyYouTubeIframeEmbedFlags(iframe)
   iframe.title = title || 'YouTube video player'
   iframe.setAttribute('frameborder', '0')
   iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
@@ -1292,9 +1294,74 @@ export function createHotspotCSS3DPanel(
   iframe.style.position = 'relative' // Ensure proper positioning
   // Ensure iframe is not clipped and can show all controls
   iframe.style.overflow = 'visible'
+  // Set src after credentialless so the first navigation is not blocked by COEP.
+  const embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?si=${siParam}&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(typeof location !== 'undefined' ? location.origin : '')}`
+  iframe.dataset.baseSrc = embedSrc
+  iframe.src = embedSrc
   
   div.appendChild(iframe)
-  
+
+  // Toolbar: play-on-screen + fullscreen (pointer-events enabled; CSS3D container is none)
+  const toolbar = document.createElement('div')
+  toolbar.style.position = 'absolute'
+  toolbar.style.top = '8px'
+  toolbar.style.right = '8px'
+  toolbar.style.display = 'flex'
+  toolbar.style.gap = '6px'
+  toolbar.style.zIndex = '2'
+  toolbar.style.pointerEvents = 'auto'
+
+  const makeToolButton = (label: string, title: string) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = label
+    button.title = title
+    button.style.width = '28px'
+    button.style.height = '28px'
+    button.style.border = '1px solid rgba(74, 158, 255, 0.8)'
+    button.style.borderRadius = '6px'
+    button.style.background = 'rgba(0, 0, 0, 0.65)'
+    button.style.color = '#9fd0ff'
+    button.style.cursor = 'pointer'
+    button.style.fontSize = '14px'
+    button.style.lineHeight = '1'
+    button.style.pointerEvents = 'auto'
+    return button
+  }
+
+  const screenBtn = makeToolButton('⧉', 'Play on screen')
+  screenBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    window.dispatchEvent(
+      new CustomEvent('hotspot-youtube-overlay', {
+        detail: {
+          contentData,
+          title: title || 'Video',
+          placement: 'center',
+          autoPlay: true
+        }
+      })
+    )
+  })
+
+  const fullscreenBtn = makeToolButton('⛶', 'Fullscreen')
+  fullscreenBtn.addEventListener('click', async (e) => {
+    e.stopPropagation()
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        await div.requestFullscreen()
+      }
+    } catch (error) {
+      console.warn('[hotspot3DPanel] Fullscreen failed:', error)
+    }
+  })
+
+  toolbar.appendChild(screenBtn)
+  toolbar.appendChild(fullscreenBtn)
+  div.appendChild(toolbar)
+
   // Allow pointer events on the div and iframe, but not on the CSS3D renderer container
   // This allows YouTube controls to work while letting mouse navigation pass through elsewhere
   div.style.pointerEvents = 'auto'
@@ -1430,8 +1497,12 @@ export function createHotspot3DPanel(
   position: THREE.Vector3,
   config: Hotspot3DPanelConfig
 ): THREE.Object3D {
-  // For YouTube videos, use CSS3D panel with iframe
-  if (config.contentType === 'youtube' && config.contentData) {
+  // Live YouTube player in 3D (CSS3D). Overlay mode keeps a clickable thumbnail mesh.
+  if (
+    config.contentType === 'youtube' &&
+    config.contentData &&
+    config.videoDisplayMode !== 'overlay'
+  ) {
     return createHotspotCSS3DPanel(position, config)
   }
   

@@ -4,7 +4,7 @@ import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
-import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS, resolveHotspotIconForMarker, getHotspotIconKey, createHotspotIconTextureForType, syncHotspotMarkerAppearance } from '../utils/hotspotUtils'
+import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS, resolveHotspotIconForMarker, getHotspotIconKey, createHotspotIconTextureForType, syncHotspotMarkerAppearance, extractYouTubeId, applyYouTubeIframeEmbedFlags, pauseInWorldYouTubeIframes, resumeInWorldYouTubeIframes } from '../utils/hotspotUtils'
 import {
   createHotspotLabelObject,
   updateHotspotLabelTexture,
@@ -14,6 +14,9 @@ import {
 } from '../utils/hotspotLabel'
 import { createHotspot3DPanel, updateHotspot3DPanelTexture, updateHotspotCSS3DPanelStyle, cleanupVideoResourcesForCanvas, cleanupAllVideoResources, type Hotspot3DPanelConfig } from '../utils/hotspot3DPanel'
 import HotspotPopup from './HotspotPopup'
+import HotspotVideoOverlay, {
+  type HotspotVideoOverlayPlacement
+} from './HotspotVideoOverlay'
 import './HotspotsPanel.css'
 
 /**
@@ -21,15 +24,14 @@ import './HotspotsPanel.css'
  */
 function createHotspotLine(start: THREE.Vector3, end: THREE.Vector3): THREE.Line {
   const geometry = new THREE.BufferGeometry().setFromPoints([start, end])
-  // Modern connecting line with enhanced visual design
-  // CRITICAL: depthTest = false ensures line always renders on top, visible from all camera angles
-  // This prevents the line from disappearing when viewed from certain angles
+  // depthTest stays enabled so the line can sit behind solid panels in WebGL.
+  // YouTube CSS3D panels live in a DOM layer above the canvas, so lines never cover them.
   const material = new THREE.LineBasicMaterial({
     color: 0x4a9eff, // Modern blue color (matches UI theme)
     transparent: true,
     opacity: 0.7, // Slightly more visible for modern look
     linewidth: 2, // Slightly thicker for better visibility
-    depthTest: true, // Enable depth test so lines can be occluded by objects in front
+    depthTest: true,
     depthWrite: false, // Don't write to depth buffer (for transparency)
     polygonOffset: false
   })
@@ -77,6 +79,10 @@ export interface Hotspot {
       borderRadius?: number
       showOnClick?: boolean // Show popup on label click instead of just opening
     }
+    /** Where YouTube plays: attached in 3D, or as a screen overlay. */
+    videoDisplayMode?: 'in-world' | 'overlay'
+    /** Screen region used when videoDisplayMode is overlay. */
+    videoOverlayPlacement?: 'center' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
   }
   // Legacy support - will be migrated to panel system
   label?: {
@@ -394,6 +400,17 @@ export default function HotspotsPanel() {
     borderRadius: 8,
     showOnClick: false
   })
+  const [videoDisplayMode, setVideoDisplayMode] = useState<'in-world' | 'overlay'>('in-world')
+  const [videoOverlayPlacement, setVideoOverlayPlacement] =
+    useState<HotspotVideoOverlayPlacement>('center')
+  const [videoOverlay, setVideoOverlay] = useState<{
+    contentData: string
+    title: string
+    placement: HotspotVideoOverlayPlacement
+    autoPlay: boolean
+    hotspotId?: string
+  } | null>(null)
+  const [showInlineVideoTest, setShowInlineVideoTest] = useState(false)
   const [showFormatting, setShowFormatting] = useState(false)
   const [showPopupSettings, setShowPopupSettings] = useState(false)
   const [showPanelBorder, setShowPanelBorder] = useState(false)
@@ -591,7 +608,9 @@ export default function HotspotsPanel() {
         if (!hotspot) return prev
         
         // Check if content actually changed
-        if (hotspot.content?.data === contentData) return prev
+        if (hotspot.content?.data === contentData && hotspot.content?.type === contentType) {
+          return prev
+        }
         
         console.log('[HotspotsPanel] Real-time preview: Updating content for hotspot:', editingHotspotId)
         
@@ -600,8 +619,11 @@ export default function HotspotsPanel() {
             ? { 
                 ...h, 
                 content: { 
-                  ...h.content, 
-                  data: contentData
+                  ...h.content,
+                  type: contentType,
+                  data: contentData,
+                  videoDisplayMode,
+                  videoOverlayPlacement
                 }
               } 
             : h
@@ -610,7 +632,63 @@ export default function HotspotsPanel() {
     }, 200) // 200ms debounce for typing
     
     return () => clearTimeout(timeoutId)
-  }, [editingHotspotId, contentData])
+  }, [editingHotspotId, contentData, contentType, videoDisplayMode, videoOverlayPlacement])
+
+  // Real-time preview: sync YouTube display mode / screen placement while editing
+  useEffect(() => {
+    if (!editingHotspotId || contentType !== 'youtube') return
+    setHotspots(prev => {
+      const hotspot = prev.find(h => h.id === editingHotspotId)
+      if (!hotspot) return prev
+      if (
+        hotspot.content?.videoDisplayMode === videoDisplayMode &&
+        hotspot.content?.videoOverlayPlacement === videoOverlayPlacement
+      ) {
+        return prev
+      }
+      return prev.map(h =>
+        h.id === editingHotspotId
+          ? {
+              ...h,
+              content: {
+                ...h.content,
+                videoDisplayMode,
+                videoOverlayPlacement
+              }
+            }
+          : h
+      )
+    })
+  }, [editingHotspotId, contentType, videoDisplayMode, videoOverlayPlacement])
+
+  // Real-time preview: switching Text / Image / YouTube / etc. must update the 3D panel
+  useEffect(() => {
+    if (!editingHotspotId) return
+
+    setHotspots(prev => {
+      const hotspot = prev.find(h => h.id === editingHotspotId)
+      if (!hotspot || hotspot.content?.type === contentType) return prev
+
+      console.log('[HotspotsPanel] Real-time preview: Updating content type:', {
+        hotspotId: editingHotspotId,
+        from: hotspot.content?.type,
+        to: contentType
+      })
+
+      return prev.map(h =>
+        h.id === editingHotspotId
+          ? {
+              ...h,
+              content: {
+                ...h.content,
+                type: contentType
+              }
+            }
+          : h
+      )
+    })
+  }, [editingHotspotId, contentType])
+
   const [hoveredObject, setHoveredObject] = useState<THREE.Object3D | null>(null) // Currently hovered object for highlighting
   const clickDebounceRef = useRef<number | null>(null) // Debounce rapid clicks
   const cachedMeshesRef = useRef<THREE.Mesh[]>([]) // Cache meshes for raycasting
@@ -1557,7 +1635,8 @@ export default function HotspotsPanel() {
             labelBorderColor: effectiveLabelBorderColor,
             labelBorderRadius: effectiveLabelBorderRadius,
             panelWidthPixels: effectivePanelWidthPixels,
-            panelHeightPixels: effectivePanelHeightPixels
+            panelHeightPixels: effectivePanelHeightPixels,
+            videoDisplayMode: hotspot.content.videoDisplayMode || 'in-world'
           }
           
           console.log('[HotspotsPanel] Creating panel config for hotspot:', {
@@ -1663,7 +1742,8 @@ export default function HotspotsPanel() {
                 labelBorderColor: effectiveLabelBorderColor,
                 labelBorderRadius: effectiveLabelBorderRadius,
                 panelWidthPixels: effectivePanelWidthPixels,
-                panelHeightPixels: effectivePanelHeightPixels
+                panelHeightPixels: effectivePanelHeightPixels,
+                videoDisplayMode: hotspot.content.videoDisplayMode || 'in-world'
               }
               
               // Set icon symbol
@@ -2020,10 +2100,11 @@ export default function HotspotsPanel() {
                 positions.needsUpdate = true
               }
               
-              // CRITICAL: Ensure line material is configured for visibility
+              // Keep depth testing on so WebGL panels can occlude the line.
+              // CSS3D YouTube panels are composited above the canvas (z-index 40).
               const lineMaterial = line.material as THREE.LineBasicMaterial
-              if (lineMaterial.depthTest !== false) {
-                lineMaterial.depthTest = false
+              if (lineMaterial.depthTest !== true) {
+                lineMaterial.depthTest = true
                 lineMaterial.needsUpdate = true
               }
               // Keep renderOrder at -1 to ensure line is always behind panels
@@ -2031,6 +2112,14 @@ export default function HotspotsPanel() {
                 line.renderOrder = -1
               }
               line.frustumCulled = false
+
+              // Hide the connector while an in-world YouTube panel is open so it
+              // never visually cuts through the video frame.
+              const youtubePanelOpen =
+                hotspot.content?.type === 'youtube' &&
+                (hotspot.panelState || 'closed') === 'open' &&
+                (hotspot.content.videoDisplayMode || 'in-world') !== 'overlay'
+              line.visible = !youtubePanelOpen
               
               // Update endpoint handle position and visibility
               const endpointHandle = endpointsMap.get(hotspot.id)
@@ -2151,6 +2240,63 @@ export default function HotspotsPanel() {
       ;(window as any).__updateHotspotEndpointPosition = null
     }
   }, [hotspots, setActiveHotspot])
+
+  // Open screen YouTube player from CSS3D toolbar / panel clicks
+  useEffect(() => {
+    const onOverlayRequest = (event: Event) => {
+      const detail = (event as CustomEvent).detail as {
+        contentData?: string
+        title?: string
+        placement?: HotspotVideoOverlayPlacement
+        autoPlay?: boolean
+        hotspotId?: string
+      } | undefined
+      if (!detail?.contentData) return
+
+      let placement = detail.placement || 'center'
+      if (detail.hotspotId) {
+        const hotspot = hotspots.find((h) => h.id === detail.hotspotId)
+        if (hotspot?.content?.videoOverlayPlacement) {
+          placement = hotspot.content.videoOverlayPlacement
+        }
+      }
+
+      if (viewer?.scene) {
+        pauseInWorldYouTubeIframes(viewer.scene, detail.hotspotId)
+      }
+      setVideoOverlay({
+        contentData: detail.contentData,
+        title: detail.title || 'Video',
+        placement,
+        autoPlay: detail.autoPlay !== false,
+        hotspotId: detail.hotspotId
+      })
+    }
+
+    window.addEventListener('hotspot-youtube-overlay', onOverlayRequest as EventListener)
+    ;(window as any).__openHotspotYoutubeOverlay = (
+      contentData: string,
+      title?: string,
+      placement?: HotspotVideoOverlayPlacement,
+      hotspotId?: string
+    ) => {
+      if (viewer?.scene) {
+        pauseInWorldYouTubeIframes(viewer.scene, hotspotId)
+      }
+      setVideoOverlay({
+        contentData,
+        title: title || 'Video',
+        placement: placement || 'center',
+        autoPlay: true,
+        hotspotId
+      })
+    }
+
+    return () => {
+      window.removeEventListener('hotspot-youtube-overlay', onOverlayRequest as EventListener)
+      ;(window as any).__openHotspotYoutubeOverlay = null
+    }
+  }, [hotspots, viewer])
 
   // Persist missing frozenRotation when billboard is off so label + panel stay in sync across frames/reloads
   useEffect(() => {
@@ -2508,7 +2654,9 @@ export default function HotspotsPanel() {
               type: contentType,
               data: contentData || 'Click to edit this hotspot',
               formatting: contentType === 'text' ? textFormatting : undefined,
-              popupSettings: popupSettings
+              popupSettings: popupSettings,
+              videoDisplayMode,
+              videoOverlayPlacement
             }
           }
           console.log('[HotspotsPanel] Hotspot placed on object:', {
@@ -2987,6 +3135,8 @@ export default function HotspotsPanel() {
       borderRadius: popup?.borderRadius || 8,
       showOnClick: popup?.showOnClick || false
     })
+    setVideoDisplayMode(hotspot.content.videoDisplayMode || 'in-world')
+    setVideoOverlayPlacement(hotspot.content.videoOverlayPlacement || 'center')
     
     // Select the hotspot marker in the viewer
     const marker = hotspotMarkers.get(hotspot.id)
@@ -3047,7 +3197,9 @@ export default function HotspotsPanel() {
                 type: contentType,
                 data: contentData,
                 formatting: contentType === 'text' ? textFormatting : undefined,
-                popupSettings: popupSettings
+                popupSettings: popupSettings,
+                videoDisplayMode,
+                videoOverlayPlacement
               },
               // Preserve existing fields that shouldn't be overwritten
               position: h.position,
@@ -3231,7 +3383,9 @@ export default function HotspotsPanel() {
         type: contentType,
         data: contentData,
         formatting: contentType === 'text' ? textFormatting : undefined,
-        popupSettings: popupSettings
+        popupSettings: popupSettings,
+        videoDisplayMode,
+        videoOverlayPlacement
       }
     }
     
@@ -4289,7 +4443,13 @@ export default function HotspotsPanel() {
 
           <label>
             <span>Content Type</span>
-            <select value={contentType} onChange={(e) => setContentType(e.target.value as any)}>
+            <select
+              value={contentType}
+              onChange={(e) => {
+                setContentType(e.target.value as any)
+                setShowInlineVideoTest(false)
+              }}
+            >
               <option value="text">Text</option>
               <option value="html">HTML</option>
               <option value="image">Image</option>
@@ -4298,6 +4458,107 @@ export default function HotspotsPanel() {
               <option value="interactive">Interactive Content</option>
             </select>
           </label>
+
+          {contentType === 'youtube' && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                padding: '10px 12px',
+                background: '#222',
+                borderRadius: '6px',
+                marginBottom: '8px'
+              }}
+            >
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '12px', color: '#bbb' }}>YouTube display</span>
+                <select
+                  value={videoDisplayMode}
+                  onChange={(e) => setVideoDisplayMode(e.target.value as 'in-world' | 'overlay')}
+                >
+                  <option value="in-world">In 3D scene (on the model)</option>
+                  <option value="overlay">On screen (chosen region)</option>
+                </select>
+              </label>
+              {videoDisplayMode === 'overlay' && (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '12px', color: '#bbb' }}>Screen position</span>
+                  <select
+                    value={videoOverlayPlacement}
+                    onChange={(e) =>
+                      setVideoOverlayPlacement(e.target.value as HotspotVideoOverlayPlacement)
+                    }
+                  >
+                    <option value="center">Center</option>
+                    <option value="top-left">Top left</option>
+                    <option value="top-right">Top right</option>
+                    <option value="bottom-left">Bottom left</option>
+                    <option value="bottom-right">Bottom right</option>
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  if (!contentData) return
+                  setShowInlineVideoTest((open) => !open)
+                }}
+              >
+                {showInlineVideoTest ? '■ Hide test player' : '▶ Test screen player (fits in this panel)'}
+              </button>
+              {showInlineVideoTest && contentData && (
+                <div
+                  style={{
+                    width: '100%',
+                    maxWidth: '100%',
+                    aspectRatio: '16 / 9',
+                    background: '#000',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: '1px solid #4a9eff',
+                    position: 'relative'
+                  }}
+                >
+                  {(() => {
+                    const id = extractYouTubeId(contentData)
+                    if (!id) {
+                      return (
+                        <div style={{ padding: '12px', color: '#ffb4b4', fontSize: '12px' }}>
+                          Invalid YouTube URL or ID
+                        </div>
+                      )
+                    }
+                    const src = `https://www.youtube-nocookie.com/embed/${id}?controls=1&rel=0&modestbranding=1&playsinline=1&autoplay=1&mute=1`
+                    return (
+                      <iframe
+                        src={src}
+                        title={hotspotName || 'Video test'}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+                        allowFullScreen
+                        referrerPolicy="strict-origin-when-cross-origin"
+                        // @ts-expect-error credentialless is not yet in React's iframe typings
+                        credentialless=""
+                        ref={(el) => {
+                          if (el) applyYouTubeIframeEmbedFlags(el)
+                        }}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          border: 0,
+                          display: 'block'
+                        }}
+                      />
+                    )
+                  })()}
+                </div>
+              )}
+              <small style={{ fontSize: '11px', color: '#888' }}>
+                This test player stays inside the Hotspots panel. The 3D scene video stays small; preview/online export uses the larger player.
+              </small>
+            </div>
+          )}
 
           {/* Preview Panel Toggle - shows/hides the 3D panel for preview */}
           {editingHotspotId && (
@@ -4952,6 +5213,20 @@ export default function HotspotsPanel() {
       )}
 
       <HotspotPopup hotspot={activeHotspot} onClose={() => setActiveHotspot(null)} />
+      {videoOverlay && (
+        <HotspotVideoOverlay
+          videoUrlOrId={videoOverlay.contentData}
+          title={videoOverlay.title}
+          placement={videoOverlay.placement}
+          autoPlay={videoOverlay.autoPlay}
+          onClose={() => {
+            if (viewer?.scene) {
+              resumeInWorldYouTubeIframes(viewer.scene, videoOverlay.hotspotId)
+            }
+            setVideoOverlay(null)
+          }}
+        />
+      )}
     </div>
   )
 }

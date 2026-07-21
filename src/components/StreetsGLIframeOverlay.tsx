@@ -5,13 +5,18 @@
  * Extracted from App.tsx to improve code organization.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { StreetsGLBridge } from '../utils/streetsGLBridge'
 import { shouldLoadStreetsGLIframe } from '../utils/streetsGLIframeLifecycle'
 import { useAppStore } from '../store/useAppStore'
 import { requestRegistryResync } from '../viewer/useViewer'
+import {
+  DEFAULT_STREETS_GL_BASE_URL,
+  buildStreetsGLIframeSrc,
+  generateBridgeCapability
+} from '../utils/streetsGLBridgeSecurity'
 
-const STREETS_GL_ALT_URL = 'http://localhost:8081'
+const STREETS_GL_ALT_URL = DEFAULT_STREETS_GL_BASE_URL
 
 interface StreetsGLIframeOverlayProps {
   streetsGLIframeOverlay: boolean
@@ -38,11 +43,55 @@ export function StreetsGLIframeOverlay({
   const lastHashRef = useRef<string>('')
   // Only log iframe load diagnostics once per page session to avoid console spam
   const hasLoggedInitialLoadRef = useRef<boolean>(false)
+  const [streetsGLBaseUrl, setStreetsGLBaseUrl] = useState(STREETS_GL_ALT_URL)
 
   // Keep Streets GL loaded whenever city/hybrid overlay is on.
   // Do NOT gate on document.hidden — that previously set src to about:blank on tab
   // switch, which restarted the iframe app and dropped imported ExternalObjectBridge models.
   const shouldLoadStreetsGL = shouldLoadStreetsGLIframe(streetsGLIframeOverlay, renderMode)
+
+  // SEC-5: per-iframe-load capability; Electron may report an ephemeral Streets GL base URL.
+  const bridgeCapability = useMemo(
+    () => generateBridgeCapability(),
+    [
+      streetsGLGroundLat,
+      streetsGLGroundLon,
+      streetsGLGroundZoom,
+      streetsGLIframeReloadKey,
+      shouldLoadStreetsGL,
+      streetsGLBaseUrl
+    ]
+  )
+
+  const streetsGLIframeSrc = useMemo(() => {
+    if (!shouldLoadStreetsGL) return 'about:blank'
+    const hash = `${streetsGLGroundLat.toFixed(5)},${streetsGLGroundLon.toFixed(5)},45.00,0.00,2000.00`
+    return buildStreetsGLIframeSrc({
+      baseUrl: streetsGLBaseUrl,
+      capability: bridgeCapability,
+      parentOrigin: window.location.origin,
+      hash
+    })
+  }, [
+    shouldLoadStreetsGL,
+    streetsGLBaseUrl,
+    bridgeCapability,
+    streetsGLGroundLat,
+    streetsGLGroundLon
+  ])
+
+  useEffect(() => {
+    let cancelled = false
+    const api = typeof window !== 'undefined' ? window.electronAPI : undefined
+    if (!api?.getStreetsGLBaseUrl) return
+    void api.getStreetsGLBaseUrl().then((result) => {
+      if (cancelled || !result?.baseUrl) return
+      setStreetsGLBaseUrl(result.baseUrl)
+    }).catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Tear down bridge when overlay is off or not in City/Hybrid (iframe goes to about:blank)
   useEffect(() => {
@@ -154,7 +203,10 @@ export function StreetsGLIframeOverlay({
         })
       }
       try {
-        streetsGLBridgeRef.current = new StreetsGLBridge(streetsGLIframeRef.current)
+        streetsGLBridgeRef.current = new StreetsGLBridge(streetsGLIframeRef.current, {
+          capability: bridgeCapability,
+          targetOrigin: new URL(streetsGLBaseUrl).origin
+        })
         streetsGLBridgeRef.current.onReady(() => {
           console.log('[StreetsGLIframe] Streets GL bridge is ready - you can now add objects to Streets GL scene!')
           // Store bridge in global state for access from other components
@@ -251,12 +303,8 @@ export function StreetsGLIframeOverlay({
     >
       <iframe
         ref={streetsGLIframeRef}
-        key={`streets-gl-${streetsGLGroundLat.toFixed(5)}-${streetsGLGroundLon.toFixed(5)}-${streetsGLGroundZoom || 15}-${streetsGLIframeReloadKey}`}
-        src={
-          shouldLoadStreetsGL
-            ? `${STREETS_GL_ALT_URL}#${streetsGLGroundLat.toFixed(5)},${streetsGLGroundLon.toFixed(5)},45.00,0.00,2000.00`
-            : 'about:blank'
-        }
+        key={`streets-gl-${streetsGLGroundLat.toFixed(5)}-${streetsGLGroundLon.toFixed(5)}-${streetsGLGroundZoom || 15}-${streetsGLIframeReloadKey}-${bridgeCapability.slice(0, 8)}`}
+        src={streetsGLIframeSrc}
         style={{
           position: 'absolute',
           top: '0',

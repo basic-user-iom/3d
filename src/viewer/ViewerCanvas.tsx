@@ -36,6 +36,7 @@ import {
   restartAnimationLoopIfIdle
 } from './utils/renderLoopIdle'
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
+import { createHotspotCss3dLayer, type HotspotCss3dLayer } from './hotspotCss3dLayer'
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
 import {
@@ -325,6 +326,8 @@ export interface ViewerInstance {
   runShadowDiagnostics: () => import('../utils/shadowDiagnostics').ShadowDiagnosticReport
   /** Wake the hybrid render-on-demand loop (keyboard nav, external camera moves). */
   requestRender?: () => void
+  /** CSS3D layer for YouTube / interactive hotspot panels (above the WebGL canvas). */
+  hotspotCss3dLayer?: HotspotCss3dLayer
 }
 
 function ensureCavityOcclusionSession(viewer: ViewerInstance): { applied: boolean; userDisabled: boolean } {
@@ -634,6 +637,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     
     // Append renderer canvas to container
     containerRef.current.appendChild(renderer.domElement)
+
+    // CSS3D layer for interactive YouTube hotspot panels (above WebGL so lines stay behind video)
+    const hotspotCss3dLayer = createHotspotCss3dLayer(containerRef.current)
+    hotspotCss3dLayer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight)
 
     // Clock for animations
     clock = new THREE.Clock()
@@ -2778,7 +2785,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // Find hotspot sprites, groups, and helpers in scene (icons, labels, and helper spheres)
         const hotspotObjects: THREE.Object3D[] = []
         scene.traverse((obj) => {
-          if (obj.userData.isHotspot || obj.userData.isHotspotLabel || obj.userData.isHotspotHelper) {
+          if (
+            obj.userData.isHotspot ||
+            obj.userData.isHotspotLabel ||
+            obj.userData.isHotspotHelper ||
+            obj.userData.isHotspotPanel
+          ) {
             hotspotObjects.push(obj)
           }
           // Also check for hotspot groups
@@ -2897,27 +2909,66 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                 })
                 
                 useAppStore.getState().setSelectedObject(objectForTransform)
-                // Also open popup if clicking
-                if (setActiveHotspot) {
+                // Do not open a large editor popup for YouTube — play stays on the
+                // in-world panel (or explicit screen-overlay mode). Bigger playback
+                // is for web preview / online export.
+                if (hotspot.content?.type !== 'youtube' && setActiveHotspot) {
                   setActiveHotspot(hotspot)
                 }
                 console.log('[ViewerCanvas] Hotspot selected for moving:', hotspot.name)
                 return // Don't select other objects when clicking hotspot icon
               } else if (clickedHotspotObj.userData.isHotspotLabel) {
-                // Clicking label - check if popup should show on click
+                // Clicking label - open content panel (YouTube/video) or optional popup
                 const showOnClick = hotspot.content?.popupSettings?.showOnClick
                 if (showOnClick && setActiveHotspot) {
                   setActiveHotspot(hotspot)
                   console.log('[ViewerCanvas] Hotspot label clicked - opening popup:', hotspot.name)
+                } else if (
+                  hotspot.content?.type === 'youtube' &&
+                  hotspot.content?.data &&
+                  hotspot.content?.videoDisplayMode === 'overlay'
+                ) {
+                  const openOverlay = (window as any).__openHotspotYoutubeOverlay as
+                    | ((contentData: string, title?: string, placement?: string) => void)
+                    | undefined
+                  openOverlay?.(
+                    hotspot.content.data,
+                    hotspot.name,
+                    hotspot.content.videoOverlayPlacement || 'center'
+                  )
                 } else {
-                  // Just select the hotspot marker for moving if showOnClick is false
-                  const markerObj = scene.children.find((obj: THREE.Object3D) => 
+                  // Open the in-world content panel (video appears on the model)
+                  window.dispatchEvent(
+                    new CustomEvent('hotspot-panel-opened', {
+                      detail: { hotspotId: hotspot.id }
+                    })
+                  )
+                  const markerObj = scene.children.find((obj: THREE.Object3D) =>
                     obj.userData.isHotspot && obj.userData.hotspotId === hotspot.id
                   )
                   if (markerObj) {
                     useAppStore.getState().setSelectedObject(markerObj)
-                    console.log('[ViewerCanvas] Hotspot label clicked - selecting marker:', hotspot.name)
                   }
+                  console.log('[ViewerCanvas] Hotspot label clicked - opening 3D panel:', hotspot.name)
+                }
+                return
+              } else if (clickedHotspotObj.userData.isHotspotPanel) {
+                // Mesh thumbnail panels (overlay mode) open the screen player.
+                // Live CSS3D YouTube iframes receive clicks directly — no giant editor popup.
+                if (
+                  hotspot.content?.type === 'youtube' &&
+                  hotspot.content?.data &&
+                  hotspot.content?.videoDisplayMode === 'overlay'
+                ) {
+                  const openOverlay = (window as any).__openHotspotYoutubeOverlay as
+                    | ((contentData: string, title?: string, placement?: string) => void)
+                    | undefined
+                  openOverlay?.(
+                    hotspot.content.data,
+                    hotspot.name,
+                    hotspot.content.videoOverlayPlacement || 'center'
+                  )
+                  console.log('[ViewerCanvas] YouTube panel clicked - opening screen player:', hotspot.name)
                 }
                 return
               }
@@ -4366,7 +4417,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       getCameraState,
       setCameraState,
       updateShadowCameraBounds: updateAllShadowCameraBoundsLocal,
-      runShadowDiagnostics: () => runShadowDiagnostics(scene, renderer, camera)
+      runShadowDiagnostics: () => runShadowDiagnostics(scene, renderer, camera),
+      hotspotCss3dLayer
     }
 
     viewerRef.current = viewer
@@ -4474,7 +4526,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       controlsInteracting ||
       hasPendingViewerRenderFrames() ||
       hasOrbitControlsDamping(controls) ||
-      needsContinuousSceneUpdates(viewerRef.current, controls, getSceneActivity())
+      needsContinuousSceneUpdates(viewerRef.current, controls, getSceneActivity()) ||
+      !!viewerRef.current?.hotspotCss3dLayer?.hasPanels()
 
     if (viewerRef.current) {
       viewerRef.current.requestRender = restartAnimationLoop
@@ -4999,6 +5052,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             viewer.render(renderer)
           })
         }
+
+        // Project YouTube / CSS3D hotspot panels above the WebGL canvas
+        viewerRef.current?.hotspotCss3dLayer?.render(currentScene, currentCamera)
       } catch (renderError) {
         if (!isInitializedRef.current || webglContextLostRef.current) {
           animationFrameRef.current = undefined
@@ -5075,6 +5131,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (viewerRef.current?.postProcessingSystem) {
         viewerRef.current.postProcessingSystem.setSize(width, height)
       }
+      viewerRef.current?.hotspotCss3dLayer?.setSize(width, height)
 
       restartAnimationLoop()
     }
@@ -5240,6 +5297,15 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
       
       // Industry-standard: Remove canvas from DOM and dispose renderer
+      if (viewerRef.current?.hotspotCss3dLayer) {
+        try {
+          viewerRef.current.hotspotCss3dLayer.dispose()
+        } catch (e) {
+          console.debug('Warning: Could not dispose hotspot CSS3D layer:', e)
+        }
+        viewerRef.current.hotspotCss3dLayer = undefined
+      }
+
       if (renderer) {
         try {
           const canvas = renderer.domElement

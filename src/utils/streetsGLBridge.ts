@@ -7,6 +7,17 @@ import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { simpleDecimation } from './geometryRepair'
 import { resolveIframeVisibleForBridge } from '../viewer/streetsGLIframeVisibility'
+import {
+  DEFAULT_STREETS_GL_ORIGIN,
+  envelopeHasCapability,
+  generateBridgeCapability,
+  isAllowedStreetsGLOrigin,
+  parseBridgeEnvelope,
+  readCapabilityFromUrl,
+  readOriginFromUrl,
+  validateExternalObjectGeometry,
+  validateSyncObjectsPayload
+} from './streetsGLBridgeSecurity'
 
 const isStreetsGLDebugEnabled = (): boolean =>
   typeof window !== 'undefined' && (window as any).__streetsGLDebug === true
@@ -106,10 +117,25 @@ export class StreetsGLBridge {
   private cameraPollTimer: ReturnType<typeof setInterval> | null = null
   private cameraPollInFlight = false
   private cameraPollIntervalMs = 150
+  /** Per-session capability shared with the Streets GL iframe via URL + postMessage. */
+  private readonly capability: string
+  /** Exact postMessage targetOrigin for the Streets GL iframe. */
+  private readonly targetOrigin: string
 
-  constructor(iframe: HTMLIFrameElement) {
+  constructor(
+    iframe: HTMLIFrameElement,
+    options?: { capability?: string; targetOrigin?: string }
+  ) {
     this.iframe = iframe
     this.iframeWindow = iframe.contentWindow
+    const srcOrigin = readOriginFromUrl(iframe.src)
+    this.capability =
+      options?.capability ||
+      readCapabilityFromUrl(iframe.src) ||
+      generateBridgeCapability()
+    this.targetOrigin =
+      options?.targetOrigin ||
+      (srcOrigin && isAllowedStreetsGLOrigin(srcOrigin) ? srcOrigin : DEFAULT_STREETS_GL_ORIGIN)
     this.setupMessageListener()
     this.waitForBridge()
   }
@@ -174,10 +200,15 @@ export class StreetsGLBridge {
 
   private setupMessageListener(): void {
     this.messageListener = (event: MessageEvent) => {
-      // Security: In production, check event.origin === 'http://localhost:8081'
-      if (!event.data || typeof event.data !== 'object') return
+      // SEC-5: exact origin + source window + per-session capability
+      if (!isAllowedStreetsGLOrigin(event.origin)) return
+      if (event.source !== this.iframeWindow) return
 
-      const { type, payload } = event.data
+      const envelope = parseBridgeEnvelope(event.data)
+      if (!envelope) return
+      if (!envelopeHasCapability(envelope, this.capability)) return
+
+      const { type, payload } = envelope
 
       switch (type) {
         case 'STREETS_GL_BRIDGE_READY':
@@ -319,10 +350,29 @@ export class StreetsGLBridge {
       return
     }
 
-    this.iframeWindow.postMessage({
-      type,
-      payload
-    }, '*') // In production, specify exact origin: 'http://localhost:8081'
+    if (type === 'STREETS_GL_ADD_OBJECT') {
+      const validation = validateExternalObjectGeometry(payload)
+      if (!validation.ok) {
+        console.error('[StreetsGLBridge] Rejected outbound addObject:', validation.error)
+        return
+      }
+    } else if (type === 'STREETS_GL_SYNC_OBJECTS') {
+      const validation = validateSyncObjectsPayload(payload)
+      if (!validation.ok) {
+        console.error('[StreetsGLBridge] Rejected outbound syncObjects:', validation.error)
+        return
+      }
+    }
+
+    this.iframeWindow.postMessage(
+      {
+        type,
+        payload,
+        capability: this.capability,
+        timestamp: Date.now()
+      },
+      this.targetOrigin
+    )
   }
 
   /**

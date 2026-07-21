@@ -49,6 +49,7 @@
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
     "3d-tiles-renderer": "^0.4.18",
+    "dompurify": "^3.4.12",
     "dxf-parser": "^1.1.2",
     "electron-updater": "^6.8.9",
     "gltf-pipeline": "^4.3.0",
@@ -71,6 +72,8 @@
   "devDependencies": {
     "@eslint/js": "^8.57.0",
     "@playwright/test": "^1.49.1",
+    "@types/dompurify": "^3.0.5",
+    "@types/jsdom": "^28.0.3",
     "@types/jszip": "^3.4.1",
     "@types/pako": "^1.0.4",
     "@types/react": "^19.2.6",
@@ -87,6 +90,7 @@
     "eslint-plugin-react-refresh": "^0.4.5",
     "express": "^5.1.0",
     "globals": "^15.14.0",
+    "jsdom": "^29.1.1",
     "typescript": "^5.2.2",
     "vite": "^7.2.2",
     "vitest": "^4.0.10",
