@@ -18,6 +18,12 @@ import {
   rebuildProjectObjectsFromSceneForLegacyLoad,
   serializeProjectObjectsForSave
 } from '../viewer/streetsGLRegistryPersistence'
+import {
+  applySavedHierarchyInPlace,
+  ensureInstanceId,
+  matchSavedChildToLiveChild,
+  shouldReuseImportedInstanceByFileName
+} from './projectInstanceRestore'
 
 /**
  * Global File Registry - Tracks original File objects for project save/load
@@ -212,6 +218,8 @@ export interface SavedSceneObject {
   fileName?: string
   fileUrl?: string
   fileData?: string // Base64 encoded file data
+  /** DATA-1: Stable per-occurrence id (distinct from asset fileName). */
+  instanceId?: string
   // For primitives
   primitiveType?: 'box' | 'sphere' | 'plane' | 'cone' | 'cylinder' | 'torus' | 'tetrahedron' | 'octahedron'
   primitiveSize?: { x: number; y: number; z: number }
@@ -908,6 +916,10 @@ const serializeSceneObject = async (obj: THREE.Object3D, scene: THREE.Scene, isT
     
       saved.type = 'imported'
       saved.fileName = obj.userData.fileName
+    // DATA-1: Persist a per-occurrence instance id so identical fileNames stay distinct.
+    const instanceId = ensureInstanceId(obj.userData, obj.uuid)
+    saved.instanceId = instanceId
+    saved.userData!.instanceId = instanceId
     // Also save fileUrl if available (for loading referenced files)
     if (obj.userData.fileUrl) {
       saved.fileUrl = obj.userData.fileUrl
@@ -1556,7 +1568,7 @@ export async function createProjectSnapshot(onProgress?: (progress: number, mess
   console.log(`[ProjectPersistence] ========================================`)
 
   return {
-    version: 5, // Version 5: Enhanced with embedded model files and improved file tracking
+    version: 6, // Version 6: DATA-1 — per-instance ids; no fileName instance collapse on restore
     savedAt: new Date().toISOString(),
     camera: {
       position: { x: cameraState.position.x, y: cameraState.position.y, z: cameraState.position.z },
@@ -2661,6 +2673,43 @@ const restoreMaterial = (saved: SavedMaterial): THREE.Material => {
   return material
 }
 
+/**
+ * DATA-1: Apply saved materials onto matching nodes in an already-loaded hierarchy.
+ * Does not create placeholder meshes/groups.
+ */
+const applySavedMaterialsToHierarchy = (
+  liveRoot: THREE.Object3D,
+  savedChildren: SavedSceneObject[] | undefined
+): void => {
+  if (!savedChildren || savedChildren.length === 0) return
+
+  const usedLiveIndexes = new Set<number>()
+  for (let i = 0; i < savedChildren.length; i++) {
+    const savedChild = savedChildren[i]
+    const liveChild = matchSavedChildToLiveChild(
+      liveRoot.children,
+      savedChild,
+      i,
+      usedLiveIndexes
+    )
+    if (!liveChild) continue
+
+    if (
+      liveChild instanceof THREE.Mesh &&
+      savedChild.materials &&
+      savedChild.materials.length > 0
+    ) {
+      if (savedChild.materials.length === 1) {
+        liveChild.material = restoreMaterial(savedChild.materials[0])
+      } else {
+        liveChild.material = savedChild.materials.map((m) => restoreMaterial(m))
+      }
+    }
+
+    applySavedMaterialsToHierarchy(liveChild, savedChild.children)
+  }
+}
+
 // Restore a scene object recursively
 const restoreSceneObject = async (
   saved: SavedSceneObject,
@@ -2672,62 +2721,56 @@ const restoreSceneObject = async (
   let isExistingObject = false
 
   try {
-    // For imported models, ONLY match by fileName (not by name/UUID) to avoid reusing wrong models
-    // GLTF models often have generic names like "Scene", so matching by name would incorrectly reuse models
-    // CRITICAL: Since we clear ALL models before restoration, we should only find models that were just restored
-    // in this same restoration pass (marked with _restoredFromProject flag)
-    let existingByFileName: THREE.Object3D | null = null
-    if (saved.type === 'imported' && saved.fileName) {
-      // Search scene for models with matching fileName (exact match required)
-      // Only consider models that were restored in this pass (to handle duplicate models in snapshot)
-      scene.traverse((obj) => {
-        if (!existingByFileName && 
-            (obj.userData.isModel || obj.userData.isImportedModel) &&
-            obj.userData.fileName === saved.fileName &&
-            obj.userData._restoredFromProject && // CRITICAL: Only match models restored in this pass
-            obj.parent === scene) { // Only top-level objects
-          existingByFileName = obj
-        }
-      })
+    // DATA-1: Never collapse multiple saved imports that share a fileName into one object.
+    // Each saved imported entry must load (or restore) its own root instance.
+    if (saved.type === 'imported' && saved.fileName && shouldReuseImportedInstanceByFileName()) {
+      // Intentionally unreachable — kept as an explicit guard against regressions.
+      console.warn(`[ProjectPersistence] Unexpected fileName instance reuse attempted for "${saved.fileName}"`)
     }
-    
-    // Also try UUID match (but only if fileName matches and was restored in this pass)
+
+    // UUID match only when this exact occurrence was already restored in this pass
+    // (not merely same fileName). Prefer instanceId when present.
+    const existingByInstanceId =
+      saved.instanceId
+        ? (() => {
+            let found: THREE.Object3D | null = null
+            scene.traverse((candidate) => {
+              if (
+                !found &&
+                candidate.parent === scene &&
+                candidate.userData?._restoredFromProject &&
+                candidate.userData?.instanceId === saved.instanceId
+              ) {
+                found = candidate
+              }
+            })
+            return found
+          })()
+        : null
     const existingById = saved.id ? scene.getObjectByProperty('uuid', saved.id) : null
-    const existing = existingByFileName || (
-      existingById && 
-      (!saved.fileName || (existingById as any).userData?.fileName === saved.fileName) &&
-      (existingById as any).userData?._restoredFromProject ? existingById : null
-    )
+    const existing =
+      existingByInstanceId ||
+      (existingById &&
+      (existingById as any).userData?._restoredFromProject &&
+      (!saved.instanceId || (existingById as any).userData?.instanceId === saved.instanceId)
+        ? existingById
+        : null)
 
     if (saved.type === 'imported' && saved.fileName) {
-      // For imported models, ONLY reuse if fileName matches exactly AND it was restored in this pass
-      // This prevents reusing auto-loaded models (which were cleared) or wrong models
-      if (existingByFileName && 
-          (existingByFileName as THREE.Object3D).userData.fileName === saved.fileName &&
-          (existingByFileName as THREE.Object3D).userData._restoredFromProject) {
-        obj = existingByFileName as THREE.Object3D
+      // Reuse only the exact same occurrence (instanceId/uuid), never another copy of the asset.
+      if (existing && (existing as THREE.Object3D).userData._restoredFromProject) {
+        obj = existing as THREE.Object3D
         isExistingObject = true
-        console.log(`[ProjectPersistence] Found duplicate model in snapshot: "${saved.fileName}" (already restored), restoring transformations and materials`)
-        
-        // CRITICAL: Ensure the existing model is visible and in the scene
+        console.log(
+          `[ProjectPersistence] Reusing already-restored instance "${saved.instanceId || saved.id}" for "${saved.fileName}"`
+        )
         obj.visible = true
         if (!obj.parent && !scene.children.includes(obj)) {
-          console.log(`[ProjectPersistence] ⚠️ Existing model not in scene, adding it now`)
           scene.add(obj)
         }
-        
-        // Verify model has content
-        let meshCount = 0
-        obj.traverse((child: THREE.Object3D) => {
-          if (child instanceof THREE.Mesh) {
-            meshCount++
-            child.visible = true
-          }
-        })
-        console.log(`[ProjectPersistence] Existing model has ${meshCount} mesh(es), visible: ${obj.visible}, in scene: ${scene.children.includes(obj)}, fileName: ${(obj as THREE.Object3D).userData.fileName}`)
       } else {
-        // No existing model found with matching fileName - need to load it
-        console.log(`[ProjectPersistence] No existing model found for "${saved.fileName}" - will load from file`)
+        // Need to load a fresh instance of this asset
+        console.log(`[ProjectPersistence] Loading instance for "${saved.fileName}" (instanceId: ${saved.instanceId || saved.id || 'none'})`)
         
         // Model not found - try to load from embedded file data or registry
         const modelFile = fileRegistry.getModelFile(saved.fileName)
@@ -3408,6 +3451,16 @@ const restoreSceneObject = async (
       if (saved.userData) {
         Object.assign(obj.userData, saved.userData)
       }
+
+      // DATA-1: Keep a stable per-occurrence id on imported roots (distinct from fileName).
+      if (saved.type === 'imported') {
+        const instanceId =
+          (typeof saved.instanceId === 'string' && saved.instanceId.trim() !== ''
+            ? saved.instanceId
+            : null) ||
+          ensureInstanceId(obj.userData, saved.id || obj.uuid)
+        obj.userData.instanceId = instanceId
+      }
       
       // Mark that this object was restored (so we don't add it twice)
       obj.userData._restoredFromProject = true
@@ -3447,10 +3500,22 @@ const restoreSceneObject = async (
 
       // Restore children
       if (saved.children && saved.children.length > 0) {
-        for (const childSaved of saved.children) {
-          const child = await restoreSceneObject(childSaved, scene, viewer, missingFiles)
-          if (child) {
-            obj.add(child)
+        const isLoadedImportWithHierarchy =
+          saved.type === 'imported' &&
+          Boolean(obj.userData.isImportedModel || obj.userData.isModel) &&
+          obj.children.length > 0
+
+        if (isLoadedImportWithHierarchy) {
+          // DATA-1: Apply saved descendant state onto the loaded asset tree in place.
+          // Do not recreate loaded descendants as empty Group placeholders.
+          applySavedHierarchyInPlace(obj, saved.children)
+          applySavedMaterialsToHierarchy(obj, saved.children)
+        } else {
+          for (const childSaved of saved.children) {
+            const child = await restoreSceneObject(childSaved, scene, viewer, missingFiles)
+            if (child) {
+              obj.add(child)
+            }
           }
         }
       }
@@ -3786,7 +3851,14 @@ export function isProjectCurrentlyLoading(): boolean {
 }
 
 export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void> {
-  if (snapshot.version !== 1 && snapshot.version !== 2 && snapshot.version !== 3 && snapshot.version !== 4 && snapshot.version !== 5) {
+  if (
+    snapshot.version !== 1 &&
+    snapshot.version !== 2 &&
+    snapshot.version !== 3 &&
+    snapshot.version !== 4 &&
+    snapshot.version !== 5 &&
+    snapshot.version !== 6
+  ) {
     throw new Error(`Unsupported project snapshot version: ${snapshot.version}`)
   }
   
@@ -4291,7 +4363,7 @@ export function validateProjectSnapshot(snapshot: SavedProject): {
   const warnings: string[] = []
   
   // Validate version
-  if (!snapshot.version || (snapshot.version < 1 || snapshot.version > 5)) {
+  if (!snapshot.version || (snapshot.version < 1 || snapshot.version > 6)) {
     errors.push(`Invalid version: ${snapshot.version}`)
   }
   
