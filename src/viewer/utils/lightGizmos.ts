@@ -8,6 +8,47 @@ const _tempVecB = new THREE.Vector3()
 const _tempQuat = new THREE.Quaternion()
 
 /**
+ * Helpers / gizmos / TransformControls must never cast or receive shadows.
+ * Walks the full subtree (ArrowHelper cones, spot cones, TC picker meshes, etc.).
+ */
+export function disableShadowsDeep(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    obj.castShadow = false
+    obj.receiveShadow = false
+    const ud = obj.userData as Record<string, unknown>
+    ud.ignoreShadowWarnings = true
+  })
+}
+
+/** True when obj is (or is under) a light gizmo, light helper, or TransformControls. */
+export function isLightVisualOrControl(obj: THREE.Object3D): boolean {
+  let current: THREE.Object3D | null = obj
+  while (current) {
+    const ud = current.userData || {}
+    if (
+      ud.isLightGizmo ||
+      ud.isLightHelper ||
+      ud.isTransformControls ||
+      ud.isHelper ||
+      ud.ignoreShadowWarnings
+    ) {
+      return true
+    }
+    const typeName = current.type || current.constructor?.name || ''
+    if (
+      typeName.includes('Helper') ||
+      typeName.includes('TransformControls') ||
+      typeName === 'TransformControlsGizmo' ||
+      typeName === 'TransformControlsPlane'
+    ) {
+      return true
+    }
+    current = current.parent
+  }
+  return false
+}
+
+/**
  * Creates a texture for light icons
  */
 export function createLightIconTexture(
@@ -284,6 +325,13 @@ export function createLightGizmoObject(
   }
 
   group.userData.orientationObjects = orientationObjects
+  // Mark every child so material converters / shadow auto-fix skip them.
+  // Parent-only isLightGizmo is not enough — cone/sphere meshes are separate Meshes.
+  group.traverse((child) => {
+    child.userData.isLightGizmo = true
+    child.userData.ignoreShadowWarnings = true
+  })
+  disableShadowsDeep(group)
   return group
 }
 
@@ -402,6 +450,9 @@ export function updateLightGizmoFromLight(
       }
     }
   })
+
+  // Selection scales gizmos up — keep shadow flags off so enlarged cones never cast blobs
+  disableShadowsDeep(gizmo)
 }
 
 /**
@@ -482,6 +533,7 @@ export function ensureLightGizmo(
     lightToGizmo.set(light, gizmo)
     lightGizmos.set(config.id, gizmo)
     scene.add(gizmo)
+    disableShadowsDeep(gizmo)
     // CRITICAL: Set initial visibility based on showLightHelpers setting
     const showLightHelpers = useAppStore.getState().showLightHelpers
     gizmo.visible = showLightHelpers && light.visible
@@ -493,6 +545,7 @@ export function ensureLightGizmo(
     gizmo.userData.lightType = requestedType
     gizmoToLight.set(gizmo, light)
     lightToGizmo.set(light, gizmo)
+    disableShadowsDeep(gizmo)
     // CRITICAL: Update visibility based on showLightHelpers setting
     const showLightHelpers = useAppStore.getState().showLightHelpers
     gizmo.visible = showLightHelpers && light.visible

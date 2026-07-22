@@ -1,6 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Hotspot } from './HotspotsPanel'
-import { extractYouTubeId } from '../utils/hotspotUtils'
+import { applyYouTubeIframeEmbedFlags, extractYouTubeId } from '../utils/hotspotUtils'
+import {
+  getSafeHotspotIframeUrl,
+  HOTSPOT_IFRAME_SANDBOX,
+  sanitizeHotspotHtml
+} from '../utils/hotspotContentSafety'
 import './HotspotPopup.css'
 
 interface HotspotPopupProps {
@@ -40,6 +45,16 @@ export default function HotspotPopup({ hotspot, onClose }: HotspotPopupProps) {
       document.removeEventListener('click', handleClickOutside)
     }
   }, [hotspot, onClose])
+
+  const sanitizedHtml = useMemo(() => {
+    if (!hotspot || hotspot.content.type !== 'html') return ''
+    return sanitizeHotspotHtml(hotspot.content.data || '')
+  }, [hotspot])
+
+  const safeInteractiveUrl = useMemo(() => {
+    if (!hotspot || hotspot.content.type !== 'interactive') return null
+    return getSafeHotspotIframeUrl(hotspot.content.data)
+  }, [hotspot])
 
   if (!hotspot) return null
 
@@ -120,11 +135,17 @@ export default function HotspotPopup({ hotspot, onClose }: HotspotPopupProps) {
           return (
             <div className="hotspot-content-youtube">
               <iframe
-                src={`https://www.youtube.com/embed/${videoId}?autoplay=0`}
+                src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=0`}
                 title={hotspot.name}
                 frameBorder="0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
+                referrerPolicy="strict-origin-when-cross-origin"
+                // @ts-expect-error credentialless is not yet in React's iframe typings
+                credentialless=""
+                ref={(el) => {
+                  if (el) applyYouTubeIframeEmbedFlags(el)
+                }}
               />
             </div>
           )
@@ -148,17 +169,31 @@ export default function HotspotPopup({ hotspot, onClose }: HotspotPopupProps) {
         )
 
       case 'interactive':
+        if (!safeInteractiveUrl) {
+          return (
+            <div className="hotspot-content-error">
+              <p>⚠️ Blocked unsafe interactive URL</p>
+              <p className="error-details">{hotspot.content.data}</p>
+            </div>
+          )
+        }
         return (
           <div className="hotspot-content-interactive">
-            <iframe src={hotspot.content.data} title={hotspot.name} />
+            <iframe
+              src={safeInteractiveUrl}
+              title={hotspot.name}
+              sandbox={HOTSPOT_IFRAME_SANDBOX}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+            />
           </div>
         )
 
       case 'html':
         return (
           <div className="hotspot-content-html">
-            <div 
-              dangerouslySetInnerHTML={{ __html: hotspot.content.data }}
+            <div
+              dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
               style={{
                 width: '100%',
                 height: '100%',

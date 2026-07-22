@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
-import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
-import { getSharedViewer, syncModelToStreetsGL, mergeStreetsGLObjectsIntoRegistry } from '../viewer/useViewer'
-import { buildMeshFromDescriptor, reconcileSceneFromRegistry } from '../viewer/objectRegistry'
-import { getCachedImportedModelScene } from '../viewer/importedModelCache'
-import { latLonToStreetsGL } from '../utils/mapCoordinates'
+import {
+  getSharedViewer,
+  mergeStreetsGLObjectsIntoRegistry,
+  requestRegistryResync
+} from '../viewer/useViewer'
+import { reconcileSceneFromRegistry } from '../viewer/objectRegistry'
 
 /**
  * Headless component that keeps the live render targets in sync with the store-owned
@@ -13,8 +14,14 @@ import { latLonToStreetsGL } from '../utils/mapCoordinates'
  *
  *  - Leaving city (product / hybrid): the Three.js scene is recreated empty, so we
  *    rebuild a THREE.Mesh from every descriptor that has no live object yet.
- *  - Entering city: there is no Three.js scene, so we make sure every descriptor that
- *    isn't already reflected in Streets GL gets synced via the existing bridge.
+ *  - Entering city / hybrid with Streets GL overlay: every imported/primitive
+ *    descriptor is pushed into the iframe via ResyncCoordinator (covers models
+ *    loaded in product mode before Streets GL was opened).
+ *
+ * Resync ownership (Phase 1):
+ *  - This component may call requestRegistryResync with reason `'mode-enter'` only.
+ *  - Bridge ready / iframe reload resync is owned by StreetsGLIframeOverlay.
+ *  - Do not call resync from transform sync or visibility toggles.
  *
  * It renders nothing.
  */
@@ -62,79 +69,55 @@ export default function ObjectRegistryReconciler() {
     }
   }, [renderMode, updateProjectObject, markSceneRevision])
 
-  // Entering city -> ensure every descriptor is reflected in Streets GL. Re-runs when
-  // the bridge becomes available so objects added in product mode appear on the map.
+  // Mode enter: city/hybrid + overlay → push registry into Streets GL.
+  // Single owner for this trigger; overlapping bridge-ready from the overlay
+  // coalesces via ResyncCoordinator (join in-flight or one follow-up).
   useEffect(() => {
-    if (renderMode !== 'city') return
+    if (renderMode !== 'city' && renderMode !== 'hybrid') return
     if (!streetsGLIframeOverlay) return
-    if (!streetsGLBridge) return // wait until the bridge exists (effect re-runs on change)
+    if (!streetsGLBridge) return
 
-    const descriptors = useAppStore.getState().projectObjects
-    descriptors.forEach((descriptor) => {
-      // Skip objects already reflected in Streets GL. `streetsGLPending` means a sync was
-      // requested but may not have completed (e.g. bridge not ready) — retry in that case.
-      if (descriptor.userData?.streetsGLAdded && !descriptor.userData?.streetsGLPending) return
-
-      let mesh: THREE.Object3D | null = null
-      if (descriptor.kind === 'imported') {
-        mesh = getCachedImportedModelScene(descriptor.id) ?? null
-      } else {
-        mesh = buildMeshFromDescriptor(descriptor)
-      }
-      if (!mesh) return
-      mesh.userData.streetsGLObjectId = descriptor.streetsGLObjectId || descriptor.id
-
-      // Place using the descriptor's stored GPS when known; otherwise syncModelToStreetsGL
-      // falls back to the current map center.
-      if (descriptor.gps) {
-        try {
-          mesh.userData.streetsGLPosition = latLonToStreetsGL(descriptor.gps.lat, descriptor.gps.lon, 1.5)
-        } catch {
-          /* fall back to map-center placement inside sync */
-        }
-      }
-
-      syncModelToStreetsGL(mesh, streetsGLBridge)
-        .then(() => {
-          const ud = mesh.userData as any
-          updateProjectObject(descriptor.id, {
-            streetsGLObjectId: ud.streetsGLObjectId,
-            gps:
-              typeof ud.gpsLat === 'number' && typeof ud.gpsLon === 'number'
-                ? { lat: ud.gpsLat, lon: ud.gpsLon }
-                : descriptor.gps,
-            userData: {
-              streetsGLAdded: true,
-              streetsGLPending: false,
-              streetsGLPosition: ud.streetsGLPosition,
-              streetsGLBaseTransform: ud.streetsGLBaseTransform,
-              streetsGLPlacementWorldPosition: ud.streetsGLPlacementWorldPosition
-            }
-          })
+    let cancelled = false
+    const run = () => {
+      if (cancelled) return
+      requestRegistryResync(streetsGLBridge, 'mode-enter')
+        .then((n) => {
+          if (!cancelled && n > 0) {
+            console.log('[ObjectRegistry] Synced', n, 'object(s) into Streets GL')
+          }
         })
         .catch((err) => {
-          console.warn('[ObjectRegistryReconciler] Streets GL sync failed for', descriptor.id, err)
-          useAppStore.getState().setError(
-            `Could not sync "${descriptor.name || descriptor.id}" to Streets GL. ${err instanceof Error ? err.message : 'See console for details.'}`
-          )
+          console.warn('[ObjectRegistryReconciler] Streets GL registry sync failed:', err)
         })
-    })
-  }, [renderMode, streetsGLIframeOverlay, streetsGLBridge, updateProjectObject])
+    }
 
-  // On bridge ready, list pre-existing external objects from the iframe and merge into the registry.
+    if (streetsGLBridge.isReady) {
+      run()
+    } else {
+      streetsGLBridge.onReady(run)
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [renderMode, streetsGLIframeOverlay, streetsGLBridge])
+
+  // On bridge ready: merge iframe-authored objects into the registry only.
+  // Resync (re-push registry → iframe) is owned by StreetsGLIframeOverlay onReady
+  // and the mode-enter effect above — do not double-fire here.
   useEffect(() => {
     if (!streetsGLBridge) return
 
-    const syncExisting = () => {
+    const mergeExisting = () => {
       mergeStreetsGLObjectsIntoRegistry(streetsGLBridge).catch((err) => {
         console.warn('[ObjectRegistry] Failed to merge Streets GL objects:', err)
       })
     }
 
     if (streetsGLBridge.isReady) {
-      syncExisting()
+      mergeExisting()
     } else {
-      streetsGLBridge.onReady(syncExisting)
+      streetsGLBridge.onReady(mergeExisting)
     }
   }, [streetsGLBridge])
 

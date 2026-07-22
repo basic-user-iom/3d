@@ -4,17 +4,34 @@ const http = require('http')
 const path = require('path')
 const { spawn } = require('child_process')
 const { APP_ID, setupAutoUpdater } = require('./auto-updater.cjs')
+const { getSafeExternalUrl } = require('./externalUrlSafety.cjs')
+const {
+  loadReplicateEnvFile,
+  hasReplicateApiToken,
+  callReplicateApi
+} = require('./replicateApi.cjs')
+const {
+  DEFAULT_STREETS_GL_PORT,
+  createStreetsGLInstanceToken,
+  shouldAdoptExistingStreetsGLServer,
+  tryHandleStreetsGLIdentity,
+  verifyStreetsGLInstanceToken
+} = require('./streetsGLServerSafety.cjs')
 
 if (app.isPackaged) {
   app.setAppUserModelId(APP_ID)
 }
 
 const VIEWER_DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000'
-const STREETS_GL_PORT = 8081
+const STREETS_GL_PORT = DEFAULT_STREETS_GL_PORT
 
 let mainWindow = null
 let staticStreetsServer = null
 let streetsGLProcess = null
+/** Actual bound port (may be ephemeral in packaged mode when 8081 is taken). */
+let streetsGLBoundPort = null
+/** Instance token for the Streets GL static server we own. */
+let streetsGLInstanceToken = null
 
 function pathExists(targetPath) {
   try {
@@ -147,10 +164,19 @@ async function waitForLocalServer(port, timeoutMs = 120000) {
   return false
 }
 
-function createStaticFileHandler(rootDir) {
+function getStreetsGLBaseUrl() {
+  const port = streetsGLBoundPort || STREETS_GL_PORT
+  return `http://127.0.0.1:${port}`
+}
+
+function createStaticFileHandler(rootDir, instanceToken) {
   const normalizedRoot = path.resolve(rootDir)
 
   return (request, response) => {
+    if (tryHandleStreetsGLIdentity(request, response, instanceToken)) {
+      return
+    }
+
     const requestUrl = request.url || '/'
     const pathname = decodeURIComponent(requestUrl.split('?')[0] || '/')
     const relativePath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
@@ -198,38 +224,72 @@ function createStaticFileHandler(rootDir) {
   }
 }
 
-async function startBundledStreetsGLServer(rootDir) {
-  if (staticStreetsServer) {
-    const ready = await isLocalServerReachable(STREETS_GL_PORT)
-    return {
-      started: ready,
-      message: ready
-        ? `Bundled Streets GL server already running on http://127.0.0.1:${STREETS_GL_PORT}`
-        : 'Bundled Streets GL server handle exists but port is not responding'
-    }
-  }
+async function listenBundledStreetsGLServer(rootDir, port) {
+  const instanceToken = createStreetsGLInstanceToken()
+  const server = http.createServer(createStaticFileHandler(rootDir, instanceToken))
 
   await new Promise((resolve, reject) => {
-    const server = http.createServer(createStaticFileHandler(rootDir))
-
-    server.once('error', (error) => {
+    const onError = (error) => {
+      server.off('listening', onListening)
       reject(error)
-    })
-
-    server.listen(STREETS_GL_PORT, '127.0.0.1', () => {
-      staticStreetsServer = server
+    }
+    const onListening = () => {
+      server.off('error', onError)
       resolve()
-    })
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(port, '127.0.0.1')
   })
 
-  const ready = await waitForLocalServer(STREETS_GL_PORT, 10000)
+  const address = server.address()
+  const boundPort = typeof address === 'object' && address ? address.port : port
+  staticStreetsServer = server
+  streetsGLBoundPort = boundPort
+  streetsGLInstanceToken = instanceToken
+
+  const ready = await waitForLocalServer(boundPort, 10000)
   if (!ready) {
     throw new Error('Bundled Streets GL server started but did not become reachable')
   }
 
+  const owned = await verifyStreetsGLInstanceToken(boundPort, instanceToken)
+  if (!owned) {
+    throw new Error('Bundled Streets GL identity check failed after bind')
+  }
+
   return {
     started: true,
-    message: `Serving bundled Streets GL assets from ${rootDir}`
+    port: boundPort,
+    baseUrl: getStreetsGLBaseUrl(),
+    message: `Serving bundled Streets GL assets from ${rootDir} on ${getStreetsGLBaseUrl()}`
+  }
+}
+
+async function startBundledStreetsGLServer(rootDir) {
+  if (staticStreetsServer && streetsGLBoundPort && streetsGLInstanceToken) {
+    const owned = await verifyStreetsGLInstanceToken(streetsGLBoundPort, streetsGLInstanceToken)
+    return {
+      started: owned,
+      port: streetsGLBoundPort,
+      baseUrl: getStreetsGLBaseUrl(),
+      message: owned
+        ? `Bundled Streets GL server already running on ${getStreetsGLBaseUrl()}`
+        : 'Bundled Streets GL server handle exists but identity check failed'
+    }
+  }
+
+  try {
+    return await listenBundledStreetsGLServer(rootDir, STREETS_GL_PORT)
+  } catch (error) {
+    // Packaged: if 8081 is occupied by a foreign process, bind an ephemeral port instead.
+    if (app.isPackaged && error && error.code === 'EADDRINUSE') {
+      console.warn(
+        '[Electron] Streets GL port 8081 busy; binding ephemeral loopback port (SEC-5)'
+      )
+      return listenBundledStreetsGLServer(rootDir, 0)
+    }
+    throw error
   }
 }
 
@@ -261,16 +321,47 @@ async function startManagedStreetsGLServer() {
     throw new Error('Timed out waiting for the managed Streets GL server to start')
   }
 
+  streetsGLBoundPort = STREETS_GL_PORT
   return {
     started: true,
+    port: STREETS_GL_PORT,
+    baseUrl: getStreetsGLBaseUrl(),
     message: `Started managed Streets GL server on http://localhost:${STREETS_GL_PORT}`
   }
 }
 
 async function ensureStreetsGLServer() {
-  if (await isLocalServerReachable(STREETS_GL_PORT)) {
+  const ownsServer = Boolean(
+    (staticStreetsServer && streetsGLInstanceToken) ||
+      (streetsGLProcess && !streetsGLProcess.killed)
+  )
+
+  if (ownsServer && streetsGLBoundPort && streetsGLInstanceToken) {
+    const owned = await verifyStreetsGLInstanceToken(streetsGLBoundPort, streetsGLInstanceToken)
+    if (owned) {
+      return {
+        started: true,
+        port: streetsGLBoundPort,
+        baseUrl: getStreetsGLBaseUrl(),
+        message: `Streets GL server already owned on ${getStreetsGLBaseUrl()}`
+      }
+    }
+  }
+
+  const portReachable = await isLocalServerReachable(STREETS_GL_PORT)
+  const adoptDecision = shouldAdoptExistingStreetsGLServer({
+    isPackaged: app.isPackaged,
+    ownsServer,
+    portReachable
+  })
+
+  // SEC-5: packaged builds never adopt an arbitrary process on 8081.
+  if (adoptDecision.adopt && !app.isPackaged && portReachable) {
+    streetsGLBoundPort = STREETS_GL_PORT
     return {
       started: true,
+      port: STREETS_GL_PORT,
+      baseUrl: getStreetsGLBaseUrl(),
       message: `Streets GL server already running on http://127.0.0.1:${STREETS_GL_PORT}`
     }
   }
@@ -315,6 +406,8 @@ function stopBundledStreetsGLServer() {
 
   staticStreetsServer.close()
   staticStreetsServer = null
+  streetsGLBoundPort = null
+  streetsGLInstanceToken = null
 }
 
 function cleanupBackgroundServices() {
@@ -346,8 +439,51 @@ async function createMainWindow() {
     mainWindow.show()
   })
 
+  // Allow media/fullscreen for trusted embeds (YouTube); deny everything else.
+  const ALLOWED_PERMISSIONS = new Set([
+    'media',
+    'mediaKeySystem',
+    'fullscreen',
+    'pointerLock',
+    'clipboard-sanitized-write'
+  ])
+  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(ALLOWED_PERMISSIONS.has(permission))
+  })
+
+  // Keep the main window on the app origin; do not allow unexpected navigations.
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!isAllowedAppNavigation(navigationUrl, viewerIndexPath)) {
+      event.preventDefault()
+    }
+  })
+
+  mainWindow.webContents.on('will-frame-navigate', (event) => {
+    if (event.isMainFrame) {
+      if (!isAllowedAppNavigation(event.url, viewerIndexPath)) {
+        event.preventDefault()
+      }
+      return
+    }
+
+    // Nested frames (Streets GL, hotspot iframes) may load http(s) destinations only.
+    if (!isAllowedFrameNavigation(event.url)) {
+      event.preventDefault()
+    }
+  })
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    const safeUrl = getSafeExternalUrl(url, { allowHttp: !app.isPackaged })
+    if (safeUrl) {
+      shell.openExternal(safeUrl).catch((error) => {
+        console.error(
+          '[Electron] Failed to open external URL:',
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+    } else {
+      console.warn('[Electron] Blocked unsafe external URL:', url)
+    }
     return { action: 'deny' }
   })
 
@@ -359,7 +495,79 @@ async function createMainWindow() {
   await mainWindow.loadFile(viewerIndexPath)
 }
 
+function isAllowedFrameNavigation(rawUrl) {
+  let parsed
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    return false
+  }
+
+  const protocol = parsed.protocol.toLowerCase()
+  if (protocol === 'https:') {
+    return !parsed.username && !parsed.password && Boolean(parsed.hostname)
+  }
+
+  if (protocol === 'http:') {
+    const host = parsed.hostname.toLowerCase()
+    return (
+      !parsed.username &&
+      !parsed.password &&
+      (host === 'localhost' || host === '127.0.0.1')
+    )
+  }
+
+  // Packaged viewer assets may be file: subresources for local iframes.
+  return protocol === 'file:' && isAllowedAppNavigation(rawUrl, getViewerIndexPath())
+}
+
+function isAllowedAppNavigation(rawUrl, viewerIndexPath) {
+  let parsed
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    return false
+  }
+
+  if (!app.isPackaged) {
+    try {
+      const allowed = new URL(VIEWER_DEV_URL)
+      return (
+        parsed.protocol === allowed.protocol &&
+        parsed.hostname === allowed.hostname &&
+        parsed.port === allowed.port
+      )
+    } catch {
+      return false
+    }
+  }
+
+  if (parsed.protocol !== 'file:') {
+    return false
+  }
+
+  if (!viewerIndexPath) {
+    return false
+  }
+
+  try {
+    const allowedDir = path.dirname(path.resolve(viewerIndexPath))
+    const targetPath = decodeURIComponent(parsed.pathname)
+    // On Windows, file URLs look like /C:/... — normalize before compare.
+    const normalizedTarget = path.resolve(process.platform === 'win32' && /^\/[A-Za-z]:\//.test(targetPath)
+      ? targetPath.slice(1)
+      : targetPath)
+    const relative = path.relative(allowedDir, normalizedTarget)
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+  } catch {
+    return false
+  }
+}
+
 async function bootstrapDesktopApp() {
+  // SEC-4: load REPLICATE_API_TOKEN for main-process proxy only (never expose to renderer).
+  loadReplicateEnvFile(path.resolve(__dirname, '..'))
+
   ipcMain.handle('app:start-streets-gl-server', async () => {
     try {
       return await ensureStreetsGLServer()
@@ -371,17 +579,49 @@ async function bootstrapDesktopApp() {
     }
   })
 
-  // Packaged desktop: serve pre-built Streets GL assets on 8081 before the window loads.
-  if (app.isPackaged) {
+  ipcMain.handle('app:get-streets-gl-base-url', async () => {
     try {
-      const streetsGLResult = await ensureStreetsGLServer()
-      console.log('[Electron] Streets GL:', streetsGLResult.message)
+      if (!streetsGLBoundPort) {
+        const result = await ensureStreetsGLServer()
+        return {
+          baseUrl: result.baseUrl || getStreetsGLBaseUrl(),
+          port: result.port || streetsGLBoundPort || STREETS_GL_PORT,
+          started: result.started !== false
+        }
+      }
+      return {
+        baseUrl: getStreetsGLBaseUrl(),
+        port: streetsGLBoundPort,
+        started: true
+      }
     } catch (error) {
-      console.error(
-        '[Electron] Streets GL startup failed:',
-        error instanceof Error ? error.message : String(error)
-      )
+      return {
+        baseUrl: getStreetsGLBaseUrl(),
+        port: streetsGLBoundPort || STREETS_GL_PORT,
+        started: false,
+        message: error instanceof Error ? error.message : String(error)
+      }
     }
+  })
+
+  ipcMain.handle('replicate:status', async () => ({
+    configured: hasReplicateApiToken()
+  }))
+
+  ipcMain.handle('replicate:request', async (_event, request) => {
+    return callReplicateApi(request || {}, { rateLimitKey: 'electron' })
+  })
+
+  // Always ensure Streets GL is up before the window loads (packaged static serve,
+  // unpackaged managed webpack). Avoids "localhost refused" on every reopen.
+  try {
+    const streetsGLResult = await ensureStreetsGLServer()
+    console.log('[Electron] Streets GL:', streetsGLResult.message)
+  } catch (error) {
+    console.error(
+      '[Electron] Streets GL startup failed:',
+      error instanceof Error ? error.message : String(error)
+    )
   }
 
   await createMainWindow()

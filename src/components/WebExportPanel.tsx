@@ -14,6 +14,7 @@ export default function WebExportPanel() {
     includeAnimations: true,
     presentationMode: true,
     transitionDuration: 2.0,
+    viewHoldDuration: 1.0,
     autoPlay: false,
     loop: true,
     quality: 'high',
@@ -187,12 +188,26 @@ export default function WebExportPanel() {
                   <input
                     type="number"
                     min="0.5"
-                    max="10"
+                    max="60"
                     step="0.5"
                     value={options.transitionDuration ?? 2.0}
-                    onChange={(e) => setOptions({ ...options, transitionDuration: parseFloat(e.target.value) })}
+                    onChange={(e) => setOptions({ ...options, transitionDuration: parseFloat(e.target.value) || 2.0 })}
                   />
                 </label>
+                <p className="export-hint">How long the camera takes to move between views.</p>
+
+                <label className="input-label">
+                  <span>Hold on each view (seconds):</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="120"
+                    step="0.5"
+                    value={options.viewHoldDuration ?? 1.0}
+                    onChange={(e) => setOptions({ ...options, viewHoldDuration: Math.max(0, parseFloat(e.target.value) || 0) })}
+                  />
+                </label>
+                <p className="export-hint">How long the viewer stays on each camera after arriving (auto-play).</p>
 
                 <label className="checkbox-label">
                   <input

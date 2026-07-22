@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import {
   applyStreetsGLWorldToProxy,
   computeStreetsGLPositionFromObject,
+  ensureStreetsGLIframeVisibilityChannel,
   getStreetsGLRegistryRotationFromObject,
   getStreetsGLVisibleFromObject,
   getStreetsGLWorldRotationFromObject,
@@ -215,6 +216,187 @@ describe('getStreetsGLVisibleFromObject (hybrid import visibility)', () => {
     model.visible = false
 
     expect(getStreetsGLVisibleFromObject(model)).toBe(false)
+  })
+
+  it('does not treat polluted registry visible=false as iframe hide for city proxies', () => {
+    // City import registered descriptor.visible=false from Three.js hide, but the
+    // selected object is a registry proxy without renderInStreetsGL on userData.
+    const proxy = new THREE.Object3D()
+    proxy.visible = false
+    proxy.userData.projectObjectId = 'imported-city-1'
+    proxy.userData.streetsGLAdded = true
+
+    const descriptor = {
+      id: 'imported-city-1',
+      name: 'Building',
+      kind: 'imported' as const,
+      transform: {
+        position: { x: 0, y: 1.5, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 }
+      },
+      visible: false,
+      userData: { streetsGLAdded: true, renderInStreetsGL: true }
+    }
+
+    expect(getStreetsGLVisibleFromObject(proxy, descriptor)).toBe(true)
+  })
+
+  it('keeps Streets GL visible for streetsGLAdded proxies without renderInStreetsGL flag', () => {
+    const proxy = new THREE.Object3D()
+    proxy.visible = false
+    proxy.userData.projectObjectId = 'imported-city-2'
+    proxy.userData.streetsGLAdded = true
+
+    const descriptor = {
+      id: 'imported-city-2',
+      name: 'Car',
+      kind: 'imported' as const,
+      transform: {
+        position: { x: 0, y: 1.5, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 }
+      },
+      visible: false,
+      userData: { streetsGLAdded: true }
+    }
+
+    expect(getStreetsGLVisibleFromObject(proxy, descriptor)).toBe(true)
+  })
+
+  it('honors Objects Panel hide via streetsGLVisible on iframe-renderable proxies', () => {
+    const proxy = new THREE.Object3D()
+    proxy.visible = false
+    proxy.userData.renderInStreetsGL = true
+    proxy.userData.streetsGLVisible = false
+    proxy.userData.streetsGLAdded = true
+
+    expect(getStreetsGLVisibleFromObject(proxy)).toBe(false)
+  })
+
+  it('ignores polluted descriptor.streetsGLVisible=false when mesh channel is open', () => {
+    // Regression: first paint succeeded, then transform/resync read descriptor-only
+    // streetsGLVisible=false and pushed visible:false → car vanished after 1–2 frames.
+    const mesh = new THREE.Object3D()
+    mesh.visible = false
+    mesh.userData.renderInStreetsGL = true
+    mesh.userData.streetsGLVisible = true
+    mesh.userData.streetsGLAdded = true
+
+    const descriptor = {
+      id: 'polluted-desc-1',
+      name: 'Car',
+      kind: 'imported' as const,
+      transform: {
+        position: { x: 0, y: 1.5, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 }
+      },
+      visible: false,
+      userData: {
+        renderInStreetsGL: true,
+        streetsGLVisible: false,
+        streetsGLAdded: true
+      }
+    }
+
+    expect(getStreetsGLVisibleFromObject(mesh, descriptor)).toBe(true)
+
+    ensureStreetsGLIframeVisibilityChannel(mesh, descriptor)
+    expect(mesh.userData.streetsGLVisible).toBe(true)
+    expect(getStreetsGLVisibleFromObject(mesh, descriptor)).toBe(true)
+  })
+
+  it('ensureStreetsGLIframeVisibilityChannel defaults streetsGLVisible=true without touching anchors', () => {
+    const proxy = new THREE.Object3D()
+    proxy.visible = false
+    proxy.userData.streetsGLAdded = true
+    proxy.userData.streetsGLPosition = { x: 3880000, y: 1.5, z: -10800000 }
+
+    ensureStreetsGLIframeVisibilityChannel(proxy)
+
+    expect(proxy.userData.renderInStreetsGL).toBe(true)
+    expect(proxy.userData.streetsGLVisible).toBe(true)
+    expect(proxy.userData.streetsGLPosition).toEqual({ x: 3880000, y: 1.5, z: -10800000 })
+    expect(getStreetsGLVisibleFromObject(proxy)).toBe(true)
+  })
+
+  it('ensureStreetsGLIframeVisibilityChannel preserves explicit user hide', () => {
+    const proxy = new THREE.Object3D()
+    proxy.userData.renderInStreetsGL = true
+    proxy.userData.streetsGLVisible = false
+
+    ensureStreetsGLIframeVisibilityChannel(proxy)
+
+    expect(proxy.userData.streetsGLVisible).toBe(false)
+    expect(getStreetsGLVisibleFromObject(proxy)).toBe(false)
+  })
+})
+
+describe('city gizmo transform sync must keep iframe visible (disappearance regression)', () => {
+  it('round-trips Mercator move without relying on polluted descriptor.visible', () => {
+    const proxy = new THREE.Object3D()
+    proxy.visible = false // polluted like city registry proxy
+    proxy.userData.projectObjectId = 'city-move-1'
+    proxy.userData.streetsGLObjectId = 'city-move-1'
+    proxy.userData.renderInStreetsGL = true
+    proxy.userData.streetsGLPosition = { x: 3880000, y: 1.5, z: -10800000 }
+    proxy.userData.streetsGLBaseTransform = { position: { x: 0, y: 1.5, z: 0 } }
+    proxy.userData.streetsGLPlacementWorldPosition = { x: 0, y: 1.5, z: 0 }
+    proxy.position.set(0, 1.5, 0)
+
+    const descriptor = {
+      id: 'city-move-1',
+      name: 'GLB',
+      kind: 'imported' as const,
+      transform: {
+        position: { x: 0, y: 1.5, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 }
+      },
+      visible: false,
+      userData: {
+        streetsGLAdded: true,
+        renderInStreetsGL: true,
+        streetsGLPosition: { x: 3880000, y: 1.5, z: -10800000 },
+        streetsGLBaseTransform: { position: { x: 0, y: 1.5, z: 0 } },
+        streetsGLPlacementWorldPosition: { x: 0, y: 1.5, z: 0 }
+      }
+    }
+
+    expect(getStreetsGLVisibleFromObject(proxy, descriptor)).toBe(true)
+
+    applyStreetsGLWorldToProxy(proxy, { x: 3880010, y: 3, z: -10799990 })
+    const synced = computeStreetsGLPositionFromObject(proxy, descriptor)
+    expect(synced.x).toBeCloseTo(3880010)
+    expect(synced.y).toBeCloseTo(3)
+    expect(synced.z).toBeCloseTo(-10799990)
+    expect(getStreetsGLVisibleFromObject(proxy, descriptor)).toBe(true)
+  })
+
+  it('does not invent placementWorld from post-move pose (legacy objects without placement)', () => {
+    const proxy = new THREE.Object3D()
+    proxy.userData.streetsGLPosition = { x: 3880000, y: 1.5, z: -10800000 }
+    proxy.userData.streetsGLBaseTransform = { position: { x: 0, y: 1.5, z: 0 } }
+    // no streetsGLPlacementWorldPosition
+    proxy.position.set(0, 1.5, 0)
+
+    applyStreetsGLWorldToProxy(proxy, { x: 3880015, y: 4, z: -10799985 })
+    // Simulate prior bug: capturing world AFTER move as placementWorld
+    proxy.userData.streetsGLPlacementWorldPosition = {
+      x: proxy.position.x,
+      y: proxy.position.y,
+      z: proxy.position.z
+    }
+    const broken = computeStreetsGLPositionFromObject(proxy)
+    expect(broken.x).toBeCloseTo(3880000) // delta zeroed — stuck at original
+
+    // Correct path: without inventing placementWorld, base-offset still works
+    delete proxy.userData.streetsGLPlacementWorldPosition
+    const ok = computeStreetsGLPositionFromObject(proxy)
+    expect(ok.x).toBeCloseTo(3880015)
+    expect(ok.y).toBeCloseTo(4)
+    expect(ok.z).toBeCloseTo(-10799985)
   })
 })
 

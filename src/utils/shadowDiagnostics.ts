@@ -6,6 +6,7 @@
 // @ts-nocheck
 
 import * as THREE from 'three'
+import { isLightVisualOrControl } from '../viewer/utils/lightGizmos'
 
 export interface ShadowDiagnosticResult {
   category: string
@@ -214,17 +215,13 @@ export function runShadowDiagnostics(
     if (obj instanceof THREE.Mesh) {
       allMeshes.push(obj)
 
-      // Skip helpers and debug objects
-      // IMPROVED: Also skip LineBasicMaterial and other helper materials
+      // Skip helpers, light gizmos (incl. child cones/spheres), and TransformControls
       if (
         obj.userData.isShadowPlane ||
         obj.userData.isGridHelper ||
         obj.userData.isAxesHelper ||
-        obj.userData.isTransformControls ||
-        obj.userData.isLightGizmo ||
-        obj.userData.isLightHelper ||
-        obj.userData.isGizmo ||
-        obj.userData.isHelper
+        obj.userData.ignoreShadowWarnings ||
+        isLightVisualOrControl(obj)
       ) {
         return
       }

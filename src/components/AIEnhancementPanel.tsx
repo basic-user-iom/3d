@@ -1,10 +1,10 @@
-import { useState, useRef, useCallback } from 'react'
-import * as THREE from 'three'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { enhanceWithReplicate, enhanceWithFallback, type EnhancementMode } from '../utils/aiEnhancement'
+import { getReplicateConfigured } from '../utils/replicateClient'
 import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
 import './AIEnhancementPanel.css'
 
@@ -53,9 +53,7 @@ const ENHANCEMENT_OPTIONS: EnhancementOption[] = [
 export default function AIEnhancementPanel() {
   const { 
     showAIEnhancementPanel, 
-    toggleAIEnhancementPanel,
-    replicateApiKey,
-    setReplicateApiKey
+    toggleAIEnhancementPanel
   } = useAppStore()
   const { viewer } = useViewer()
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -80,6 +78,22 @@ export default function AIEnhancementPanel() {
   const [enhancedImage, setEnhancedImage] = useState<string | null>(null)
   const [processingTime, setProcessingTime] = useState<number | null>(null)
   const [isMinimized, setIsMinimized] = useState(false)
+  const [replicateConfigured, setReplicateConfigured] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (!showAIEnhancementPanel) return
+    let cancelled = false
+    void getReplicateConfigured()
+      .then((configured) => {
+        if (!cancelled) setReplicateConfigured(configured)
+      })
+      .catch(() => {
+        if (!cancelled) setReplicateConfigured(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showAIEnhancementPanel])
 
   // Capture current view from renderer
   const captureCurrentView = useCallback(async (): Promise<string | null> => {
@@ -114,67 +128,47 @@ export default function AIEnhancementPanel() {
     }
   }, [viewer])
 
-  // Ensure Replicate API key is available
-  const ensureApiKey = useCallback(async (): Promise<string | null> => {
-    let apiKey = replicateApiKey?.trim() || ''
-    
-    if (!apiKey) {
-      const input = prompt(
-        'Enter your Replicate API token (get one at https://replicate.com/account/api-tokens):\n\n' +
-        'This token will be saved for this session only.',
-        ''
-      )
-      
-      if (!input || !input.trim()) {
-        return null
-      }
-      
-      apiKey = input.trim()
-      setReplicateApiKey(apiKey)
-    }
-    
-    return apiKey
-  }, [replicateApiKey, setReplicateApiKey])
-
-  // AI Enhancement using Replicate API or fallback
+  // AI Enhancement using proxied Replicate API or fallback
   const enhanceImage = useCallback(async (imageDataUrl: string, mode: EnhancementMode): Promise<string | null> => {
     setIsProcessing(true)
     setProgress(0)
     setProcessingTime(null)
 
     try {
-      // Try to use Replicate API if available
-      const apiKey = await ensureApiKey()
-      
-      if (apiKey) {
-        // Use Replicate API for actual AI enhancement
+      const configured =
+        replicateConfigured === true ||
+        (replicateConfigured === null && (await getReplicateConfigured()))
+
+      if (configured) {
+        setReplicateConfigured(true)
         const result = await enhanceWithReplicate(
           imageDataUrl,
           mode,
-          apiKey,
           (progressUpdate) => {
             setProgress(progressUpdate.progress)
             console.log(`[AIEnhancement] ${progressUpdate.status} - ${progressUpdate.progress}%`)
           }
         )
-        
-        setProcessingTime(result.processingTime)
-        setProgress(100)
-        return result.enhancedImageUrl
-      } else {
-        // Fallback to basic enhancement if no API key
-        console.warn('[AIEnhancement] No API key provided, using fallback enhancement')
-        alert('⚠️ No API key provided. Using basic enhancement (no AI).\n\nFor AI-powered enhancement, please provide a Replicate API key.')
-        
-        const result = await enhanceWithFallback(imageDataUrl, mode)
+
         setProcessingTime(result.processingTime)
         setProgress(100)
         return result.enhancedImageUrl
       }
+
+      setReplicateConfigured(false)
+      console.warn('[AIEnhancement] REPLICATE_API_TOKEN not configured; using fallback enhancement')
+      alert(
+        '⚠️ Replicate is not configured. Using basic enhancement (no AI).\n\n' +
+          'Set REPLICATE_API_TOKEN in your .env file (not VITE_*), then restart Vite / Electron.'
+      )
+
+      const result = await enhanceWithFallback(imageDataUrl, mode)
+      setProcessingTime(result.processingTime)
+      setProgress(100)
+      return result.enhancedImageUrl
     } catch (error) {
       console.error('[AIEnhancement] Enhancement failed:', error)
-      
-      // Try fallback on error
+
       try {
         console.warn('[AIEnhancement] Attempting fallback enhancement...')
         const result = await enhanceWithFallback(imageDataUrl, mode)
@@ -182,14 +176,14 @@ export default function AIEnhancementPanel() {
         setProgress(100)
         alert('⚠️ API enhancement failed. Using basic enhancement instead.')
         return result.enhancedImageUrl
-      } catch (fallbackError) {
+      } catch {
         alert(`AI Enhancement failed: ${(error as Error)?.message || 'Unknown error'}`)
         return null
       }
     } finally {
       setIsProcessing(false)
     }
-  }, [ensureApiKey])
+  }, [replicateConfigured])
 
   const handleEnhance = useCallback(async () => {
     if (!selectedMode) {
@@ -341,17 +335,18 @@ export default function AIEnhancementPanel() {
             Powered by Real-ESRGAN via Replicate API for professional-grade image enhancement.
             Optimized for architectural visualization with upscaling, detail refinement, texture enhancement, and edge sharpening.
           </p>
-          {!replicateApiKey && (
+          {replicateConfigured === false && (
             <p className="api-key-note">
-              🔑 <strong>API Key Required:</strong> Get your free API token at{' '}
+              🔑 <strong>Server token required:</strong> Set <code>REPLICATE_API_TOKEN</code> in{' '}
+              <code>.env</code> (not <code>VITE_*</code>), then restart the editor. Tokens:{' '}
               <a href="https://replicate.com/account/api-tokens" target="_blank" rel="noopener noreferrer">
                 replicate.com/account/api-tokens
               </a>
             </p>
           )}
-          {replicateApiKey && (
+          {replicateConfigured === true && (
             <p className="api-key-note success">
-              ✅ API key configured. AI enhancement is ready to use.
+              ✅ Replicate token configured on the server. AI enhancement is ready to use.
             </p>
           )}
         </div>

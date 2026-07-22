@@ -306,6 +306,60 @@
   color: #fff;
   font-size: 12px;
   box-sizing: border-box;
+  /* Prevent spinner / long values from blowing out the Z column */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.endpoint-coord-label input::-webkit-outer-spin-button,
+.endpoint-coord-label input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #ccc;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin-top: 2px;
+  accent-color: #4a7ba3;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.checkbox-label span {
+  color: #ccc;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.add-hotspot-section input:focus-visible,
+.add-hotspot-section select:focus-visible,
+.add-hotspot-section textarea:focus-visible,
+.endpoint-coord-label input:focus-visible,
+.formatting-label input:focus-visible,
+.formatting-label select:focus-visible,
+.formatting-button:focus-visible,
+.button-icon:focus-visible,
+.close-button:focus-visible,
+.add-button:focus-visible,
+.expand-button:focus-visible,
+.delete-button:focus-visible {
+  outline: 2px solid #4a7ba3;
+  outline-offset: 2px;
 }
 
 .button-icon {
@@ -681,6 +735,10 @@
   color: #fff;
   font-size: 13px;
   font-family: inherit;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .formatting-label input[type="color"] {

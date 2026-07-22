@@ -8,7 +8,10 @@ import {
   isDeletingImportedModelRoot,
   getModelSceneRemovalTarget,
   detachPivotWrapperReference,
-  isObjectInModelSubtree
+  isObjectInModelSubtree,
+  setIframeVisible,
+  ensureStreetsGLIframeVisibilityChannel,
+  getIframeVisible
 } from '../viewer/useViewer'
 import { fileRegistry } from '../utils/projectPersistence'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
@@ -49,6 +52,7 @@ export default function ObjectsPanel() {
     setObjectVisible,
     streetsGLBridge
   } = useAppStore()
+  const updateProjectObject = useAppStore((s) => s.updateProjectObject)
   const { viewer, frameObject } = useViewer()
   // Stable proxy Object3Ds for registry descriptors that have no live scene object
   // (city mode). Reusing the same proxy per id across rebuilds keeps node identity
@@ -231,11 +235,38 @@ export default function ObjectsPanel() {
       if (extra?.streetsGLAdded) {
         ;(proxy.userData as any).streetsGLAdded = true
       }
+      if (extra?.renderInStreetsGL) {
+        ;(proxy.userData as any).renderInStreetsGL = true
+      }
+      if (extra?.streetsGLVisible !== undefined) {
+        ;(proxy.userData as any).streetsGLVisible = extra.streetsGLVisible
+      }
+      if (extra?.streetsGLIframePresence) {
+        ;(proxy.userData as any).streetsGLIframePresence = extra.streetsGLIframePresence
+      }
+      // City/hybrid imports hide the Three.js root; heal registry proxies that inherited
+      // visible=false from that hide. Mesh channel via ensure — never copy Three.js hide.
+      if (descriptor.kind === 'imported') {
+        const cachedScene = getCachedImportedModelScene(descriptor.id)
+        if (
+          extra?.renderInStreetsGL === true ||
+          (cachedScene?.userData as any)?.renderInStreetsGL === true ||
+          extra?.streetsGLAdded === true ||
+          extra?.streetsGLIframePresence === 'present' ||
+          extra?.streetsGLIframePresence === 'hidden' ||
+          extra?.streetsGLIframePresence === 'pending' ||
+          extra?.streetsGLVisible !== undefined
+        ) {
+          ensureStreetsGLIframeVisibilityChannel(proxy, descriptor, { markRenderable: true })
+          // Panel eye uses proxy.visible — mirror iframe channel, not Three.js product-hide.
+          proxy.visible = getIframeVisible(proxy, descriptor)
+        }
+      }
       nodes.push({
         object: proxy,
         name: descriptor.name,
         type: descriptor.primitiveType ? `Primitive (${descriptor.primitiveType})` : descriptor.kind === 'imported' ? 'Imported Model' : descriptor.kind,
-        visible: descriptor.visible,
+        visible: proxy.visible,
         children: [],
         useCount: 1
       })
@@ -398,7 +429,11 @@ export default function ObjectsPanel() {
         object: obj,
         name,
         type: obj.type,
-        visible: obj.visible,
+        // Iframe-owned: eye reflects streetsGLVisible channel, not Three.js product-hide.
+        visible:
+          (obj.userData as any).renderInStreetsGL === true
+            ? getIframeVisible(obj)
+            : obj.visible,
         children: [],
         triangles: stats.triangles > 0 ? Math.floor(stats.triangles) : undefined,
         size: stats.size > 0 ? stats.size : undefined,
@@ -733,56 +768,83 @@ export default function ObjectsPanel() {
     e.stopPropagation()
     const projectObjectId = (node.object.userData as any).projectObjectId as string | undefined
     const streetsGLId = getStreetsGLObjectId(node.object)
+    const overlayOwnsDraw = useAppStore.getState().streetsGLIframeOverlay === true
+    const renderInStreetsGL =
+      (node.object.userData as any).renderInStreetsGL === true ||
+      (!!projectObjectId &&
+        useAppStore.getState().projectObjects.find((p) => p.id === projectObjectId)?.userData
+          ?.renderInStreetsGL === true)
 
     // City mode (no live scene): toggle visibility through the registry + Streets GL.
     if (!viewer?.scene) {
       if (!projectObjectId) return
-      const newVisible = !node.object.visible
+      // Channel is streetsGLVisible — not Three.js object.visible.
+      const newVisible = !getIframeVisible(node.object)
       node.object.visible = newVisible
-      if ((node.object.userData as any).renderInStreetsGL === true) {
-        ;(node.object.userData as any).streetsGLVisible = newVisible
-      }
+      // Explicit user toggle — mesh+registry channel + bridge RPC (only dirty visibility path).
+      setIframeVisible(node.object, newVisible, {
+        projectId: projectObjectId,
+        persistRegistry: true,
+        pushToBridge: true,
+        bridge: streetsGLBridge,
+        streetsGLId: streetsGLId || undefined
+      })
       setObjectVisible(projectObjectId, newVisible)
-      if (streetsGLBridge && streetsGLId) {
-        streetsGLBridge.updateObject(streetsGLId, { visible: newVisible }).catch(() => {})
-      }
       setTimeout(() => setSceneTree(buildSceneTree()), 0)
       return
     }
 
-    // Get current visibility state directly from object
-    const currentVisible = node.object.visible
+    // Iframe-owned: read/write visibility via streetsGLVisible channel only.
+    const currentVisible = renderInStreetsGL
+      ? getIframeVisible(node.object)
+      : node.object.visible
     const newVisible = !currentVisible
 
     // Keep the registry descriptor in sync for objects that have one.
     if (projectObjectId) {
       setObjectVisible(projectObjectId, newVisible)
     }
-    
-    // Set visibility on the object
-    node.object.visible = newVisible
-    if ((node.object.userData as any).renderInStreetsGL === true) {
-      ;(node.object.userData as any).streetsGLVisible = newVisible
-    }
-    
-    // Update matrix world to ensure changes are reflected
-    node.object.updateMatrixWorld(true)
 
-    if (streetsGLBridge && streetsGLId) {
-      streetsGLBridge.updateObject(streetsGLId, { visible: newVisible }).catch(() => {})
-    }
-    
-    // If it's a group, also toggle visibility of all children recursively
-    if (node.object instanceof THREE.Group || node.object.children.length > 0) {
-      node.object.traverse((child) => {
-        // Skip the object itself (already set above)
-        if (child === node.object) return
-        // Only toggle meshes and groups, not lights or other objects
-        if (child instanceof THREE.Mesh || child instanceof THREE.Group) {
-          child.visible = newVisible
-          child.updateMatrixWorld(true)
-        }
+    if (renderInStreetsGL) {
+      // Ownership: when overlay owns draw, keep Three.js root hidden; iframe via setIframeVisible.
+      if (overlayOwnsDraw) {
+        node.object.visible = false
+        node.object.userData.renderInStreetsGL = true
+      } else {
+        node.object.visible = newVisible
+      }
+      node.object.updateMatrixWorld(true)
+      // Explicit user toggle — sole Objects Panel path for bridge `{ visible }`.
+      setIframeVisible(node.object, newVisible, {
+        projectId: projectObjectId,
+        persistRegistry: !!projectObjectId,
+        pushToBridge: !!(streetsGLBridge && streetsGLId),
+        bridge: streetsGLBridge,
+        streetsGLId: streetsGLId || undefined
       })
+    } else {
+      node.object.visible = newVisible
+      node.object.updateMatrixWorld(true)
+      if (streetsGLBridge && streetsGLId) {
+        // Non-iframe object that still has a Streets GL id — open channel + push.
+        setIframeVisible(node.object, newVisible, {
+          projectId: projectObjectId,
+          persistRegistry: !!projectObjectId,
+          pushToBridge: true,
+          bridge: streetsGLBridge,
+          streetsGLId
+        })
+      }
+      // If it's a group, also toggle visibility of all children recursively
+      if (node.object instanceof THREE.Group || node.object.children.length > 0) {
+        node.object.traverse((child) => {
+          if (child === node.object) return
+          if (child instanceof THREE.Mesh || child instanceof THREE.Group) {
+            child.visible = newVisible
+            child.updateMatrixWorld(true)
+          }
+        })
+      }
     }
     
     // Force re-render by rebuilding tree (don't depend on sceneTree to avoid loops)
@@ -791,7 +853,7 @@ export default function ObjectsPanel() {
       const tree = buildSceneTree()
       setSceneTree(tree)
     }, 0)
-  }, [viewer, buildSceneTree, setObjectVisible, streetsGLBridge])
+  }, [viewer, buildSceneTree, setObjectVisible, updateProjectObject, streetsGLBridge])
 
   const handleToggleLock = useCallback((node: SceneNode, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -842,7 +904,9 @@ export default function ObjectsPanel() {
       removeCachedImportedModelScene(projectObjectId)
       const streetsGLId = getStreetsGLObjectId(node.object)
       if (streetsGLBridge && streetsGLId) {
-        streetsGLBridge.removeObject(streetsGLId).catch(() => {})
+        streetsGLBridge.removeObject(streetsGLId).catch((err) => {
+          console.warn('[ObjectsPanel] Streets GL remove failed:', streetsGLId, err)
+        })
       }
       if (selectedObject === node.object) {
         setSelectedObject(null)
@@ -1011,7 +1075,9 @@ export default function ObjectsPanel() {
       removeCachedImportedModelScene(registryId, false)
       const streetsGLId = getStreetsGLObjectId(modelRoot)
       if (streetsGLBridge && streetsGLId) {
-        streetsGLBridge.removeObject(streetsGLId).catch(() => {})
+        streetsGLBridge.removeObject(streetsGLId).catch((err) => {
+          console.warn('[ObjectsPanel] Streets GL remove failed:', streetsGLId, err)
+        })
       }
       const fileName = (modelRoot.userData as any).fileName as string | undefined
       if (fileName) {
@@ -1402,9 +1468,9 @@ Scale: X: ${scale.x.toFixed(2)}, Y: ${scale.y.toFixed(2)}, Z: ${scale.z.toFixed(
             <button
               className="action-button"
               onClick={(e) => handleToggleVisible(node, e)}
-              title={node.object.visible ? 'Hide' : 'Show'}
+              title={node.visible ? 'Hide' : 'Show'}
             >
-              {node.object.visible ? '👁️' : '🚫'}
+              {node.visible ? '👁️' : '🚫'}
             </button>
 
             {isGroup && (
@@ -1939,10 +2005,10 @@ Scale: X: ${scale.x.toFixed(2)}, Y: ${scale.y.toFixed(2)}, Z: ${scale.z.toFixed(
                       <button
                         className="action-button"
                         onClick={(e) => handleToggleVisible(node, e)}
-                        title={node.object.visible ? 'Hide' : 'Show'}
+                        title={node.visible ? 'Hide' : 'Show'}
                         style={{ fontSize: '12px', padding: '2px 4px' }}
                       >
-                        {node.object.visible ? '👁️' : '🚫'}
+                        {node.visible ? '👁️' : '🚫'}
                       </button>
                       <button
                         className="action-button"

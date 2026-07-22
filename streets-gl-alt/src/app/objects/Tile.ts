@@ -230,21 +230,29 @@ export default class Tile extends Object3D {
 	}
 
 	public hideBuilding(id: number): void {
-		const [start, size] = this.buildingOffsetMap.get(id);
+		const offset = this.buildingOffsetMap.get(id);
+		if (!offset || !this.extrudedMesh) {
+			return;
+		}
 
+		const [start, size] = offset;
 		this.extrudedMesh.addDisplayBufferPatch({start, size, value: 255});
 		this.buildingVisibilityMap.set(id, false);
 	}
 
 	public showBuilding(id: number): void  {
-		const [start, size] = this.buildingOffsetMap.get(id);
+		const offset = this.buildingOffsetMap.get(id);
+		if (!offset || !this.extrudedMesh) {
+			return;
+		}
 
+		const [start, size] = offset;
 		this.extrudedMesh.addDisplayBufferPatch({start, size, value: 0});
 		this.buildingVisibilityMap.set(id, true);
 	}
 
 	public isBuildingVisible(id: number): boolean {
-		return this.buildingVisibilityMap.get(id);
+		return this.buildingVisibilityMap.get(id) !== false;
 	}
 
 	public dispose(): void  {

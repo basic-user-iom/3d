@@ -3,11 +3,36 @@ import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
+import type { StreetsGLBuildingRef } from '../utils/streetsGLBridge'
 import './OSMGroundV2Panel.css'
 
 const STREETS_GL_ALT_URL = 'http://localhost:8081'
 const SERVER_CHECK_TIMEOUT_MS = 8000
 const SERVER_STARTUP_GRACE_MS = 120000
+
+function unpackStreetsGLBuildingId(packedId: number): {
+  osmType: number
+  osmId: number
+  osmTypeName: string
+} {
+  // Matches Streets GL Tile.unpackFeatureId + SelectionPanel: 0 = way, 1 = relation.
+  const osmType = Math.floor(packedId / 2 ** 51)
+  let osmId = packedId
+  if (osmId >= 2 ** 52) osmId -= 2 ** 52
+  if (osmId >= 2 ** 51) osmId -= 2 ** 51
+  const osmTypeName = osmType === 0 ? 'way' : osmType === 1 ? 'relation' : `type-${osmType}`
+  return { osmType, osmId, osmTypeName }
+}
+
+function formatBuildingLabel(buildingId: number | string, meta?: Partial<StreetsGLBuildingRef>): string {
+  const packed = typeof buildingId === 'number' ? buildingId : Number(buildingId)
+  if (!Number.isFinite(packed)) return String(buildingId)
+  const unpacked =
+    meta?.osmId != null && meta?.osmTypeName
+      ? { osmId: meta.osmId, osmTypeName: meta.osmTypeName }
+      : unpackStreetsGLBuildingId(packed)
+  return `${unpacked.osmTypeName} ${unpacked.osmId}`
+}
 
 export default function OSMGroundV2Panel() {
   const { 
@@ -26,7 +51,12 @@ export default function OSMGroundV2Panel() {
     renderMode,
     streetsGLStartRequestedAt,
     setStreetsGLStartRequestedAt,
-    setStreetsGLIframeReloadKey
+    setStreetsGLIframeReloadKey,
+    streetsGLBridge,
+    streetsGLHiddenBuildingIds,
+    hideStreetsGLBuildingId,
+    showStreetsGLBuildingId,
+    setStreetsGLHiddenBuildingIds
   } = useAppStore()
   const { viewer } = useViewer()
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -47,8 +77,125 @@ export default function OSMGroundV2Panel() {
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null)
   const [serverStarting, setServerStarting] = useState(false)
   const [copyFeedback, setCopyFeedback] = useState(false)
+  const [selectedBuilding, setSelectedBuilding] = useState<StreetsGLBuildingRef | null>(null)
+  const [buildingActionBusy, setBuildingActionBusy] = useState(false)
+  const [buildingActionMessage, setBuildingActionMessage] = useState<string | null>(null)
   const hasTriggeredAutoStartRef = useRef(false)
   const overlayEnabledAtRef = useRef<number | null>(null)
+
+  const mapInteractionEnabled = renderMode === 'city' || streetsGLIframeInteractive
+  const selectedIsHidden =
+    selectedBuilding != null &&
+    streetsGLHiddenBuildingIds.includes(String(selectedBuilding.buildingId))
+
+  // Listen for Streets GL building picks while the OSM 3D panel is open
+  useEffect(() => {
+    if (!streetsGLIframeOverlay || !streetsGLBridge) {
+      setSelectedBuilding(null)
+      return
+    }
+    return streetsGLBridge.onBuildingSelected((building) => {
+      setSelectedBuilding(building)
+      setBuildingActionMessage(null)
+    })
+  }, [streetsGLIframeOverlay, streetsGLBridge])
+
+  const handleHideSelectedBuilding = async () => {
+    if (!streetsGLBridge?.isReady || !selectedBuilding) return
+    setBuildingActionBusy(true)
+    setBuildingActionMessage(null)
+    try {
+      const ok = await streetsGLBridge.hideBuilding(selectedBuilding.buildingId)
+      if (ok) {
+        hideStreetsGLBuildingId(selectedBuilding.buildingId)
+        setBuildingActionMessage(`Hidden ${formatBuildingLabel(selectedBuilding.buildingId, selectedBuilding)}`)
+      } else {
+        setBuildingActionMessage('Could not hide building (is one selected on the map?)')
+      }
+    } finally {
+      setBuildingActionBusy(false)
+    }
+  }
+
+  const handleShowSelectedBuilding = async () => {
+    if (!streetsGLBridge?.isReady || !selectedBuilding) return
+    setBuildingActionBusy(true)
+    setBuildingActionMessage(null)
+    try {
+      const ok = await streetsGLBridge.showBuilding(selectedBuilding.buildingId)
+      if (ok) {
+        showStreetsGLBuildingId(selectedBuilding.buildingId)
+        setBuildingActionMessage(`Shown ${formatBuildingLabel(selectedBuilding.buildingId, selectedBuilding)}`)
+      } else {
+        setBuildingActionMessage('Could not show building')
+      }
+    } finally {
+      setBuildingActionBusy(false)
+    }
+  }
+
+  const handleShowHiddenBuilding = async (buildingIdStr: string) => {
+    if (!streetsGLBridge?.isReady) return
+    const buildingId = Number(buildingIdStr)
+    if (!Number.isFinite(buildingId)) return
+    setBuildingActionBusy(true)
+    setBuildingActionMessage(null)
+    try {
+      const ok = await streetsGLBridge.showBuilding(buildingId)
+      if (ok) {
+        showStreetsGLBuildingId(buildingIdStr)
+        setBuildingActionMessage(`Shown ${formatBuildingLabel(buildingId)}`)
+      }
+    } finally {
+      setBuildingActionBusy(false)
+    }
+  }
+
+  const handleShowAllHiddenBuildings = async () => {
+    if (!streetsGLBridge?.isReady || streetsGLHiddenBuildingIds.length === 0) return
+    setBuildingActionBusy(true)
+    setBuildingActionMessage(null)
+    try {
+      const ok = await streetsGLBridge.syncHiddenBuildings([])
+      if (ok) {
+        setStreetsGLHiddenBuildingIds([])
+        setBuildingActionMessage('All map buildings restored')
+      }
+    } finally {
+      setBuildingActionBusy(false)
+    }
+  }
+
+  const handleHideSelectedFromMap = async () => {
+    // Fallback: poll iframe selection if live pick event was missed
+    if (!streetsGLBridge?.isReady) return
+    if (selectedBuilding) {
+      await handleHideSelectedBuilding()
+      return
+    }
+    setBuildingActionBusy(true)
+    setBuildingActionMessage(null)
+    try {
+      let found: StreetsGLBuildingRef | null = null
+      const ok = await streetsGLBridge.requestSelectedBuilding(
+        async (_pos, _h, _size, _bounds, building) => {
+          found = building
+        }
+      )
+      if (!ok || !found) {
+        setBuildingActionMessage('Click a map building first, then Hide')
+        return
+      }
+      setSelectedBuilding(found)
+      const hideOk = await streetsGLBridge.hideBuilding(found.buildingId)
+      if (hideOk) {
+        hideStreetsGLBuildingId(found.buildingId)
+        setBuildingActionMessage(`Hidden ${formatBuildingLabel(found.buildingId, found)}`)
+      }
+    } finally {
+      setBuildingActionBusy(false)
+    }
+  }
 
   const isInStartupGrace = () =>
     overlayEnabledAtRef.current != null &&
@@ -127,7 +274,8 @@ export default function OSMGroundV2Panel() {
     if (window.electronAPI?.startStreetsGLServer) {
       runStartServerAndPoll()
     } else {
-      const cmd = 'cd streets-gl-alt && npm run dev'
+      // Prefer root `npm run dev` so Vite + Streets GL managed start together
+      const cmd = 'npm run dev'
       navigator.clipboard.writeText(cmd).then(() => {
         setCopyFeedback(true)
         setTimeout(() => setCopyFeedback(false), 2500)
@@ -321,14 +469,15 @@ export default function OSMGroundV2Panel() {
                     <strong>To fix manually:</strong>
                   </p>
                   <ol style={{ margin: '8px 0 0 0', paddingLeft: '20px', fontSize: '12px' }}>
-                    <li>Open a terminal/command prompt</li>
-                    <li>Navigate to: <code>streets-gl-alt</code> folder</li>
-                    <li>Run: <code>npm run dev</code></li>
-                    <li>Wait for "webpack compiled successfully" message</li>
-                    <li>Refresh this page</li>
+                    <li>Open a terminal in the project root (<code>v3.18</code>)</li>
+                    <li>Run: <code>npm run dev</code> (starts Vite + Streets GL on port 8081)</li>
+                    <li>Wait for Streets GL / webpack to finish compiling</li>
+                    <li>Keep that terminal open — closing it stops the server</li>
+                    <li>Then refresh this page</li>
                   </ol>
                   <p style={{ margin: '8px 0 0 0', fontSize: '12px' }}>
-                    Or double-click <code>start-dev.bat</code> in the <code>streets-gl-alt</code> folder.
+                    Enable Streets GL / City mode is saved in the browser, but the map server is a
+                    separate Node process and does not stay running after you close the terminal.
                   </p>
                 </>
               )}
@@ -410,6 +559,82 @@ export default function OSMGroundV2Panel() {
                 Change location and zoom to navigate the Streets GL map. The map will update automatically.
               </p>
             </div>
+
+            <div className="osm-ground-v2-section">
+              <h4>Map buildings</h4>
+              <p className="help-text" style={{ marginTop: 0, fontSize: '12px' }}>
+                Click a Streets GL building on the map to select it, then hide it from view.
+                Hidden buildings persist in this session and in saved projects. Move/delete of
+                native OSM geometry is not supported (buildings are batched per tile).
+              </p>
+              {!mapInteractionEnabled && (
+                <p className="help-text" style={{ color: '#ffb74d', fontSize: '12px' }}>
+                  Enable &quot;Allow Streets GL Interaction&quot; (or City mode) so you can click buildings.
+                </p>
+              )}
+              <div className="osm-building-selected">
+                <div className="osm-building-selected-label">Selected</div>
+                <div className="osm-building-selected-value">
+                  {selectedBuilding
+                    ? formatBuildingLabel(selectedBuilding.buildingId, selectedBuilding)
+                    : 'None — click a building on the map'}
+                </div>
+              </div>
+              <div className="button-group" style={{ marginTop: '10px' }}>
+                <button
+                  type="button"
+                  className="view-button"
+                  disabled={buildingActionBusy || !streetsGLBridge?.isReady || (!selectedBuilding && !mapInteractionEnabled)}
+                  onClick={() => void handleHideSelectedFromMap()}
+                  title="Hide the selected map building"
+                >
+                  Hide
+                </button>
+                <button
+                  type="button"
+                  className="view-button"
+                  disabled={buildingActionBusy || !streetsGLBridge?.isReady || !selectedBuilding || !selectedIsHidden}
+                  onClick={() => void handleShowSelectedBuilding()}
+                  title="Show the selected building again"
+                >
+                  Show
+                </button>
+              </div>
+              {buildingActionMessage && (
+                <p className="help-text" style={{ marginTop: '8px', fontSize: '12px' }}>
+                  {buildingActionMessage}
+                </p>
+              )}
+              {streetsGLHiddenBuildingIds.length > 0 && (
+                <div className="osm-hidden-buildings" style={{ marginTop: '12px' }}>
+                  <div className="osm-hidden-buildings-header">
+                    <span>Hidden ({streetsGLHiddenBuildingIds.length})</span>
+                    <button
+                      type="button"
+                      className="osm-hidden-buildings-clear"
+                      disabled={buildingActionBusy || !streetsGLBridge?.isReady}
+                      onClick={() => void handleShowAllHiddenBuildings()}
+                    >
+                      Show all
+                    </button>
+                  </div>
+                  <ul className="osm-hidden-buildings-list">
+                    {streetsGLHiddenBuildingIds.map((id) => (
+                      <li key={id}>
+                        <span>{formatBuildingLabel(id)}</span>
+                        <button
+                          type="button"
+                          disabled={buildingActionBusy || !streetsGLBridge?.isReady}
+                          onClick={() => void handleShowHiddenBuilding(id)}
+                        >
+                          Show
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           </>
         )}
 
@@ -417,6 +642,7 @@ export default function OSMGroundV2Panel() {
           <h4>Usage</h4>
           <ul className="features-list">
             <li>Enable Streets GL to see realistic 3D buildings and map</li>
+            <li>Click a map building, then Hide in Map buildings to remove it from view</li>
             <li>Place your 3D objects (cars, models, etc.) - they will appear inside the Streets GL scene</li>
             <li>Objects sync automatically to Streets GL and appear alongside buildings</li>
             <li>Adjust location and zoom to navigate the map</li>

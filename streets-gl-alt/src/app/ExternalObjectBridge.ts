@@ -19,9 +19,27 @@ import MapTimeSystem from './systems/MapTimeSystem'
 import PickingSystem from './systems/PickingSystem'
 import ControlsSystem from './systems/ControlsSystem'
 import TerrainSystem from './systems/TerrainSystem'
+import TileObjectsSystem from './systems/TileObjectsSystem'
+import Tile from './objects/Tile'
+import {
+  STREETS_GL_BRIDGE_MAX_HIDDEN_BUILDINGS,
+  envelopeHasCapability,
+  isAllowedParentOrigin,
+  parseBridgeEnvelope,
+  readCapabilityFromLocation,
+  readParentOriginFromLocation,
+  validateExternalObjectGeometry,
+  validateSyncObjectsPayload
+} from './bridgeSecurity'
 
 const isBridgeDebugEnabled = (): boolean =>
   typeof window !== 'undefined' && (window as any).__streetsGLDebug === true
+
+interface ExternalMeshPart {
+  geometry: GeometryData
+  color?: { r: number; g: number; b: number }
+  baseColorTextureDataUrl?: string
+}
 
 interface ExternalObject {
   id: string
@@ -33,6 +51,8 @@ interface ExternalObject {
   visible?: boolean
   metadata?: any
   geometry?: GeometryData // Optional geometry data for rendering
+  /** Per-texture mesh parts (preferred for multi-material imports). */
+  parts?: ExternalMeshPart[]
 }
 
 export class ExternalObjectBridge {
@@ -52,6 +72,11 @@ export class ExternalObjectBridge {
   private static readonly EXTERNAL_PICKING_ID_BASE = 0x7f000000
   private nextPickingId: number = ExternalObjectBridge.EXTERNAL_PICKING_ID_BASE
   private pickingSelectionWired: boolean = false
+  /** Per-session capability from iframe URL (?sgb=...). Required on every parent message. */
+  private readonly capability: string | null
+  /** Exact parent origin for postMessage replies. */
+  private readonly parentOrigin: string | null
+  private trustedParentSource: MessageEventSource | null = null
 
   private debugLog(...args: unknown[]): void {
     if (isBridgeDebugEnabled()) {
@@ -61,6 +86,13 @@ export class ExternalObjectBridge {
 
   constructor(systemManager: SystemManager) {
     this.systemManager = systemManager
+    this.capability = readCapabilityFromLocation(window.location.search)
+    this.parentOrigin = readParentOriginFromLocation(window.location.search)
+    if (!this.capability || !this.parentOrigin) {
+      console.warn(
+        '[ExternalObjectBridge] Missing bridge capability or parent origin in URL — bridge will ignore messages until reloaded with secure params'
+      )
+    }
     this.init()
   }
 
@@ -92,15 +124,33 @@ export class ExternalObjectBridge {
   private setupMessageListener(): void {
     window.addEventListener('message', (event) => {
       try {
-        // Security: In production, check event.origin === 'http://localhost:3000'
-        if (!event.data || typeof event.data !== 'object') return
+        // SEC-5: exact parent origin + source + capability; reject before geometry alloc
+        if (!this.capability || !this.parentOrigin) return
+        if (!isAllowedParentOrigin(event.origin) || event.origin !== this.parentOrigin) return
+        if (event.source !== window.parent) return
 
-        const { type, payload } = event.data
+        const envelope = parseBridgeEnvelope(event.data)
+        if (!envelope) return
+        if (!envelopeHasCapability(envelope, this.capability)) return
+
+        this.trustedParentSource = event.source
+
+        const { type, payload } = envelope
 
         switch (type) {
-        case 'STREETS_GL_ADD_OBJECT':
-          this.handleAddObject(payload)
+        case 'STREETS_GL_ADD_OBJECT': {
+          const validation = validateExternalObjectGeometry(payload)
+          if (!validation.ok) {
+            this.sendResponse('STREETS_GL_OBJECT_ADDED', {
+              success: false,
+              error: validation.error || 'Invalid geometry payload',
+              objectId: (payload as { id?: string } | null)?.id
+            })
+            return
+          }
+          this.handleAddObject(payload as ExternalObject)
           break
+        }
         case 'STREETS_GL_UPDATE_OBJECT':
           this.handleUpdateObject(payload)
           break
@@ -116,9 +166,39 @@ export class ExternalObjectBridge {
         case 'STREETS_GL_GET_SELECTED_BUILDING':
           this.handleGetSelectedBuilding()
           break
-        case 'STREETS_GL_SYNC_OBJECTS':
+        case 'STREETS_GL_HIDE_BUILDING':
+          this.handleHideBuilding(payload)
+          break
+        case 'STREETS_GL_SHOW_BUILDING':
+          this.handleShowBuilding(payload)
+          break
+        case 'STREETS_GL_SYNC_HIDDEN_BUILDINGS': {
+          const ids = (payload as { buildingIds?: unknown } | null)?.buildingIds
+          if (Array.isArray(ids) && ids.length > STREETS_GL_BRIDGE_MAX_HIDDEN_BUILDINGS) {
+            this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS_SYNCED', {
+              success: false,
+              error: `Too many hidden buildings (${ids.length})`
+            })
+            return
+          }
+          this.handleSyncHiddenBuildings(payload)
+          break
+        }
+        case 'STREETS_GL_GET_HIDDEN_BUILDINGS':
+          this.handleGetHiddenBuildings()
+          break
+        case 'STREETS_GL_SYNC_OBJECTS': {
+          const validation = validateSyncObjectsPayload(payload)
+          if (!validation.ok) {
+            this.sendResponse('STREETS_GL_OBJECTS_SYNCED', {
+              success: false,
+              error: validation.error || 'Invalid sync payload'
+            })
+            return
+          }
           this.handleSyncObjects(payload)
           break
+        }
         case 'STREETS_GL_SET_SHADOW_QUALITY':
           this.handleSetShadowQuality(payload)
           break
@@ -135,19 +215,16 @@ export class ExternalObjectBridge {
           this.handleNavigateTo(payload)
           break
         default:
-          // Unknown message type - log but don't error; ignore webpack HMR messages
-          if (type && !type.startsWith('STREETS_GL_') && type !== 'webpackInvalid' && type !== 'webpackOk') {
-            console.warn('[ExternalObjectBridge] Unknown message type:', type)
-          }
+          // Unknown STREETS_GL_* type — ignore quietly
           break
       }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error'
         console.error('[ExternalObjectBridge] ❌ Error handling message:', {
-          type: event.data?.type,
+          type: (event.data as { type?: string } | null)?.type,
           error: errorMsg,
           stack: error instanceof Error ? error.stack : undefined,
-          payload: event.data?.payload
+          payload: (event.data as { payload?: unknown } | null)?.payload
         })
       }
     })
@@ -174,12 +251,21 @@ export class ExternalObjectBridge {
   }
 
   private notifyParentReady(): void {
+    this.ensurePickingSelectionWired()
+    if (!this.capability || !this.parentOrigin) {
+      console.warn('[ExternalObjectBridge] Skipping BRIDGE_READY — missing capability/parent origin')
+      return
+    }
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type: 'STREETS_GL_BRIDGE_READY',
-        ready: true,
-        timestamp: Date.now()
-      }, '*') // In production, specify exact origin: 'http://localhost:3000'
+      window.parent.postMessage(
+        {
+          type: 'STREETS_GL_BRIDGE_READY',
+          ready: true,
+          capability: this.capability,
+          timestamp: Date.now()
+        },
+        this.parentOrigin
+      )
       this.debugLog('[ExternalObjectBridge] Notified parent that bridge is ready')
     }
   }
@@ -198,6 +284,21 @@ export class ExternalObjectBridge {
     try {
       this.debugLog('[ExternalObjectBridge] Adding object:', data)
 
+      // Replace any prior shell with the same id (concurrent resync / re-add races).
+      // Leaving the old object parented while overwriting the map caused orphan meshes
+      // and empty containers fighting for the same logical id.
+      const prior = this.externalObjects.get(data.id)
+      if (prior) {
+        try {
+          if (prior.parent) {
+            prior.parent.remove(prior)
+          }
+        } catch (e) {
+          console.warn('[ExternalObjectBridge] Failed to remove prior object before re-add:', data.id, e)
+        }
+        this.externalObjects.delete(data.id)
+      }
+
       if (data.position) {
         const { x, y, z } = data.position
         if (
@@ -213,114 +314,61 @@ export class ExternalObjectBridge {
 
       let object: Object3D
 
-      // If geometry data is provided, create a renderable object
-      if (data.geometry && data.geometry.positions && data.geometry.positions.length > 0) {
-        // Convert Float32Array from postMessage (it comes as a regular array)
-        const positions = data.geometry.positions instanceof Float32Array 
-          ? data.geometry.positions 
-          : new Float32Array(data.geometry.positions)
-        
-        const normals = data.geometry.normals 
-          ? (data.geometry.normals instanceof Float32Array 
-              ? data.geometry.normals 
-              : new Float32Array(data.geometry.normals))
-          : undefined
-        
-        const uvs = data.geometry.uvs 
-          ? (data.geometry.uvs instanceof Float32Array 
-              ? data.geometry.uvs 
-              : new Float32Array(data.geometry.uvs))
-          : undefined
-        
-        const indices = data.geometry.indices 
-          ? (data.geometry.indices instanceof Uint32Array 
-              ? data.geometry.indices 
-              : new Uint32Array(data.geometry.indices))
-          : undefined
+      const scale = data.scale || { x: 1, y: 1, z: 1 }
+      if (
+        Math.abs(scale.x || 0) < 1e-8 ||
+        Math.abs(scale.y || 0) < 1e-8 ||
+        Math.abs(scale.z || 0) < 1e-8
+      ) {
+        console.warn('[ExternalObjectBridge] Object has near-zero scale — forcing 1:', data.id, scale)
+        data.scale = { x: 1, y: 1, z: 1 }
+      }
 
-        const geometryData: GeometryData = {
-          positions,
-          normals,
-          uvs,
-          indices
-        }
+      const meshParts = this.resolveMeshParts(data)
+      if (meshParts.length > 0) {
+        const pickingId = this.allocatePickingId(data.id)
+        const renderer = this.renderSystem?.getRenderer() ?? null
 
-        // Reject NaN/Inf geometry — it breaks bounding boxes and frustum culling.
-        for (let i = 0; i < positions.length; i++) {
-          if (!Number.isFinite(positions[i])) {
-            throw new Error(`Invalid geometry position at index ${i}`)
-          }
-        }
-
-        const scale = data.scale || { x: 1, y: 1, z: 1 }
-        if (
-          Math.abs(scale.x || 0) < 1e-8 ||
-          Math.abs(scale.y || 0) < 1e-8 ||
-          Math.abs(scale.z || 0) < 1e-8
-        ) {
-          console.warn('[ExternalObjectBridge] Object has near-zero scale — forcing 1:', data.id, scale)
-          data.scale = { x: 1, y: 1, z: 1 }
-        }
-
-        // Use provided color or default to white
-        let objectColor = data.color || { r: 1.0, g: 1.0, b: 1.0 }
-        this.debugLog('[ExternalObjectBridge] Received color from data:', {
-          dataColor: data.color,
-          objectColor,
-          colorType: typeof data.color,
-          colorKeys: data.color ? Object.keys(data.color) : []
-        })
-
-        const textureDataUrl = data.metadata?.baseColorTextureDataUrl
-          || data.metadata?.material?.baseColorTextureDataUrl
-
-        // When a base-color map is present, keep the shader tint white so the texture is not multiplied by a stale averaged color.
-        if (textureDataUrl && typeof textureDataUrl === 'string') {
-          objectColor = { r: 1.0, g: 1.0, b: 1.0 }
-        }
-
-        const renderableObject = new ExternalRenderableObject(geometryData, objectColor)
-        this.debugLog('[ExternalObjectBridge] Object color after creation:', {
-          objectColor: renderableObject.color,
-          matches: renderableObject.color.r === objectColor.r && renderableObject.color.g === objectColor.g && renderableObject.color.b === objectColor.b
-        })
-
-        if (textureDataUrl && typeof textureDataUrl === 'string' && this.renderSystem) {
-          const renderer = this.renderSystem.getRenderer()
-          if (renderer) {
-            renderableObject.setBaseColorTextureFromDataUrl(renderer, textureDataUrl)
-          }
-        }
-        // Bridge positions are absolute Web-Mercator meters (same space as tiles). Do not re-ground
-        // Y here — the parent app computes placement; updates use the same absolute convention.
-        renderableObject.position = new Vec3(
+        // Multi-part: parent holds transform; children are identity-local ExternalRenderableObjects
+        // each with their own base-color map (fixes scrambled UVs on multi-material buildings).
+        const parent = new Object3D()
+        parent.position = new Vec3(
           data.position.x,
           data.position.y ?? 1.5,
           data.position.z
         )
-        renderableObject.rotation = new Vec3(data.rotation.x, data.rotation.y, data.rotation.z)
-        renderableObject.scale = new Vec3(data.scale.x, data.scale.y, data.scale.z)
-        ;(renderableObject as any).visible = data.visible !== false
-        
-        // CRITICAL: Update matrices so object renders correctly
-        renderableObject.updateMatrix()
-        renderableObject.updateMatrixWorld()
-        
-        // Store metadata
-        ;(renderableObject as any).externalId = data.id
-        ;(renderableObject as any).externalType = data.type
-        ;(renderableObject as any).externalMetadata = data.metadata || {}
+        parent.rotation = new Vec3(data.rotation.x, data.rotation.y, data.rotation.z)
+        parent.scale = new Vec3(data.scale.x, data.scale.y, data.scale.z)
+        ;(parent as any).visible = data.visible !== false
+        ;(parent as any).externalId = data.id
+        ;(parent as any).externalType = data.type
+        ;(parent as any).externalMetadata = data.metadata || {}
+        ;(parent as any).pickingId = pickingId
+        ;(parent as any).isExternalObjectGroup = true
 
-        // Assign a unique G-buffer picking id so PickingSystem can select this object.
-        ;(renderableObject as any).pickingId = this.allocatePickingId(data.id)
+        let totalVertices = 0
+        for (let partIndex = 0; partIndex < meshParts.length; partIndex++) {
+          const part = meshParts[partIndex]
+          const renderable = this.createRenderableFromPart(part, data, pickingId, renderer)
+          if (!renderable) continue
+          // Geometry is already baked into the root object's local space.
+          renderable.position = new Vec3(0, 0, 0)
+          renderable.rotation = new Vec3(0, 0, 0)
+          renderable.scale = new Vec3(1, 1, 1)
+          renderable.updateMatrix()
+          parent.add(renderable)
+          totalVertices += (part.geometry.positions?.length || 0) / 3
+        }
 
-        object = renderableObject
-        this.debugLog('[ExternalObjectBridge] Created renderable object with geometry:', {
+        parent.updateMatrix()
+        parent.updateMatrixWorld()
+        object = parent
+
+        this.debugLog('[ExternalObjectBridge] Created multi-part external object:', {
           id: data.id,
-          vertexCount: positions.length / 3,
-          hasNormals: !!normals,
-          hasUVs: !!uvs,
-          hasIndices: !!indices
+          partCount: parent.children.length,
+          totalVertices,
+          texturedParts: meshParts.filter((p) => !!p.baseColorTextureDataUrl).length
         })
       } else {
         // No geometry - create a simple container object (invisible but can be used as a marker)
@@ -360,22 +408,31 @@ export class ExternalObjectBridge {
         isRenderable: object instanceof ExternalRenderableObject,
         sceneChildrenCount: this.sceneSystem.scene.children.length
       })
-      if (!isVisible && data.geometry?.positions?.length) {
+      if (!isVisible && (meshParts.length > 0 || data.geometry?.positions?.length)) {
         console.warn(
           '[ExternalObjectBridge] ⚠️ Object has geometry but visible=false — it will not render. Check parent sync visible flag.',
           data.id
         )
       }
 
-      // If it's a renderable object, trigger mesh creation
-      if (object instanceof ExternalRenderableObject && this.renderSystem) {
+      // Eagerly create GPU meshes for renderable roots / multi-part children
+      if (this.renderSystem) {
         const renderer = this.renderSystem.getRenderer()
         if (renderer) {
-          this.debugLog('[ExternalObjectBridge] Creating mesh for renderable object:', data.id)
-          object.updateMesh(renderer)
+          const renderables: ExternalRenderableObject[] = []
+          if (object instanceof ExternalRenderableObject) {
+            renderables.push(object)
+          }
+          for (const child of object.children) {
+            if (child instanceof ExternalRenderableObject) {
+              renderables.push(child)
+            }
+          }
+          for (const renderable of renderables) {
+            renderable.updateMesh(renderer)
+          }
           this.debugLog('[ExternalObjectBridge] Mesh creation completed for:', data.id, {
-            meshReady: object.isMeshReady(),
-            hasMesh: !!object.mesh
+            renderableCount: renderables.length
           })
         } else {
           console.warn('[ExternalObjectBridge] Renderer not available for mesh creation:', data.id)
@@ -439,16 +496,114 @@ export class ExternalObjectBridge {
   }
 
   /**
+   * Normalize mesh parts from the payload (top-level `parts`, metadata.parts, or legacy single geometry).
+   */
+  private resolveMeshParts(data: ExternalObject): ExternalMeshPart[] {
+    const fromTop = Array.isArray(data.parts) ? data.parts : null
+    const fromMeta = Array.isArray(data.metadata?.parts) ? data.metadata.parts : null
+    const rawParts = (fromTop && fromTop.length > 0 ? fromTop : fromMeta) as ExternalMeshPart[] | null
+
+    if (rawParts && rawParts.length > 0) {
+      return rawParts.filter(
+        (p) => p?.geometry?.positions && (p.geometry.positions as ArrayLike<number>).length >= 9
+      )
+    }
+
+    if (data.geometry?.positions && data.geometry.positions.length >= 9) {
+      const textureDataUrl =
+        data.metadata?.baseColorTextureDataUrl ||
+        data.metadata?.material?.baseColorTextureDataUrl
+      return [
+        {
+          geometry: data.geometry,
+          color: data.color || { r: 1, g: 1, b: 1 },
+          baseColorTextureDataUrl:
+            typeof textureDataUrl === 'string' ? textureDataUrl : undefined
+        }
+      ]
+    }
+
+    return []
+  }
+
+  private normalizeGeometryData(geometry: GeometryData): GeometryData | null {
+    const positions =
+      geometry.positions instanceof Float32Array
+        ? geometry.positions
+        : new Float32Array(geometry.positions as ArrayLike<number>)
+    if (positions.length < 9) return null
+
+    for (let i = 0; i < positions.length; i++) {
+      if (!Number.isFinite(positions[i])) {
+        throw new Error(`Invalid geometry position at index ${i}`)
+      }
+    }
+
+    const normals = geometry.normals
+      ? geometry.normals instanceof Float32Array
+        ? geometry.normals
+        : new Float32Array(geometry.normals as ArrayLike<number>)
+      : undefined
+    const uvs = geometry.uvs
+      ? geometry.uvs instanceof Float32Array
+        ? geometry.uvs
+        : new Float32Array(geometry.uvs as ArrayLike<number>)
+      : undefined
+    const indices = geometry.indices
+      ? geometry.indices instanceof Uint32Array
+        ? geometry.indices
+        : new Uint32Array(geometry.indices as ArrayLike<number>)
+      : undefined
+
+    return { positions, normals, uvs, indices }
+  }
+
+  private createRenderableFromPart(
+    part: ExternalMeshPart,
+    data: ExternalObject,
+    pickingId: number,
+    renderer: AbstractRenderer | null
+  ): ExternalRenderableObject | null {
+    const geometryData = this.normalizeGeometryData(part.geometry)
+    if (!geometryData) return null
+
+    let objectColor = part.color || data.color || { r: 1, g: 1, b: 1 }
+    const textureDataUrl = part.baseColorTextureDataUrl
+    if (textureDataUrl) {
+      objectColor = { r: 1, g: 1, b: 1 }
+    }
+
+    const renderable = new ExternalRenderableObject(geometryData, objectColor)
+    ;(renderable as any).visible = data.visible !== false
+    ;(renderable as any).externalId = data.id
+    ;(renderable as any).externalType = data.type
+    ;(renderable as any).externalMetadata = data.metadata || {}
+    ;(renderable as any).pickingId = pickingId
+
+    if (textureDataUrl && renderer) {
+      renderable.setBaseColorTextureFromDataUrl(renderer, textureDataUrl)
+    }
+
+    return renderable
+  }
+
+  /**
    * Estimate an external object's largest world-space dimension from its geometry extent and
    * scale. Used to choose a sensible camera framing distance. Falls back to a small default.
    */
   private estimateObjectWorldSize(data: ExternalObject): number {
-    const positions = data.geometry?.positions
     const scale = data.scale || { x: 1, y: 1, z: 1 }
-    if (positions && positions.length >= 3) {
-      let minX = Infinity, minY = Infinity, minZ = Infinity
-      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
-      for (let i = 0; i < positions.length; i += 3) {
+    const parts = this.resolveMeshParts(data)
+    const positionArrays: ArrayLike<number>[] = parts.map((p) => p.geometry.positions as ArrayLike<number>)
+    if (positionArrays.length === 0 && data.geometry?.positions) {
+      positionArrays.push(data.geometry.positions as ArrayLike<number>)
+    }
+
+    let minX = Infinity, minY = Infinity, minZ = Infinity
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+    let found = false
+    for (const positions of positionArrays) {
+      for (let i = 0; i + 2 < positions.length; i += 3) {
         const x = positions[i], y = positions[i + 1], z = positions[i + 2]
         if (x < minX) minX = x
         if (y < minY) minY = y
@@ -456,7 +611,10 @@ export class ExternalObjectBridge {
         if (x > maxX) maxX = x
         if (y > maxY) maxY = y
         if (z > maxZ) maxZ = z
+        found = true
       }
+    }
+    if (found) {
       const sizeX = (maxX - minX) * Math.abs(scale.x || 1)
       const sizeY = (maxY - minY) * Math.abs(scale.y || 1)
       const sizeZ = (maxZ - minZ) * Math.abs(scale.z || 1)
@@ -514,7 +672,7 @@ export class ExternalObjectBridge {
 
   /**
    * Wire a one-time callback so the PickingSystem notifies the parent window when an external
-   * object is selected (or selection is cleared).
+   * object or native OSM building is selected (or selection is cleared).
    */
   private wirePickingSelection(pickingSystem: PickingSystem): void {
     if (this.pickingSelectionWired) {
@@ -525,6 +683,188 @@ export class ExternalObjectBridge {
       this.sendResponse('STREETS_GL_OBJECT_SELECTED', {
         success: true,
         objectId: externalId
+      })
+    }
+    pickingSystem.onBuildingSelected = (payload) => {
+      if (!payload) {
+        this.sendResponse('STREETS_GL_BUILDING_SELECTED', {
+          success: true,
+          buildingId: null
+        })
+        return
+      }
+      this.sendResponse('STREETS_GL_BUILDING_SELECTED', {
+        success: true,
+        buildingId: payload.buildingId,
+        osmType: payload.osmType,
+        osmId: payload.osmId
+      })
+    }
+  }
+
+  private ensurePickingSelectionWired(): void {
+    try {
+      const pickingSystem = this.systemManager?.getSystem(PickingSystem)
+      if (pickingSystem) {
+        this.wirePickingSelection(pickingSystem)
+      }
+    } catch {
+      // PickingSystem not ready yet
+    }
+  }
+
+  private parseBuildingId(payload: { buildingId?: number | string } | null | undefined): number | null {
+    if (payload == null || payload.buildingId == null) {
+      return null
+    }
+    const id = typeof payload.buildingId === 'string'
+      ? Number(payload.buildingId)
+      : payload.buildingId
+    if (!Number.isFinite(id)) {
+      return null
+    }
+    return id
+  }
+
+  private describeBuilding(packedId: number): { osmType: number; osmId: number; osmTypeName: string } {
+    // Packed type matches SelectionPanel: 0 = way, 1 = relation (not OSMReferenceType enum).
+    const [osmType, osmId] = Tile.unpackFeatureId(packedId)
+    const osmTypeName = osmType === 0 ? 'way' : osmType === 1 ? 'relation' : `type-${osmType}`
+    return { osmType, osmId, osmTypeName }
+  }
+
+  private handleHideBuilding(payload: { buildingId?: number | string }): void {
+    this.ensurePickingSelectionWired()
+    const buildingId = this.parseBuildingId(payload)
+    if (buildingId == null) {
+      this.sendResponse('STREETS_GL_BUILDING_HIDDEN', {
+        success: false,
+        error: 'Missing or invalid buildingId'
+      })
+      return
+    }
+
+    try {
+      const tileObjects = this.systemManager?.getSystem(TileObjectsSystem)
+      if (!tileObjects) {
+        this.sendResponse('STREETS_GL_BUILDING_HIDDEN', {
+          success: false,
+          error: 'TileObjectsSystem not available',
+          buildingId
+        })
+        return
+      }
+
+      const loaded = tileObjects.hideUserBuilding(buildingId)
+      const desc = this.describeBuilding(buildingId)
+      this.sendResponse('STREETS_GL_BUILDING_HIDDEN', {
+        success: true,
+        buildingId,
+        loaded,
+        ...desc
+      })
+    } catch (error) {
+      this.sendResponse('STREETS_GL_BUILDING_HIDDEN', {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        buildingId
+      })
+    }
+  }
+
+  private handleShowBuilding(payload: { buildingId?: number | string }): void {
+    const buildingId = this.parseBuildingId(payload)
+    if (buildingId == null) {
+      this.sendResponse('STREETS_GL_BUILDING_SHOWN', {
+        success: false,
+        error: 'Missing or invalid buildingId'
+      })
+      return
+    }
+
+    try {
+      const tileObjects = this.systemManager?.getSystem(TileObjectsSystem)
+      if (!tileObjects) {
+        this.sendResponse('STREETS_GL_BUILDING_SHOWN', {
+          success: false,
+          error: 'TileObjectsSystem not available',
+          buildingId
+        })
+        return
+      }
+
+      const loaded = tileObjects.showUserBuilding(buildingId)
+      const desc = this.describeBuilding(buildingId)
+      this.sendResponse('STREETS_GL_BUILDING_SHOWN', {
+        success: true,
+        buildingId,
+        loaded,
+        ...desc
+      })
+    } catch (error) {
+      this.sendResponse('STREETS_GL_BUILDING_SHOWN', {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        buildingId
+      })
+    }
+  }
+
+  private handleSyncHiddenBuildings(payload: { buildingIds?: Array<number | string> } | Array<number | string> | null): void {
+    try {
+      const tileObjects = this.systemManager?.getSystem(TileObjectsSystem)
+      if (!tileObjects) {
+        this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS_SYNCED', {
+          success: false,
+          error: 'TileObjectsSystem not available'
+        })
+        return
+      }
+
+      const raw = Array.isArray(payload)
+        ? payload
+        : (payload?.buildingIds ?? [])
+      const ids = raw
+        .map((id) => (typeof id === 'string' ? Number(id) : id))
+        .filter((id): id is number => typeof id === 'number' && Number.isFinite(id))
+
+      tileObjects.syncUserHiddenBuildings(ids)
+      this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS_SYNCED', {
+        success: true,
+        buildingIds: tileObjects.getUserHiddenBuildingIds()
+      })
+    } catch (error) {
+      this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS_SYNCED', {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  private handleGetHiddenBuildings(): void {
+    try {
+      const tileObjects = this.systemManager?.getSystem(TileObjectsSystem)
+      if (!tileObjects) {
+        this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS', {
+          success: false,
+          error: 'TileObjectsSystem not available'
+        })
+        return
+      }
+
+      const buildingIds = tileObjects.getUserHiddenBuildingIds()
+      this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS', {
+        success: true,
+        buildingIds,
+        buildings: buildingIds.map((id) => ({
+          buildingId: id,
+          ...this.describeBuilding(id)
+        }))
+      })
+    } catch (error) {
+      this.sendResponse('STREETS_GL_HIDDEN_BUILDINGS', {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
       })
     }
   }
@@ -599,6 +939,10 @@ export class ExternalObjectBridge {
 
       if (data.visible !== undefined) {
         ;(object as any).visible = data.visible
+        // GBuffer only checks each object's own visible flag — sync children.
+        for (const child of object.children) {
+          ;(child as any).visible = data.visible
+        }
       }
 
       // Force matrix update to ensure position/rotation/scale changes are reflected
@@ -606,6 +950,7 @@ export class ExternalObjectBridge {
       object.updateMatrix()
       // Then update world matrix (which includes parent transforms)
       object.updateMatrixWorld()
+      object.updateMatrixWorldRecursively()
       
       // Verify the position was actually updated
       const actualNewPosition = { x: object.position.x, y: object.position.y, z: object.position.z }
@@ -645,11 +990,32 @@ export class ExternalObjectBridge {
   private handleRemoveObject(data: { id: string }): void {
     const object = this.externalObjects.get(data.id)
     if (!object) {
-      console.warn('[ExternalObjectBridge] Object not found for removal:', data.id)
+      // Idempotent: parent may retry removal after iframe reload when object is already gone.
+      this.debugLog('[ExternalObjectBridge] Object already removed (idempotent):', data.id)
+      this.sendResponse('STREETS_GL_OBJECT_REMOVED', {
+        success: true,
+        objectId: data.id,
+        alreadyRemoved: true
+      })
       return
     }
 
     try {
+      // Dispose GPU resources for multi-part children / single renderable roots
+      const disposeRenderable = (obj: Object3D) => {
+        if (obj instanceof ExternalRenderableObject) {
+          try {
+            obj.delete()
+          } catch (e) {
+            // ignore dispose errors
+          }
+        }
+        for (const child of [...obj.children]) {
+          disposeRenderable(child)
+        }
+      }
+      disposeRenderable(object)
+
       if (object.parent) {
         object.parent.remove(object)
       }
@@ -981,9 +1347,13 @@ export class ExternalObjectBridge {
         buildingDepth
       })
 
+      const desc = this.describeBuilding(selectedBuilding.id)
       this.sendResponse('STREETS_GL_SELECTED_BUILDING', {
         success: true,
         buildingId: selectedBuilding.id,
+        osmType: desc.osmType,
+        osmId: desc.osmId,
+        osmTypeName: desc.osmTypeName,
         position: buildingPosition,
         tilePosition: {
           x: tilePosition.x,
@@ -1098,12 +1468,18 @@ export class ExternalObjectBridge {
   }
 
   private sendResponse(type: string, payload: any): void {
+    if (!this.capability || !this.parentOrigin) return
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({
-        type,
-        payload,
-        timestamp: Date.now()
-      }, '*') // In production, specify exact origin
+      const target = this.trustedParentSource || window.parent
+      ;(target as Window).postMessage(
+        {
+          type,
+          payload,
+          capability: this.capability,
+          timestamp: Date.now()
+        },
+        this.parentOrigin
+      )
     }
   }
 }

@@ -21,6 +21,13 @@ import {
   weatherPresetStorePatch,
   type WeatherPresetId
 } from '../viewer/utils/weatherPresets'
+import {
+  loadStreetsGLSessionPrefs,
+  renderModeForStreetsGLOverlay,
+  saveStreetsGLSessionPrefs
+} from '../utils/streetsGLSessionPersistence'
+
+const streetsGLSessionPrefs = loadStreetsGLSessionPrefs()
 
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
@@ -397,6 +404,8 @@ export interface AppState {
   streetsGLBridge: StreetsGLBridge | null // Temporarily show Streets GL UI buttons (for accessing settings/info)
   streetsGLStartRequestedAt: number | null // When City/OSM 3D triggered start (Electron), so UI shows "Starting..." immediately
   streetsGLIframeReloadKey: number // Increment when server becomes available so iframe remounts and loads (fixes "refused" stuck)
+  /** Packed Streets GL / OSM building feature ids currently hidden by the user (stringified). */
+  streetsGLHiddenBuildingIds: string[]
   pathTracerActive: boolean
   pathTracerMode: 'gpu' | 'cpu'
   pathTracerSettings: {
@@ -497,8 +506,6 @@ export interface AppState {
   hdrBackgroundVisible: boolean
   hdrLoading: boolean
   hdrLoadProgress: number
-  replicateApiKey: string | null
-  setReplicateApiKey: (key: string | null) => void
   
   // Camera Views
   cameraViews: CameraView[]
@@ -634,6 +641,9 @@ export interface AppState {
   setStreetsGLBridge: (bridge: StreetsGLBridge | null) => void
   setStreetsGLStartRequestedAt: (t: number | null) => void
   setStreetsGLIframeReloadKey: (n: number | ((prev: number) => number)) => void
+  setStreetsGLHiddenBuildingIds: (ids: string[]) => void
+  hideStreetsGLBuildingId: (id: string | number) => void
+  showStreetsGLBuildingId: (id: string | number) => void
   setPathTracerActive: (active: boolean) => void
   setPathTracerMode: (mode: 'gpu' | 'cpu') => void
   setPathTracerSampleTarget: (mode: 'gpu' | 'cpu', samples: number) => void
@@ -902,7 +912,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   showAxes: true,
   showBoundingBoxes: false,
   showStats: false,
-  renderMode: 'product',
+  renderMode: streetsGLSessionPrefs.renderMode,
   showLightHelpers: true,
   menuLayout: initialMenuState.layout,
   menuRowBreaks: initialMenuState.rowBreaks,
@@ -947,7 +957,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   showShadowSystemTestPanel: false,
   showHDRTestPanel: false,
   showHDRShadowDemoPanel: false,
-  showOSMGroundV2Panel: false, // Disabled - using Streets GL iframe overlay instead
+  showOSMGroundV2Panel: streetsGLSessionPrefs.showOSMGroundV2Panel ?? false,
   showPolygonDrawingPanel: false,
   polygonDrawingEnabled: false,
   showHotspotsPanel: false,
@@ -966,17 +976,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   streetsGLGroundEnabled: false, // Disabled - using Streets GL iframe overlay instead
   streetsGLGroundSize: 1000,
   streetsGLGroundOpacity: 1.0,
-  streetsGLGroundLat: 32.89917,
-  streetsGLGroundLon: -97.03813,
-  streetsGLGroundZoom: 15,
+  streetsGLGroundLat: streetsGLSessionPrefs.groundLat,
+  streetsGLGroundLon: streetsGLSessionPrefs.groundLon,
+  streetsGLGroundZoom: streetsGLSessionPrefs.groundZoom,
   streetsGLGroundLayerType: 'osm',
   streetsGLGroundCustomTexture: null,
-    streetsGLIframeOverlay: false, // Default to false - show 3D scene first, user can enable Streets GL map if needed
-    streetsGLIframeInteractive: false, // Default to non-interactive so user can place models
-    streetsGLShowUI: false,
+  // Restored from localStorage session prefs when present (process on :8081 is separate)
+  streetsGLIframeOverlay: streetsGLSessionPrefs.iframeOverlay,
+  streetsGLIframeInteractive: streetsGLSessionPrefs.iframeInteractive,
+  streetsGLShowUI: false,
   streetsGLBridge: null, // Hide UI by default
   streetsGLStartRequestedAt: null,
   streetsGLIframeReloadKey: 0,
+  streetsGLHiddenBuildingIds: streetsGLSessionPrefs.hiddenBuildingIds ?? [],
   showShaderEditorPanel: false,
   showWebExportPanel: false,
   showPlacesPanel: false,
@@ -1073,8 +1085,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     hdrBackgroundVisible: true,
     hdrLoading: false,
     hdrLoadProgress: 0,
-    replicateApiKey: (import.meta.env.VITE_REPLICATE_API_TOKEN ?? '').trim() || null,
-    
     // Camera Views defaults
   cameraViews: [],
   showCameraViewsPanel: false,
@@ -1223,7 +1233,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleBoundingBoxes: () => set((state) => ({ showBoundingBoxes: !state.showBoundingBoxes })),
   setShowBoundingBoxes: (show: boolean) => set({ showBoundingBoxes: show }),
   toggleStats: () => set((state) => ({ showStats: !state.showStats })),
-  setRenderMode: (mode) => set({ renderMode: mode }),
+  setRenderMode: (mode) => {
+    set({ renderMode: mode })
+  },
   setMenuLayout: (input) =>
     set((state) => {
       const resolved =
@@ -1469,15 +1481,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSmoothingIntensity: (intensity) => set({ smoothingIntensity: Math.max(0, Math.min(1, intensity)) }),
   setSmoothingMeshSelectionMode: (mode) => set({ smoothingMeshSelectionMode: mode }),
   setSelectedSmoothingMeshes: (meshes) => set({ selectedSmoothingMeshes: meshes }),
-  toggleOSMGroundV2Panel: () =>
-    set((state) => {
-      const willOpen = !state.showOSMGroundV2Panel
-      // When opening OSM 3D panel, ensure Streets GL overlay is on so the map is visible
-      if (willOpen && !state.streetsGLIframeOverlay) {
-        return { showOSMGroundV2Panel: true, streetsGLIframeOverlay: true }
-      }
-      return { showOSMGroundV2Panel: willOpen }
-    }),
+  toggleOSMGroundV2Panel: () => {
+    const state = get()
+    const willOpen = !state.showOSMGroundV2Panel
+    // Opening OSM 3D requires a live Streets GL iframe (city/hybrid + overlay).
+    // Must go through setStreetsGLIframeOverlay so product→hybrid upgrade runs.
+    if (willOpen && !state.streetsGLIframeOverlay) {
+      get().setStreetsGLIframeOverlay(true)
+    } else if (willOpen && state.renderMode === 'product') {
+      set({ renderMode: renderModeForStreetsGLOverlay(true, state.renderMode) })
+    }
+    set({ showOSMGroundV2Panel: willOpen })
+  },
   togglePolygonDrawingPanel: () => set((state) => ({ showPolygonDrawingPanel: !state.showPolygonDrawingPanel })),
   setPolygonDrawingEnabled: (enabled) => set({ polygonDrawingEnabled: enabled }),
   toggleHotspotsPanel: () => set((state) => ({ showHotspotsPanel: !state.showHotspotsPanel })),
@@ -1497,20 +1512,51 @@ export const useAppStore = create<AppState>((set, get) => ({
   setStreetsGLGroundCustomTexture: (texture) => set({ streetsGLGroundCustomTexture: texture }),
   setStreetsGLIframeOverlay: (enabled) => {
     const state = get()
+    // Iframe only mounts in city/hybrid — upgrade product → hybrid when enabling overlay
+    const nextRenderMode = renderModeForStreetsGLOverlay(enabled, state.renderMode)
+    const patch: Partial<AppState> = {
+      streetsGLIframeOverlay: enabled,
+      renderMode: nextRenderMode
+    }
     if (enabled && state.enableStandaloneWeather) {
       console.warn(
         '[Lighting] Disabling standalone weather — Streets GL overlay owns sun/shadows.'
       )
-      set({ streetsGLIframeOverlay: enabled, enableStandaloneWeather: false })
-      return
+      patch.enableStandaloneWeather = false
     }
-    set({ streetsGLIframeOverlay: enabled })
+    set(patch)
   },
   setStreetsGLIframeInteractive: (enabled) => set({ streetsGLIframeInteractive: enabled }),
   setStreetsGLShowUI: (show) => set({ streetsGLShowUI: show }),
   setStreetsGLBridge: (bridge) => set({ streetsGLBridge: bridge }),
   setStreetsGLStartRequestedAt: (t) => set({ streetsGLStartRequestedAt: t }),
   setStreetsGLIframeReloadKey: (n) => set((s) => ({ streetsGLIframeReloadKey: typeof n === 'function' ? n(s.streetsGLIframeReloadKey) : n })),
+  setStreetsGLHiddenBuildingIds: (ids) => {
+    const seen = new Set<string>()
+    const next: string[] = []
+    for (const raw of ids || []) {
+      const id = String(raw).trim()
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      next.push(id)
+    }
+    set({ streetsGLHiddenBuildingIds: next })
+  },
+  hideStreetsGLBuildingId: (id) => {
+    const key = String(id).trim()
+    if (!key) return
+    set((state) => {
+      if (state.streetsGLHiddenBuildingIds.includes(key)) return state
+      return { streetsGLHiddenBuildingIds: [...state.streetsGLHiddenBuildingIds, key] }
+    })
+  },
+  showStreetsGLBuildingId: (id) => {
+    const key = String(id).trim()
+    if (!key) return
+    set((state) => ({
+      streetsGLHiddenBuildingIds: state.streetsGLHiddenBuildingIds.filter((x) => x !== key)
+    }))
+  },
   toggleCubesViewer: () => set((state) => ({ showCubesViewer: !state.showCubesViewer })),
   toggleStreetsGLDemo: () => set((state) => ({ showStreetsGLDemo: !state.showStreetsGLDemo })),
   toggleAIEnhancementPanel: () => set((state) => ({ showAIEnhancementPanel: !state.showAIEnhancementPanel })),
@@ -2279,11 +2325,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setHdrBackgroundVisible: (visible) => set({ hdrBackgroundVisible: visible }),
   setHdrLoading: (loading) => set({ hdrLoading: loading }),
   setHdrLoadProgress: (progress) => set({ hdrLoadProgress: progress }),
-  setReplicateApiKey: (key) =>
-    set({
-      replicateApiKey: key ? key.trim() || null : null
-    }),
-  
   // Camera Views actions
       addCameraView: (view) => {
         const id = `view-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
@@ -2498,4 +2539,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     setOceanDistortionScale: (scale) => set({ oceanDistortionScale: Math.max(0.1, Math.min(10, scale)) }),
     setOceanSize: (size) => set({ oceanSize: Math.max(0.1, Math.min(5, size)) })
   }))
+
+// Persist Streets GL / City session prefs so Enable + location survive reload
+// (the Node server on :8081 still requires npm run dev / Electron managed start).
+if (typeof window !== 'undefined') {
+  let lastPersisted = ''
+  useAppStore.subscribe((state) => {
+    const prefs = {
+      renderMode: state.renderMode,
+      iframeOverlay: state.streetsGLIframeOverlay,
+      iframeInteractive: state.streetsGLIframeInteractive,
+      groundLat: state.streetsGLGroundLat,
+      groundLon: state.streetsGLGroundLon,
+      groundZoom: state.streetsGLGroundZoom,
+      showOSMGroundV2Panel: state.showOSMGroundV2Panel,
+      hiddenBuildingIds: state.streetsGLHiddenBuildingIds
+    }
+    const serialized = JSON.stringify(prefs)
+    if (serialized === lastPersisted) return
+    lastPersisted = serialized
+    saveStreetsGLSessionPrefs(prefs)
+  })
+}
 

@@ -5,13 +5,18 @@
  * Extracted from App.tsx to improve code organization.
  */
 
-import { useEffect, useRef, useState } from 'react'
-import * as THREE from 'three'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { StreetsGLBridge } from '../utils/streetsGLBridge'
+import { shouldLoadStreetsGLIframe } from '../utils/streetsGLIframeLifecycle'
 import { useAppStore } from '../store/useAppStore'
-import { getSharedViewer, syncModelToStreetsGL } from '../viewer/useViewer'
+import { requestRegistryResync } from '../viewer/useViewer'
+import {
+  DEFAULT_STREETS_GL_BASE_URL,
+  buildStreetsGLIframeSrc,
+  generateBridgeCapability
+} from '../utils/streetsGLBridgeSecurity'
 
-const STREETS_GL_ALT_URL = 'http://localhost:8081'
+const STREETS_GL_ALT_URL = DEFAULT_STREETS_GL_BASE_URL
 
 interface StreetsGLIframeOverlayProps {
   streetsGLIframeOverlay: boolean
@@ -33,46 +38,81 @@ export function StreetsGLIframeOverlay({
   streetsGLIframeReloadKey
 }: StreetsGLIframeOverlayProps) {
   const renderMode = useAppStore((s) => s.renderMode)
-  const [tabVisible, setTabVisible] = useState(
-    () => typeof document === 'undefined' || !document.hidden
-  )
   const streetsGLIframeRef = useRef<HTMLIFrameElement | null>(null)
   const streetsGLBridgeRef = useRef<StreetsGLBridge | null>(null)
   const lastHashRef = useRef<string>('')
   // Only log iframe load diagnostics once per page session to avoid console spam
   const hasLoggedInitialLoadRef = useRef<boolean>(false)
+  const [streetsGLBaseUrl, setStreetsGLBaseUrl] = useState(STREETS_GL_ALT_URL)
 
-  const shouldRunStreetsGL =
-    streetsGLIframeOverlay &&
-    tabVisible &&
-    (renderMode === 'city' || renderMode === 'hybrid')
+  // Keep Streets GL loaded whenever city/hybrid overlay is on.
+  // Do NOT gate on document.hidden — that previously set src to about:blank on tab
+  // switch, which restarted the iframe app and dropped imported ExternalObjectBridge models.
+  const shouldLoadStreetsGL = shouldLoadStreetsGLIframe(streetsGLIframeOverlay, renderMode)
+
+  // SEC-5: per-iframe-load capability; Electron may report an ephemeral Streets GL base URL.
+  const bridgeCapability = useMemo(
+    () => generateBridgeCapability(),
+    [
+      streetsGLGroundLat,
+      streetsGLGroundLon,
+      streetsGLGroundZoom,
+      streetsGLIframeReloadKey,
+      shouldLoadStreetsGL,
+      streetsGLBaseUrl
+    ]
+  )
+
+  const streetsGLIframeSrc = useMemo(() => {
+    if (!shouldLoadStreetsGL) return 'about:blank'
+    const hash = `${streetsGLGroundLat.toFixed(5)},${streetsGLGroundLon.toFixed(5)},45.00,0.00,2000.00`
+    return buildStreetsGLIframeSrc({
+      baseUrl: streetsGLBaseUrl,
+      capability: bridgeCapability,
+      parentOrigin: window.location.origin,
+      hash
+    })
+  }, [
+    shouldLoadStreetsGL,
+    streetsGLBaseUrl,
+    bridgeCapability,
+    streetsGLGroundLat,
+    streetsGLGroundLon
+  ])
 
   useEffect(() => {
-    const onVisibility = () => setTabVisible(!document.hidden)
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => document.removeEventListener('visibilitychange', onVisibility)
+    let cancelled = false
+    const api = typeof window !== 'undefined' ? window.electronAPI : undefined
+    if (!api?.getStreetsGLBaseUrl) return
+    void api.getStreetsGLBaseUrl().then((result) => {
+      if (cancelled || !result?.baseUrl) return
+      setStreetsGLBaseUrl(result.baseUrl)
+    }).catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  // Pause Streets GL WebGL when overlay off, tab hidden, or not in City/Hybrid mode
+  // Tear down bridge when overlay is off or not in City/Hybrid (iframe goes to about:blank)
   useEffect(() => {
-    if (shouldRunStreetsGL) return
+    if (shouldLoadStreetsGL) return
     streetsGLBridgeRef.current?.dispose()
     streetsGLBridgeRef.current = null
     useAppStore.getState().setStreetsGLBridge(null)
-  }, [shouldRunStreetsGL])
+  }, [shouldLoadStreetsGL])
 
   useEffect(() => {
-    if (!shouldRunStreetsGL) return
+    if (!shouldLoadStreetsGL) return
 
     // A remounted iframe gets a new window object, so the previous bridge must be discarded.
     streetsGLBridgeRef.current?.dispose()
     streetsGLBridgeRef.current = null
     useAppStore.getState().setStreetsGLBridge(null)
-  }, [shouldRunStreetsGL, streetsGLGroundLat, streetsGLGroundLon, streetsGLGroundZoom, streetsGLIframeReloadKey])
+  }, [shouldLoadStreetsGL, streetsGLGroundLat, streetsGLGroundLon, streetsGLGroundZoom, streetsGLIframeReloadKey])
 
   // Sync Streets GL iframe with location changes
   useEffect(() => {
-    if (!shouldRunStreetsGL) return
+    if (!shouldLoadStreetsGL) return
 
     const newHash = `${streetsGLGroundLat.toFixed(5)},${streetsGLGroundLon.toFixed(5)},45.00,0.00,1054.81`
     
@@ -81,12 +121,17 @@ export function StreetsGLIframeOverlay({
       lastHashRef.current = newHash
       console.log('[StreetsGLIframe] Location changed:', { lat: streetsGLGroundLat, lon: streetsGLGroundLon, hash: newHash })
     }
-  }, [shouldRunStreetsGL, streetsGLGroundLat, streetsGLGroundLon])
+  }, [shouldLoadStreetsGL, streetsGLGroundLat, streetsGLGroundLon])
 
   const handleIframeLoad = () => {
     // Check if iframe actually loaded the Streets GL app (not error page)
     const iframe = streetsGLIframeRef.current
     if (!iframe) return
+
+    // about:blank (overlay off / product mode) — do not attach a bridge
+    if (!shouldLoadStreetsGL || !iframe.src || iframe.src === 'about:blank') {
+      return
+    }
 
     const shouldLogLoad = !hasLoggedInitialLoadRef.current
     if (shouldLogLoad) {
@@ -158,54 +203,41 @@ export function StreetsGLIframeOverlay({
         })
       }
       try {
-        streetsGLBridgeRef.current = new StreetsGLBridge(streetsGLIframeRef.current)
+        streetsGLBridgeRef.current = new StreetsGLBridge(streetsGLIframeRef.current, {
+          capability: bridgeCapability,
+          targetOrigin: new URL(streetsGLBaseUrl).origin
+        })
         streetsGLBridgeRef.current.onReady(() => {
           console.log('[StreetsGLIframe] Streets GL bridge is ready - you can now add objects to Streets GL scene!')
           // Store bridge in global state for access from other components
           useAppStore.getState().setStreetsGLBridge(streetsGLBridgeRef.current)
-          
-          // Sync any existing models to Streets GL
-          setTimeout(async () => {
-            const viewer = getSharedViewer()
-            if (viewer && viewer.scene && streetsGLBridgeRef.current) {
-              console.log('[StreetsGLIframe] Syncing existing models to Streets GL...')
-              // Find all loaded models in the scene
-              const modelsToSync: THREE.Object3D[] = []
-              
-              // Check direct children first (most models are added as direct children)
-              viewer.scene.children.forEach((child) => {
-                // Skip lights, cameras, and helper objects
-                if (child instanceof THREE.Light || 
-                    child instanceof THREE.Camera ||
-                    child.type === 'GridHelper' ||
-                    child.type === 'AxesHelper') {
-                  return
-                }
-                if (!child.userData?.isModel) {
-                  return
-                }
-                // Include groups and meshes that look like models
-                if (child instanceof THREE.Group || child instanceof THREE.Mesh) {
-                  // Only sync if it has geometry or children (actual model content)
-                  if (child instanceof THREE.Mesh || 
-                      (child instanceof THREE.Group && child.children.length > 0)) {
-                    modelsToSync.push(child)
-                  }
+
+          // Re-apply user-hidden OSM buildings (session / project) after iframe reload.
+          const hiddenIds = useAppStore.getState().streetsGLHiddenBuildingIds
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id))
+          if (hiddenIds.length > 0) {
+            void streetsGLBridgeRef.current?.syncHiddenBuildings(hiddenIds)
+          }
+
+          // Always re-sync ObjectRegistry → ExternalObjectBridge after any iframe restart
+          // (manual reload key, ground change remount, or unexpected WebGL recovery).
+          // This overlay owns bridge-ready / iframe-reload triggers; mode-enter is owned
+          // by ObjectRegistryReconciler. ResyncCoordinator coalesces overlapping calls.
+          const bridge = streetsGLBridgeRef.current
+          if (bridge) {
+            const reason =
+              streetsGLIframeReloadKey > 0 ? 'iframe-reload' : 'bridge-ready'
+            void requestRegistryResync(bridge, reason)
+              .then((n) => {
+                if (n > 0) {
+                  console.log(`[StreetsGLIframe] Re-synced ${n} registry object(s) after ${reason}`)
                 }
               })
-              
-              // Sync each model
-              modelsToSync.forEach((model) => {
-                syncModelToStreetsGL(model, streetsGLBridgeRef.current!)
+              .catch((err) => {
+                console.warn('[StreetsGLIframe] Registry re-sync after bridge ready failed:', err)
               })
-              
-              if (modelsToSync.length > 0) {
-                console.log(`[StreetsGLIframe] Synced ${modelsToSync.length} existing model(s) to Streets GL`)
-              } else {
-                console.log('[StreetsGLIframe] No existing models found to sync')
-              }
-            }
-          }, 500) // Wait a bit for everything to be ready
+          }
         })
       } catch (error) {
         console.warn('[StreetsGLIframe] Failed to initialize Streets GL bridge:', error)
@@ -271,12 +303,8 @@ export function StreetsGLIframeOverlay({
     >
       <iframe
         ref={streetsGLIframeRef}
-        key={`streets-gl-${streetsGLGroundLat.toFixed(5)}-${streetsGLGroundLon.toFixed(5)}-${streetsGLGroundZoom || 15}-${streetsGLIframeReloadKey}`}
-        src={
-          shouldRunStreetsGL
-            ? `${STREETS_GL_ALT_URL}#${streetsGLGroundLat.toFixed(5)},${streetsGLGroundLon.toFixed(5)},45.00,0.00,2000.00`
-            : 'about:blank'
-        }
+        key={`streets-gl-${streetsGLGroundLat.toFixed(5)}-${streetsGLGroundLon.toFixed(5)}-${streetsGLGroundZoom || 15}-${streetsGLIframeReloadKey}-${bridgeCapability.slice(0, 8)}`}
+        src={streetsGLIframeSrc}
         style={{
           position: 'absolute',
           top: '0',
@@ -301,5 +329,3 @@ export function StreetsGLIframeOverlay({
     </div>
   )
 }
-
-

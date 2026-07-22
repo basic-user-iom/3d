@@ -10,7 +10,6 @@ import {
   applyPhysicalOmnidirectionalShadowDefaults,
   applyPhysicalSpotShadowDefaults
 } from './physicalShadowSettings'
-import { getSceneShadowBoundsCenter } from './shadowManager'
 
 /**
  * Converts time of day (0-24 hours) and north offset (degrees) to sun elevation and azimuth
@@ -272,8 +271,9 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
         config.decay ?? 2 // Physically realistic decay (2 = inverse square law)
       )
       pointLight.position.set(pos.x ?? 0, pos.y ?? 0, pos.z ?? 0)
-      if (config.power !== undefined) {
-        // Convert lumens to intensity (approximate conversion)
+      // Intensity is the LightingPanel primary control; power overwrites intensity in
+      // Three.js, so only apply power when intensity was omitted from the config.
+      if (config.intensity === undefined && config.power !== undefined) {
         pointLight.power = config.power
       }
       light = pointLight
@@ -292,6 +292,8 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
       )
       spotLight.position.set(pos.x ?? 0, pos.y ?? 0, pos.z ?? 0)
 
+      // Default aim: straight down from the light (v3.17). Scene-center aim is only
+      // for explicit conversions (e.g. "Use spot for shadows") — not create defaults.
       if (config.target) {
         spotLight.target.position.set(
           config.target.x ?? 0,
@@ -299,16 +301,17 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
           config.target.z ?? 0
         )
       } else {
-        const sceneCenter = getSceneShadowBoundsCenter(scene)
-        if (sceneCenter) {
-          spotLight.target.position.copy(sceneCenter)
-        } else {
-          spotLight.target.position.set(pos.x ?? 0, (pos.y ?? 0) - 10, pos.z ?? 0)
-        }
+        spotLight.target.position.set(pos.x ?? 0, (pos.y ?? 0) - 10, pos.z ?? 0)
       }
+      // SpotLight target must be in the scene graph or the cone never illuminates.
       scene.add(spotLight.target)
+      spotLight.target.castShadow = false
+      spotLight.target.receiveShadow = false
+      spotLight.target.userData.ignoreShadowWarnings = true
 
-      if (config.power !== undefined) {
+      // Intensity is the LightingPanel primary control; power overwrites intensity in
+      // Three.js, so only apply power when intensity was omitted from the config.
+      if (config.intensity === undefined && config.power !== undefined) {
         spotLight.power = config.power
       }
       light = spotLight
@@ -382,6 +385,9 @@ export function createLight(config: DirectionalLightConfig, scene: THREE.Scene):
         dirLight.target.position.set(pos.x ?? 0, defaultTargetY, pos.z ?? 0)
         scene.add(dirLight.target)
       }
+      dirLight.target.castShadow = false
+      dirLight.target.receiveShadow = false
+      dirLight.target.userData.ignoreShadowWarnings = true
 
       light = dirLight
       break

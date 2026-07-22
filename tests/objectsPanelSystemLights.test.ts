@@ -20,4 +20,17 @@ describe('isObjectsPanelSystemLight', () => {
     const light = new THREE.PointLight()
     expect(isObjectsPanelSystemLight(light)).toBe(false)
   })
+
+  it('detects CSM cascade lights (isCSMLight / isInternal)', () => {
+    const light = new THREE.DirectionalLight()
+    light.userData.isCSMLight = true
+    light.userData.isInternal = true
+    expect(isObjectsPanelSystemLight(light)).toBe(true)
+  })
+
+  it('detects standalone weather lights', () => {
+    const light = new THREE.DirectionalLight()
+    light.userData.isStandaloneWeatherLight = true
+    expect(isObjectsPanelSystemLight(light)).toBe(true)
+  })
 })

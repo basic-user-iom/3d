@@ -1,0 +1,124 @@
+.hotspot-video-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  pointer-events: none;
+}
+
+.hotspot-video-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.hotspot-video-overlay-shell {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 92vw);
+  height: min(420px, 70vh);
+  background: rgba(18, 18, 22, 0.98);
+  border: 1px solid #4a9eff;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+.hotspot-video-overlay-shell.placement-center {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.hotspot-video-overlay-shell.placement-top-left {
+  top: 24px;
+  left: 24px;
+}
+
+.hotspot-video-overlay-shell.placement-top-right {
+  top: 24px;
+  right: 24px;
+}
+
+.hotspot-video-overlay-shell.placement-bottom-left {
+  bottom: 24px;
+  left: 24px;
+}
+
+.hotspot-video-overlay-shell.placement-bottom-right {
+  bottom: 24px;
+  right: 24px;
+}
+
+.hotspot-video-overlay-shell.is-fullscreen {
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  transform: none !important;
+}
+
+.hotspot-video-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border-bottom: 1px solid rgba(74, 158, 255, 0.35);
+}
+
+.hotspot-video-overlay-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f0f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotspot-video-overlay-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.hotspot-video-overlay-actions button,
+.hotspot-video-overlay-header > button {
+  min-width: 32px;
+  height: 32px;
+  border: 1px solid rgba(74, 158, 255, 0.6);
+  border-radius: 6px;
+  background: rgba(74, 158, 255, 0.12);
+  color: #9fd0ff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.hotspot-video-overlay-actions button:hover,
+.hotspot-video-overlay-header > button:hover {
+  background: rgba(74, 158, 255, 0.25);
+}
+
+.hotspot-video-overlay-frame {
+  flex: 1;
+  min-height: 0;
+  background: #000;
+}
+
+.hotspot-video-overlay-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.hotspot-video-overlay-error {
+  padding: 24px;
+  color: #ffb4b4;
+  text-align: center;
+}

@@ -36,6 +36,7 @@ import {
   restartAnimationLoopIfIdle
 } from './utils/renderLoopIdle'
 import { applyViewerCanvasPointerEvents } from './utils/viewerCanvasPointerEvents'
+import { createHotspotCss3dLayer, type HotspotCss3dLayer } from './hotspotCss3dLayer'
 import { applySceneFog, enableFogOnSceneMeshes, invalidateFogMeshesReady, isWeatherVisualActive } from './utils/sceneFog'
 import { activateDynamicSkyCamera, deactivateDynamicSkyCamera } from './utils/dynamicSkyCamera'
 import {
@@ -52,7 +53,7 @@ import { ToneMappingType } from './postprocessing/ToneMappingShader'
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js'
 import { ShadowMapViewer } from 'three/addons/utils/ShadowMapViewer.js'
 import type { DirectionalLightConfig, LightType } from '../store/useAppStore'
-import { disposeTexturesFromMaterial, syncModelToStreetsGL, clearSharedViewer, computeStreetsGLPositionFromObject, STREETS_GL_OBJECT_SCALE, syncProjectObjectTransformToStreetsGL } from './useViewer'
+import { disposeTexturesFromMaterial, syncModelToStreetsGL, clearSharedViewer, computeStreetsGLPositionFromObject, STREETS_GL_OBJECT_SCALE, syncProjectObjectTransformToStreetsGL, isObjectInSceneGraph, safeAttachTransformControls, setIframeVisible, getIframeVisible, getIframePresence, ensureStreetsGLIframeVisibilityChannel } from './useViewer'
 import { runShadowDiagnostics } from '../utils/shadowDiagnostics'
 import { autoFixShadowIssues } from '../utils/shadowAutoFixer'
 import { shadowOpacityModifierRegistry } from './materials/ShadowOpacityModifierRegistry'
@@ -79,7 +80,8 @@ import {
   ensureLightGizmo,
   removeLightGizmo,
   setLightGizmoSelected,
-  computeLightDirection
+  computeLightDirection,
+  disableShadowsDeep
 } from './utils/lightGizmos'
 import { updateShadowCameraBounds, updateAllShadowCameraBounds } from './utils/shadowManager'
 import {
@@ -291,6 +293,7 @@ export interface ViewerInstance {
   lightGizmos: Map<string, THREE.Object3D>
   lightToGizmo?: WeakMap<THREE.Light, THREE.Object3D>
   gizmoToLight?: WeakMap<THREE.Object3D, THREE.Light>
+  helperToLight?: WeakMap<THREE.Object3D, THREE.Light>
   shadowMapViewers: Map<string, ShadowMapViewer> // Shadow map viewers for debugging
   environmentMap: THREE.DataTexture | null // Original HDR texture (equirectangular, for background)
   pmremEnvMap?: THREE.Texture | null // PMREM cube map (for reflections/environment)
@@ -323,6 +326,8 @@ export interface ViewerInstance {
   runShadowDiagnostics: () => import('../utils/shadowDiagnostics').ShadowDiagnosticReport
   /** Wake the hybrid render-on-demand loop (keyboard nav, external camera moves). */
   requestRender?: () => void
+  /** CSS3D layer for YouTube / interactive hotspot panels (above the WebGL canvas). */
+  hotspotCss3dLayer?: HotspotCss3dLayer
 }
 
 function ensureCavityOcclusionSession(viewer: ViewerInstance): { applied: boolean; userDisabled: boolean } {
@@ -633,6 +638,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // Append renderer canvas to container
     containerRef.current.appendChild(renderer.domElement)
 
+    // CSS3D layer for interactive YouTube hotspot panels (above WebGL so lines stay behind video)
+    const hotspotCss3dLayer = createHotspotCss3dLayer(containerRef.current)
+    hotspotCss3dLayer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight)
+
     // Clock for animations
     clock = new THREE.Clock()
 
@@ -678,8 +687,18 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // Always wrap in try-catch to prevent crashes from gizmo initialization issues
       try {
         // Only update gizmo if an object is attached
-        const attachedObject = (this as any).object
+        const attachedObject = (this as any).object as THREE.Object3D | undefined
         if (attachedObject) {
+          // Detach before three-stdlib logs "must be a part of the scene graph"
+          if (attachedObject.parent === null || !isObjectInSceneGraph(attachedObject, scene)) {
+            try {
+              ;(this as any).detach?.()
+            } catch {
+              ;(this as any).object = undefined
+            }
+            THREE.Object3D.prototype.updateMatrixWorld.call(this, force)
+            return
+          }
           // Check if gizmo exists and camera is available (gizmo needs camera for proper initialization)
           const gizmo = (this as any).gizmo
           const controlCamera = (this as any).camera
@@ -714,6 +733,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
     
     scene.add(transformControls)
+    disableShadowsDeep(transformControls)
 
     // Raycaster for object selection
     raycaster = new THREE.Raycaster()
@@ -807,6 +827,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     
     // Helper function to create a pivot wrapper at the object's bounding box center or bottom
     const createPivotWrapper = (object: THREE.Object3D, pivotMode: 'center' | 'bottom'): THREE.Group => {
+      // Detach before reparent — model.parent briefly becomes null during remove/add
+      const attached = (transformControls as any).object as THREE.Object3D | undefined
+      if (attached === object) {
+        transformControls.detach()
+      }
+
       object.updateMatrixWorld(true)
       const modelWorldMatrix = object.matrixWorld.clone()
       const parent = object.parent
@@ -854,6 +880,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     const removePivotWrapper = (pivot: THREE.Group) => {
       const model = pivot.userData.originalModel as THREE.Object3D
       if (!model) return
+
+      // Detach BEFORE reparenting — otherwise updateMatrixWorld logs scene-graph errors
+      const attached = (transformControls as any).object as THREE.Object3D | undefined
+      if (attached === pivot || attached === model) {
+        transformControls.detach()
+      }
       
       pivot.updateMatrixWorld(true)
       model.updateMatrixWorld(true)
@@ -1345,14 +1377,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                 initialPivotScale = new THREE.Vector3(1, 1, 1)
                 
                 // Reattach transform controls with normalized pivot
-                // CRITICAL: Only attach if pivot is in scene graph
-                if (pivot.parent !== null) {
-                  try {
-                    transformControls.attach(pivot)
-                  } catch (error) {
-                    console.warn(`[ViewerCanvas] Failed to reattach transform controls to pivot:`, error)
-                  }
-                }
+                safeAttachTransformControls(transformControls, pivot, scene)
               } else {
                 // Normal case: pivot is at 1,1,1, store current model scale
                 initialModelScale = model.scale.clone()
@@ -1402,14 +1427,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               updatePivotPosition(pivot, model)
 
               // Reattach transform controls to ensure they work correctly with the reset pivot
-              // CRITICAL: Only attach if pivot is in scene graph
-              if (pivot.parent !== null) {
-                try {
-                  transformControls.attach(pivot)
-                } catch (error) {
-                  console.warn(`[ViewerCanvas] Failed to reattach transform controls to pivot:`, error)
-                }
-              }
+              safeAttachTransformControls(transformControls, pivot, scene)
             }
           }
         }
@@ -1427,13 +1445,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               removePivotWrapper(pivot)
               const newPivot = createPivotWrapper(model, pivotMode)
               pivotWrappers.set(model, newPivot)
-              if (newPivot.parent !== null) {
-                try {
-                  transformControls.attach(newPivot)
-                } catch (error) {
-                  console.warn('[ViewerCanvas] Failed to reattach transform controls after pivot bake:', error)
-                }
-              }
+              safeAttachTransformControls(transformControls, newPivot, scene)
             }
           }
         }
@@ -1862,6 +1874,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             if (helper) {
               helper.userData.lightId = lightConfig.id
               helper.userData.isLightHelper = true // Mark as light helper for selection
+              helper.userData.ignoreShadowWarnings = true
+              helper.userData.linkedLight = light
+              disableShadowsDeep(helper)
               scene.add(helper)
               // Store helper reference for updates
               const helpersMap = (viewerRef.current as any)?.lightHelpers || lightHelpers
@@ -1869,6 +1884,16 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               // CRITICAL: Map helper to light for drag functionality
               helperToLight.set(helper, light)
             }
+          }
+
+          // Light targets are Object3Ds in the scene — never let them cast shadows
+          if (
+            (light instanceof THREE.DirectionalLight || light instanceof THREE.SpotLight) &&
+            light.target
+          ) {
+            light.target.castShadow = false
+            light.target.receiveShadow = false
+            light.target.userData.ignoreShadowWarnings = true
           }
 
           ensureLightGizmo(scene, lightConfig, light, lightGizmos, lightToGizmo, gizmoToLight, camera)
@@ -2433,7 +2458,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           resolvedObject = gizmoToLight.get(object) ?? null
         } else if (object.userData?.isLightHelper) {
           // Resolve light helper to its associated light
-          resolvedObject = helperToLight.get(object) ?? null
+          resolvedObject =
+            helperToLight.get(object) ??
+            (object.userData.linkedLight as THREE.Light | undefined) ??
+            null
         } else {
           resolvedObject = object
         }
@@ -2482,15 +2510,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           
           if (activeTransformMode) {
             transformControls.setMode(activeTransformMode)
-            // CRITICAL: Only attach if pivot is in scene graph
-            // Check if pivot is in scene by checking if it has a parent
-            if (pivot.parent !== null) {
-              try {
-                transformControls.attach(pivot) // Attach to pivot, not the model directly
-              } catch (error) {
-                console.warn(`[ViewerCanvas] Failed to attach transform controls to pivot:`, error)
-              }
-            }
+            safeAttachTransformControls(transformControls, pivot, scene)
           }
         } else if (resolvedObject instanceof THREE.Light) {
           const gizmo = lightToGizmo.get(resolvedObject) ?? null
@@ -2530,37 +2550,28 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           // Attach transform controls immediately (don't wait for useEffect)
           transformControls.setMode(modeToUse)
           
-          // CRITICAL: If helper was selected, attach to helper instead of gizmo
-          // This allows dragging the helper directly
-          if (helper && helper.parent !== null) {
-            try {
-              transformControls.attach(helper)
+          // Prefer in-scene helper/gizmo/light — never a detached proxy
+          let attachedLightTarget: THREE.Object3D | null = null
+          if (helper && isObjectInSceneGraph(helper, scene)) {
+            attachedLightTarget = helper
+          } else if (gizmo && isObjectInSceneGraph(gizmo, scene)) {
+            attachedLightTarget = gizmo
+          } else if (isObjectInSceneGraph(resolvedObject, scene)) {
+            attachedLightTarget = resolvedObject
+          }
+
+          if (attachedLightTarget && safeAttachTransformControls(transformControls, attachedLightTarget, scene)) {
+            if (gizmo) {
               setLightGizmoSelected(gizmo, true, viewerRef.current?.camera, resolvedObject)
               currentSelectedLightGizmo = gizmo
-            } catch (error) {
-              console.warn(`[ViewerCanvas] Failed to attach transform controls to helper:`, error)
             }
-          } else if (gizmo && gizmo.parent !== null) {
-            // CRITICAL: Only attach if gizmo is in scene graph
-            try {
-              transformControls.attach(gizmo)
-              setLightGizmoSelected(gizmo, true, viewerRef.current?.camera, resolvedObject)
-              currentSelectedLightGizmo = gizmo
-            } catch (error) {
-              console.warn(`[ViewerCanvas] Failed to attach transform controls to gizmo:`, error)
-            }
-          } else if (resolvedObject.parent !== null) {
-            // Fallback: attach directly to light if no gizmo exists or gizmo not in scene
-            // CRITICAL: Only attach if light is in scene graph
-            try {
-              transformControls.attach(resolvedObject)
-            } catch (error) {
-              console.warn(`[ViewerCanvas] Failed to attach transform controls to light:`, error)
-            }
+            disableShadowsDeep(attachedLightTarget)
+            if (gizmo) disableShadowsDeep(gizmo)
           }
         }
       } else {
-        // Clean up pivot wrapper when deselecting - get current selected from store
+        // Detach first, then remove pivot — reverse order caused scene-graph errors
+        transformControls.detach()
         const currentSelected = useAppStore.getState().selectedObject
         if (currentSelected) {
           const pivot = pivotWrappers.get(currentSelected)
@@ -2568,7 +2579,6 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             removePivotWrapper(pivot)
           }
         }
-        transformControls.detach()
         setSelectedObject(null)
         if (currentSelectedLightGizmo) {
           const light = gizmoToLight.get(currentSelectedLightGizmo) ?? null
@@ -2775,7 +2785,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         // Find hotspot sprites, groups, and helpers in scene (icons, labels, and helper spheres)
         const hotspotObjects: THREE.Object3D[] = []
         scene.traverse((obj) => {
-          if (obj.userData.isHotspot || obj.userData.isHotspotLabel || obj.userData.isHotspotHelper) {
+          if (
+            obj.userData.isHotspot ||
+            obj.userData.isHotspotLabel ||
+            obj.userData.isHotspotHelper ||
+            obj.userData.isHotspotPanel
+          ) {
             hotspotObjects.push(obj)
           }
           // Also check for hotspot groups
@@ -2894,27 +2909,66 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                 })
                 
                 useAppStore.getState().setSelectedObject(objectForTransform)
-                // Also open popup if clicking
-                if (setActiveHotspot) {
+                // Do not open a large editor popup for YouTube — play stays on the
+                // in-world panel (or explicit screen-overlay mode). Bigger playback
+                // is for web preview / online export.
+                if (hotspot.content?.type !== 'youtube' && setActiveHotspot) {
                   setActiveHotspot(hotspot)
                 }
                 console.log('[ViewerCanvas] Hotspot selected for moving:', hotspot.name)
                 return // Don't select other objects when clicking hotspot icon
               } else if (clickedHotspotObj.userData.isHotspotLabel) {
-                // Clicking label - check if popup should show on click
+                // Clicking label - open content panel (YouTube/video) or optional popup
                 const showOnClick = hotspot.content?.popupSettings?.showOnClick
                 if (showOnClick && setActiveHotspot) {
                   setActiveHotspot(hotspot)
                   console.log('[ViewerCanvas] Hotspot label clicked - opening popup:', hotspot.name)
+                } else if (
+                  hotspot.content?.type === 'youtube' &&
+                  hotspot.content?.data &&
+                  hotspot.content?.videoDisplayMode === 'overlay'
+                ) {
+                  const openOverlay = (window as any).__openHotspotYoutubeOverlay as
+                    | ((contentData: string, title?: string, placement?: string) => void)
+                    | undefined
+                  openOverlay?.(
+                    hotspot.content.data,
+                    hotspot.name,
+                    hotspot.content.videoOverlayPlacement || 'center'
+                  )
                 } else {
-                  // Just select the hotspot marker for moving if showOnClick is false
-                  const markerObj = scene.children.find((obj: THREE.Object3D) => 
+                  // Open the in-world content panel (video appears on the model)
+                  window.dispatchEvent(
+                    new CustomEvent('hotspot-panel-opened', {
+                      detail: { hotspotId: hotspot.id }
+                    })
+                  )
+                  const markerObj = scene.children.find((obj: THREE.Object3D) =>
                     obj.userData.isHotspot && obj.userData.hotspotId === hotspot.id
                   )
                   if (markerObj) {
                     useAppStore.getState().setSelectedObject(markerObj)
-                    console.log('[ViewerCanvas] Hotspot label clicked - selecting marker:', hotspot.name)
                   }
+                  console.log('[ViewerCanvas] Hotspot label clicked - opening 3D panel:', hotspot.name)
+                }
+                return
+              } else if (clickedHotspotObj.userData.isHotspotPanel) {
+                // Mesh thumbnail panels (overlay mode) open the screen player.
+                // Live CSS3D YouTube iframes receive clicks directly — no giant editor popup.
+                if (
+                  hotspot.content?.type === 'youtube' &&
+                  hotspot.content?.data &&
+                  hotspot.content?.videoDisplayMode === 'overlay'
+                ) {
+                  const openOverlay = (window as any).__openHotspotYoutubeOverlay as
+                    | ((contentData: string, title?: string, placement?: string) => void)
+                    | undefined
+                  openOverlay?.(
+                    hotspot.content.data,
+                    hotspot.name,
+                    hotspot.content.videoOverlayPlacement || 'center'
+                  )
+                  console.log('[ViewerCanvas] YouTube panel clicked - opening screen player:', hotspot.name)
                 }
                 return
               }
@@ -4344,6 +4398,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       lightGizmos,
       lightToGizmo,
       gizmoToLight,
+      helperToLight,
       lightHelpers,
       shadowMapViewers,
       environmentMap,
@@ -4362,7 +4417,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       getCameraState,
       setCameraState,
       updateShadowCameraBounds: updateAllShadowCameraBoundsLocal,
-      runShadowDiagnostics: () => runShadowDiagnostics(scene, renderer, camera)
+      runShadowDiagnostics: () => runShadowDiagnostics(scene, renderer, camera),
+      hotspotCss3dLayer
     }
 
     viewerRef.current = viewer
@@ -4470,7 +4526,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       controlsInteracting ||
       hasPendingViewerRenderFrames() ||
       hasOrbitControlsDamping(controls) ||
-      needsContinuousSceneUpdates(viewerRef.current, controls, getSceneActivity())
+      needsContinuousSceneUpdates(viewerRef.current, controls, getSceneActivity()) ||
+      !!viewerRef.current?.hotspotCss3dLayer?.hasPanels()
 
     if (viewerRef.current) {
       viewerRef.current.requestRender = restartAnimationLoop
@@ -4522,7 +4579,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     let hdrShadowPlaneFrameCount = 0
 
     const animate = (currentTime: number = performance.now()) => {
-      if (webglContextLostRef.current || !documentVisible) {
+      if (webglContextLostRef.current || !documentVisible || !isInitializedRef.current) {
+        animationFrameRef.current = undefined
+        return
+      }
+
+      const activeViewer = viewerRef.current
+      if (!activeViewer) {
         animationFrameRef.current = undefined
         return
       }
@@ -4602,15 +4665,20 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         viewerRef.current.dynamicSky.update(camera)
       }
       
-      // Update hotspot panels and labels to face camera when billboard mode is enabled
+      // Update hotspot panels and labels to face camera when billboard mode is enabled.
+      // Sprites billboard automatically; only Mesh labels/panels need lookAt.
+      // When faceCamera/isBillboard is false, orientation is frozen by HotspotsPanel.
       scene.traverse((obj) => {
         if (obj.userData.isHotspotPanel && obj.userData.isBillboard) {
           obj.lookAt(camera.position)
         }
-        if (obj.userData.isHotspotLabel && obj.userData.faceCamera !== false && obj.visible) {
-          if (obj instanceof THREE.Sprite || obj instanceof THREE.Mesh) {
-            obj.lookAt(camera.position)
-          }
+        if (
+          obj.userData.isHotspotLabel &&
+          obj.userData.faceCamera !== false &&
+          obj.visible &&
+          obj instanceof THREE.Mesh
+        ) {
+          obj.lookAt(camera.position)
         }
       })
       
@@ -4696,9 +4764,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       
       // CRITICAL: Ensure shadow camera bounds are updated on first render if not already done
       // This fixes cases where shadows don't appear because bounds weren't calculated
-      if (!(viewerRef.current as any).__shadowBoundsInitialized) {
+      if (!(activeViewer as any).__shadowBoundsInitialized) {
         updateAllShadowCameraBoundsLocal()
-        ;(viewerRef.current as any).__shadowBoundsInitialized = true
+        ;(activeViewer as any).__shadowBoundsInitialized = true
       }
       
       // CRITICAL: Ensure shadows are enabled before every render
@@ -4741,11 +4809,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // IMPROVED: Run comprehensive shadow diagnostics periodically (every 10 seconds) to catch issues
       // CRITICAL: Only run diagnostics if scene has objects to avoid false positives on initial load
       // Reduced frequency to reduce console spam
-      const lastDiagnosticsTime = (viewerRef.current as any).__lastShadowDiagnosticsTime || 0
+      const lastDiagnosticsTime = (activeViewer as any).__lastShadowDiagnosticsTime || 0
       const diagnosticsInterval = 10000 // Run diagnostics every 10 seconds
       
       if (now - lastDiagnosticsTime >= diagnosticsInterval) {
-        ;(viewerRef.current as any).__lastShadowDiagnosticsTime = now
+        ;(activeViewer as any).__lastShadowDiagnosticsTime = now
         try {
           // Check if scene has any imported model meshes before running diagnostics
           // Skip diagnostics if no models have been loaded yet (prevents false positives)
@@ -4808,62 +4876,40 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                 }))
             })
 
-            const lastSummary = (viewerRef.current as any).__lastShadowDiagnosticsSummary
+            const lastSummary = (activeViewer as any).__lastShadowDiagnosticsSummary
             if (diagnosticsSummary !== lastSummary) {
-              (viewerRef.current as any).__lastShadowDiagnosticsSummary = diagnosticsSummary
+              (activeViewer as any).__lastShadowDiagnosticsSummary = diagnosticsSummary
 
               // Only show critical errors if we have actual imported models (not just on startup)
               // Suppress false positives when scene is empty or models are still loading
               if (diagnostics.overallStatus === 'critical' && hasImportedMeshes) {
-                // Track if we've already attempted auto-fix for this diagnostic result
-                const lastAutoFixAttempt = (viewerRef.current as any).__lastShadowAutoFixAttempt
+                // Soft auto-fix: enable cast/receive on PBR meshes only.
+                // Do NOT convert materials (that broke unlit Pagani parts + light gizmo cones).
+                const lastAutoFixAttempt = (activeViewer as any).__lastShadowAutoFixAttempt
                 const shouldAutoFix = !lastAutoFixAttempt || lastAutoFixAttempt !== diagnosticsSummary
                 
                 if (shouldAutoFix) {
-                  // Attempt to automatically fix shadow issues
-                  console.group('🔴 CRITICAL SHADOW ISSUES DETECTED - Attempting Auto-Fix')
                   const fixResult = autoFixShadowIssues(scene, renderer)
-                  
+                  ;(activeViewer as any).__lastShadowAutoFixAttempt = diagnosticsSummary
+
                   if (fixResult.fixesApplied.length > 0) {
-                    console.log('✅ Auto-fix applied:', fixResult.fixesApplied)
-                    if (fixResult.meshesFixed > 0) {
-                      console.log(`   Fixed ${fixResult.meshesFixed} mesh(es)`)
-                    }
-                    if (fixResult.materialsConverted > 0) {
-                      console.log(`   Converted ${fixResult.materialsConverted} material(s)`)
-                    }
-                    // Update shadow camera bounds after fixes
+                    console.log('[ShadowDebug] Soft auto-fix:', fixResult.fixesApplied.join('; '))
                     if (viewerRef.current?.updateShadowCameraBounds) {
                       viewerRef.current.updateShadowCameraBounds()
                     }
-                  } else {
-                    console.warn('⚠️ Auto-fix attempted but no fixes were applied')
                   }
-                  
                   if (fixResult.errors.length > 0) {
-                    console.warn('⚠️ Auto-fix errors:', fixResult.errors)
+                    console.warn('[ShadowDebug] Soft auto-fix errors:', fixResult.errors)
                   }
-                  
-                  // Mark that we've attempted auto-fix for this diagnostic state
-                  ;(viewerRef.current as any).__lastShadowAutoFixAttempt = diagnosticsSummary
-                  console.groupEnd()
-                  
-                  // Re-run diagnostics after fix to see if issues are resolved
-                  // (Will be checked on next frame)
                 } else {
-                  // Already attempted auto-fix, just show the errors
-                  console.group('🔴 CRITICAL SHADOW ISSUES DETECTED')
-                  diagnostics.results.forEach(result => {
-                    if (result.status === 'fail') {
-                      console.error(`[ShadowDebug] ❌ ${result.category}: ${result.test}`, result.message)
-                      if (result.recommendation) {
-                        console.log('   💡 Recommendation:', result.recommendation)
-                      }
-                    }
-                  })
-                  console.log('📊 Full Report:', diagnostics)
-                  console.log('💡 Auto-fix was already attempted. Please check your model materials and shadow settings.')
-                  console.groupEnd()
+                  // Already soft-fixed this state — log once at warn level (no CRITICAL spam)
+                  const fails = diagnostics.results.filter((r) => r.status === 'fail')
+                  if (fails.length > 0) {
+                    console.warn(
+                      '[ShadowDebug] Remaining shadow issues after soft-fix:',
+                      fails.map((r) => `${r.test}: ${r.message}`)
+                    )
+                  }
                 }
               } else if (diagnostics.overallStatus === 'issues') {
                 console.group('⚠️ Shadow System Warnings')
@@ -4937,66 +4983,94 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       
       // Normal rendering when path tracer is not active
       // BEST PRACTICE: Use ref's scene/camera so we always render the live scene (with loaded models).
+      // Re-check after heavy work above — cleanup may have disposed the renderer mid-frame
+      // (city mode remount / HMR). Never call into a disposed WebGLRenderer.
+      if (
+        !isInitializedRef.current ||
+        webglContextLostRef.current ||
+        !viewerRef.current?.renderer ||
+        viewerRef.current.renderer !== renderer
+      ) {
+        animationFrameRef.current = undefined
+        return
+      }
+
       const currentScene = viewerRef.current?.scene ?? scene
       const currentCamera = viewerRef.current?.camera ?? camera
-      // Ensure we're drawing to the screen (some code paths may leave a render target set)
-      if (renderer.getRenderTarget && renderer.getRenderTarget() !== null) {
-        renderer.setRenderTarget(null)
-      }
-      const splatViewers: any[] = []
-      currentScene.traverse((obj: any) => {
-        if (obj?.userData?.isGaussianSplatViewer && obj.viewer) {
-          splatViewers.push(obj.viewer)
+      try {
+        // Ensure we're drawing to the screen (some code paths may leave a render target set)
+        if (renderer.getRenderTarget && renderer.getRenderTarget() !== null) {
+          renderer.setRenderTarget(null)
         }
-      })
-
-      if (splatViewers.length === 0 && viewerRef.current?.postProcessingSystem) {
-        viewerRef.current.postProcessingSystem.render()
-        if (shadowsEnabledFromStore && !renderer.shadowMap.enabled) {
-          console.warn('[ShadowDebug] ⚠️ Post-processing disabled shadows - RE-ENABLING')
-          renderer.shadowMap.enabled = true
-        }
-      } else if (splatViewers.length === 0) {
-        renderer.render(currentScene, currentCamera)
-      }
-
-      if (splatViewers.length > 0) {
-        const previousAutoClear = renderer.autoClear
-        splatViewers.forEach((viewer, index) => {
-          viewer.threeScene = index === 0 ? currentScene : null
-          if (typeof viewer.update === 'function') {
-            viewer.update(renderer, currentCamera)
-          }
-          if (!splatRenderLoggedOnceRef.current) {
-            splatRenderLoggedOnceRef.current = true
-            console.log(
-              '[Splat] Using shared renderer viewer render path.',
-              'initialized:',
-              !!viewer.initialized,
-              'splatRenderReady:',
-              !!viewer.splatRenderReady
-            )
-          }
-
-          renderer.autoClear = index === 0
-          if (typeof viewer.render === 'function') {
-            viewer.render()
+        const splatViewers: any[] = []
+        currentScene.traverse((obj: any) => {
+          if (obj?.userData?.isGaussianSplatViewer && obj.viewer) {
+            splatViewers.push(obj.viewer)
           }
         })
-        renderer.autoClear = previousAutoClear
-      }
-      
-      // Render shadow map viewers if enabled
-      const shadowMapViewerEnabled = useAppStore.getState().shadowMapViewerEnabled
-      if (shadowMapViewerEnabled && viewerRef.current?.shadowMapViewers) {
-        viewerRef.current.shadowMapViewers.forEach((viewer) => {
-          viewer.render(renderer)
-        })
+
+        if (splatViewers.length === 0 && viewerRef.current?.postProcessingSystem) {
+          viewerRef.current.postProcessingSystem.render()
+          if (shadowsEnabledFromStore && !renderer.shadowMap.enabled) {
+            console.warn('[ShadowDebug] ⚠️ Post-processing disabled shadows - RE-ENABLING')
+            renderer.shadowMap.enabled = true
+          }
+        } else if (splatViewers.length === 0) {
+          renderer.render(currentScene, currentCamera)
+        }
+
+        if (splatViewers.length > 0) {
+          const previousAutoClear = renderer.autoClear
+          splatViewers.forEach((viewer, index) => {
+            viewer.threeScene = index === 0 ? currentScene : null
+            if (typeof viewer.update === 'function') {
+              viewer.update(renderer, currentCamera)
+            }
+            if (!splatRenderLoggedOnceRef.current) {
+              splatRenderLoggedOnceRef.current = true
+              console.log(
+                '[Splat] Using shared renderer viewer render path.',
+                'initialized:',
+                !!viewer.initialized,
+                'splatRenderReady:',
+                !!viewer.splatRenderReady
+              )
+            }
+
+            renderer.autoClear = index === 0
+            if (typeof viewer.render === 'function') {
+              viewer.render()
+            }
+          })
+          renderer.autoClear = previousAutoClear
+        }
+
+        // Render shadow map viewers if enabled
+        const shadowMapViewerEnabled = useAppStore.getState().shadowMapViewerEnabled
+        if (shadowMapViewerEnabled && viewerRef.current?.shadowMapViewers) {
+          viewerRef.current.shadowMapViewers.forEach((viewer) => {
+            viewer.render(renderer)
+          })
+        }
+
+        // Project YouTube / CSS3D hotspot panels above the WebGL canvas
+        viewerRef.current?.hotspotCss3dLayer?.render(currentScene, currentCamera)
+      } catch (renderError) {
+        if (!isInitializedRef.current || webglContextLostRef.current) {
+          animationFrameRef.current = undefined
+          return
+        }
+        console.warn('[ViewerCanvas] Render frame failed (loop continues):', renderError)
       }
 
       // A UI-driven render (e.g. Transform panel numeric edit) was serviced by this
       // frame — consume one queued request so the burst eventually settles.
       consumeViewerRenderFrame()
+
+      if (!isInitializedRef.current || webglContextLostRef.current || !viewerRef.current) {
+        animationFrameRef.current = undefined
+        return
+      }
 
       const keepAnimating = movedSinceLastFrame || needsViewerRenderUpdates()
       if (keepAnimating) {
@@ -5057,6 +5131,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (viewerRef.current?.postProcessingSystem) {
         viewerRef.current.postProcessingSystem.setSize(width, height)
       }
+      viewerRef.current?.hotspotCss3dLayer?.setSize(width, height)
 
       restartAnimationLoop()
     }
@@ -5222,6 +5297,15 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       }
       
       // Industry-standard: Remove canvas from DOM and dispose renderer
+      if (viewerRef.current?.hotspotCss3dLayer) {
+        try {
+          viewerRef.current.hotspotCss3dLayer.dispose()
+        } catch (e) {
+          console.debug('Warning: Could not dispose hotspot CSS3D layer:', e)
+        }
+        viewerRef.current.hotspotCss3dLayer = undefined
+      }
+
       if (renderer) {
         try {
           const canvas = renderer.domElement
@@ -5517,6 +5601,14 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     if (!viewerRef.current?.transformControls) return
 
     const transformControls = viewerRef.current.transformControls
+    const scene = viewerRef.current.scene
+
+    // City mode uses CityTransformOverlay — registry proxies are not in this scene graph.
+    const renderMode = useAppStore.getState().renderMode
+    if (renderMode === 'city') {
+      transformControls.detach()
+      return
+    }
 
     const effectiveMode =
       transformMode ||
@@ -5524,13 +5616,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
 
     if (effectiveMode && selectedObject) {
       // Verify object is still in the scene (not deleted)
-      const scene = viewerRef.current.scene
-      let objectStillInScene = false
-      scene.traverse((obj) => {
-        if (obj === selectedObject) {
-          objectStillInScene = true
-        }
-      })
+      let objectStillInScene = isObjectInSceneGraph(selectedObject, scene)
       
       // If object was deleted, detach controls
       if (!objectStillInScene) {
@@ -5550,19 +5636,12 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             hasParent: !!selectedObject.parent,
             inScene: viewerRef.current?.scene?.children.includes(selectedObject) || false
           })
-          // CRITICAL: Only attach if object is in scene graph
-          if (selectedObject.parent !== null) {
-            try {
-              // Set translate mode for hotspots (easiest to move)
-              transformControls.setMode('translate')
-              transformControls.setSpace('world') // Use world space for easier movement
-              transformControls.attach(selectedObject)
-              console.log('[ViewerCanvas] Transform controls attached to hotspot successfully')
-            } catch (error) {
-              console.error(`[ViewerCanvas] Failed to attach transform controls to hotspot:`, error)
-            }
+          transformControls.setMode('translate')
+          transformControls.setSpace('world')
+          if (safeAttachTransformControls(transformControls, selectedObject, scene)) {
+            console.log('[ViewerCanvas] Transform controls attached to hotspot successfully')
           } else {
-            console.warn('[ViewerCanvas] Cannot attach transform controls to hotspot - object has no parent (not in scene)')
+            console.warn('[ViewerCanvas] Cannot attach transform controls to hotspot - not in scene graph')
           }
         }
         // Check for hotspot endpoints (draggable line endpoint handles)
@@ -5575,16 +5654,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             hasParent: !!selectedObject.parent,
             inScene: viewerRef.current?.scene?.children.includes(selectedObject) || false
           })
-          // CRITICAL: Only attach if object is in scene graph
-          if (selectedObject.parent !== null) {
-            try {
-              transformControls.attach(selectedObject)
-              console.log('[ViewerCanvas] Transform controls attached to hotspot endpoint successfully')
-            } catch (error) {
-              console.error(`[ViewerCanvas] Failed to attach transform controls to hotspot endpoint:`, error)
-            }
+          if (safeAttachTransformControls(transformControls, selectedObject, scene)) {
+            console.log('[ViewerCanvas] Transform controls attached to hotspot endpoint successfully')
           } else {
-            console.warn('[ViewerCanvas] Cannot attach transform controls to hotspot endpoint - object has no parent (not in scene)')
+            console.warn('[ViewerCanvas] Cannot attach transform controls to hotspot endpoint - not in scene graph')
           }
         }
         // Get pivot wrapper if it exists (created during selection)
@@ -5624,36 +5697,34 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             }
             
             // Pivot exists and mode is correct - attach transform controls
-            const pivotParent = (pivot as THREE.Object3D).parent
-            if (pivotParent !== null) {
-              // CRITICAL: Only attach if pivot is in scene graph
-              try {
-                transformControls.setMode(effectiveMode)
-                transformControls.attach(pivot)
-              } catch (error) {
-                console.warn(`[ViewerCanvas] Failed to attach transform controls to pivot:`, error)
-              }
+            if (isObjectInSceneGraph(pivot as THREE.Object3D, scene)) {
+              transformControls.setMode(effectiveMode)
+              safeAttachTransformControls(transformControls, pivot, scene)
               return
             }
           }
           
           // No pivot or pivot not in scene - attach directly to model
-          if (selectedObject.parent !== null) {
-            // Fallback: attach directly (will use object origin, not center)
-            // CRITICAL: Only attach if object is in scene graph
-            try {
-              transformControls.setMode(effectiveMode)
-              transformControls.attach(selectedObject)
-            } catch (error) {
-              console.warn(`[ViewerCanvas] Failed to attach transform controls to object:`, error)
-            }
-          }
+          transformControls.setMode(effectiveMode)
+          safeAttachTransformControls(transformControls, selectedObject, scene)
         } else if (selectedObject instanceof THREE.Light) {
         // Allow both translate and rotate modes for lights
         const modeToUse = effectiveMode || 'translate'
         transformControls.setMode(modeToUse)
-        const gizmo = viewerRef.current.lightToGizmo?.get(selectedObject as THREE.Light)
-        const objectToAttach = (gizmo as THREE.Object3D) || selectedObject
+        const gizmo = viewerRef.current.lightToGizmo?.get(selectedObject as THREE.Light) ?? null
+        const helpersMap = viewerRef.current.lightHelpers
+        const lightId = (selectedObject.userData?.lightId as string | undefined)
+        const helper = (lightId && helpersMap?.get(lightId)) || null
+
+        // Prefer gizmo (in scene), then helper, then the light itself
+        let objectToAttach: THREE.Object3D | null = null
+        if (gizmo && isObjectInSceneGraph(gizmo, scene)) {
+          objectToAttach = gizmo
+        } else if (helper && isObjectInSceneGraph(helper, scene)) {
+          objectToAttach = helper
+        } else if (isObjectInSceneGraph(selectedObject, scene)) {
+          objectToAttach = selectedObject
+        }
         
         // Initialize gizmo rotation based on light direction when switching to rotate mode
         if (gizmo && modeToUse === 'rotate') {
@@ -5671,13 +5742,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           }
         }
         
-        // CRITICAL: Only attach if object is in scene graph
-        if (objectToAttach.parent !== null) {
-          try {
-            transformControls.attach(objectToAttach)
-          } catch (error) {
-            console.warn(`[ViewerCanvas] Failed to attach transform controls to light/gizmo:`, error)
-          }
+        if (objectToAttach && safeAttachTransformControls(transformControls, objectToAttach, scene)) {
+          disableShadowsDeep(objectToAttach)
+          if (gizmo) disableShadowsDeep(gizmo)
+          if (helper) disableShadowsDeep(helper)
+          disableShadowsDeep(transformControls)
         }
       }
       // Note: Camera centering is now only done on double-click, not on selection or transform mode change
@@ -6322,6 +6391,11 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       if (!light) {
         // Create new light using unified createLight function
         light = createLight(config, scene) as THREE.DirectionalLight
+        light.userData.lightId = config.id
+        // User-added lights (post-init) get auto-selected; default sun does not
+        if (!config.isSun) {
+          light.userData.autoSelectOnCreate = true
+        }
         
         if (startingObjectsGroup) {
           startingObjectsGroup.add(light)
@@ -6350,10 +6424,31 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           
           if (helper) {
             helper.userData.lightId = config.id
+            helper.userData.isLightHelper = true
+            helper.userData.ignoreShadowWarnings = true
+            disableShadowsDeep(helper)
             scene.add(helper)
             // Store helper reference for updates
             const helpersMap = viewerRef.current?.lightHelpers || new Map()
             helpersMap.set(config.id, helper)
+            helper.userData.linkedLight = light
+            const helperMapRef = viewerRef.current?.helperToLight
+            if (helperMapRef) {
+              helperMapRef.set(helper, light)
+            }
+          }
+        }
+
+        const runtimeLight = light as THREE.Light
+        if (
+          (runtimeLight instanceof THREE.DirectionalLight || runtimeLight instanceof THREE.SpotLight) &&
+          runtimeLight.target
+        ) {
+          runtimeLight.target.castShadow = false
+          runtimeLight.target.receiveShadow = false
+          runtimeLight.target.userData.ignoreShadowWarnings = true
+          if (!runtimeLight.target.parent) {
+            scene.add(runtimeLight.target)
           }
         }
       }
@@ -6372,6 +6467,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         )
         // CRITICAL: If gizmo was created, ensure it's visible and positioned correctly
         if (gizmo) {
+          disableShadowsDeep(gizmo)
           // CRITICAL: Set visibility based on showLightHelpers setting
           // Gizmos are controlled by the same setting as Three.js helpers
           const showLightHelpers = useAppStore.getState().showLightHelpers
@@ -6379,38 +6475,30 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           // CRITICAL: Update gizmo position to match light position
           updateLightGizmoFromLight(light, gizmo, viewerRef.current?.camera)
           
-          // CRITICAL: Automatically select the light and attach transform controls when it's first created
-          // This provides the same behavior as double-clicking on a light in the objects panel
-          // Users can immediately drag the light around using the green/red/blue axes
-          // Check if this is a newly created light (not just an update to an existing light)
-          const isNewLight = !light.userData._hasBeenSelected
-          if (isNewLight && gizmo && gizmo.parent !== null) {
-            // Mark that we've selected this light to prevent re-selecting on every update
+          // Auto-select only when LightingPanel (or similar) sets this flag —
+          // never for default sun / store-restored lights (avoids TC scene-graph races).
+          const shouldAutoSelect =
+            !!light.userData.autoSelectOnCreate && !light.userData._hasBeenSelected
+          if (shouldAutoSelect && isObjectInSceneGraph(gizmo, scene)) {
             light.userData._hasBeenSelected = true
+            light.userData.autoSelectOnCreate = false
             
-            // Use setTimeout to ensure the gizmo is fully added to the scene and all state is ready
             setTimeout(() => {
-              if (gizmo && gizmo.parent !== null && viewerRef.current?.transformControls && viewerRef.current?.selectObject) {
+              if (
+                isObjectInSceneGraph(gizmo, scene) &&
+                viewerRef.current?.transformControls &&
+                viewerRef.current?.selectObject
+              ) {
                 try {
-                  // CRITICAL: Ensure gizmo is visible before selecting (showLightHelpers might be false)
-                  // We want the gizmo to be visible when transform controls are attached
-                  const showLightHelpers = useAppStore.getState().showLightHelpers
-                  if (showLightHelpers) {
+                  const showHelpers = useAppStore.getState().showLightHelpers
+                  if (showHelpers) {
                     gizmo.visible = true
                   }
-                  
-                  // Set transform mode to translate FIRST (same as double-click behavior)
-                  // This ensures transform controls will be shown
                   setTransformMode('translate')
-                  
-                  // Select the light (this will trigger selectObject which sets up the selection state)
-                  // selectObject will automatically attach transform controls and highlight the gizmo
-                  // This is the same action that happens when double-clicking on a light
                   viewerRef.current.selectObject(light)
-                  
-                  // CRITICAL: After selecting, ensure gizmo remains visible
-                  // The animation loop will maintain visibility based on showLightHelpers, but we ensure it here too
-                  if (showLightHelpers && light.visible) {
+                  disableShadowsDeep(gizmo)
+                  disableShadowsDeep(viewerRef.current.transformControls)
+                  if (showHelpers && light.visible) {
                     gizmo.visible = true
                   }
                 } catch (error) {
@@ -6418,6 +6506,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
                 }
               }
             }, 0)
+          } else if (!light.userData._hasBeenSelected) {
+            // Mark so we don't keep treating store-synced lights as brand-new
+            light.userData._hasBeenSelected = true
           }
         }
       }
@@ -6484,8 +6575,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
             physicalLight.decay = config.decay
           }
           
-          // Update power (lumens) - this affects the light's intensity calculation
-          if (config.power !== undefined) {
+          // Three.js links power ↔ intensity (setting one overwrites the other).
+          // Intensity is the panel's primary brightness control — apply last.
+          // Power is only applied when intensity is absent from the config.
+          if (config.intensity === undefined && config.power !== undefined) {
             physicalLight.power = config.power
           }
         }
@@ -6511,10 +6604,10 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
               config.target.y ?? 0,
               config.target.z ?? 0
             )
-            // Ensure target is in scene
-            if (!spotLight.target.parent) {
-              scene.add(spotLight.target)
-            }
+          }
+          // SpotLight.target must remain in the scene graph or the light will not illuminate
+          if (!spotLight.target.parent) {
+            scene.add(spotLight.target)
           }
         }
         
@@ -9184,6 +9277,8 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
       )
       // Hide all models in main scene (they will be rendered in Streets GL)
       // BUT: Keep primitives and Gaussian splats visible (splats cannot be rendered in Streets GL)
+      const bridge = useAppStore.getState().streetsGLBridge
+      const reassertedIds = new Set<string>()
       scene.traverse((obj) => {
         if (obj.userData.excludeFromStreetsGLHiding || obj.userData.isGaussianSplatViewer) {
           obj.visible = true
@@ -9195,8 +9290,34 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
             obj.visible = true
             obj.userData.renderInStreetsGL = true // Still sync to Streets GL
           } else {
+            // Ownership: Three.js product-hide; Streets GL draws via ExternalObjectBridge.
+            // Visibility ONLY via setIframeVisible; pose via transform sync (pose-only).
             obj.visible = false
             obj.userData.renderInStreetsGL = true
+          }
+          // Open/respect the mesh streetsGLVisible channel. Do not invent show when user hid.
+          // Heal pushes only for objects already Present/Hidden in the iframe (flash-hide fix);
+          // Absent objects are re-added by ResyncCoordinator — no competing visible writer here.
+          const projectId = obj.userData.projectObjectId as string | undefined
+          const streetsId = (obj.userData.streetsGLObjectId || projectId) as string | undefined
+          ensureStreetsGLIframeVisibilityChannel(obj, undefined, { markRenderable: true })
+          const wantVisible = getIframeVisible(obj)
+          const presence = getIframePresence(obj)
+          const inIframe = presence === 'present' || presence === 'hidden'
+          if (wantVisible && inIframe) {
+            const shouldPush =
+              !!bridge?.isReady &&
+              !!streetsId &&
+              !reassertedIds.has(streetsId) &&
+              (obj.userData.isModel === true || !!obj.userData.streetsGLObjectId)
+            if (streetsId && shouldPush) reassertedIds.add(streetsId)
+            setIframeVisible(obj, true, {
+              projectId,
+              persistRegistry: !!projectId,
+              pushToBridge: shouldPush,
+              bridge: shouldPush ? bridge : undefined,
+              streetsGLId: streetsId
+            })
           }
         }
         // Force hide grid helper, axes helper, and shadow plane - they should not overlay Streets GL

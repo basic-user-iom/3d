@@ -36,6 +36,7 @@ import MissingTextureDialog, { MissingTextureInfo } from './components/MissingTe
 import { diagnoseTexture, diagnoseTextures } from './utils/textureOptimizerDiagnostics'
 import { StreetsGLIframeOverlay } from './components/StreetsGLIframeOverlay'
 import { CityTransformOverlay } from './components/CityTransformOverlay'
+import ViewerFeatureAnnouncements from './components/ViewerFeatureAnnouncements'
 
 // Expose diagnostic functions to console for testing
 if (typeof window !== 'undefined') {
@@ -229,6 +230,15 @@ function App() {
     redo
   } = useAppStore()
 
+  // Session restore: if Streets GL was enabled last time, ask Electron to start :8081 immediately
+  // (browser relies on Vite plugin / `npm run dev`; process still dies when the terminal closes).
+  useEffect(() => {
+    if (!streetsGLIframeOverlay) return
+    if (typeof window === 'undefined' || !window.electronAPI?.startStreetsGLServer) return
+    useAppStore.getState().setStreetsGLStartRequestedAt(Date.now())
+    window.electronAPI.startStreetsGLServer().catch(() => {})
+  }, [streetsGLIframeOverlay])
+
   // Pin ViewerCanvas once weather effects need it — prevents full remount/freeze in city mode
   const weatherNeedsViewer =
     enableStandaloneWeather ||
@@ -344,19 +354,8 @@ function App() {
         console.warn('[ViewerInit] Unable to prepare default environment:', error)
       }
       
-      // Camera settings persistence DISABLED - reverting to default camera state
-      // All snapshot loading, camera view loading, and auto-save functionality removed
-      
-      // Clear any saved camera settings from localStorage
-      try {
-        localStorage.removeItem('viewer_default_settings')
-        console.log('[ViewerInit] Cleared saved camera settings from localStorage')
-      } catch (error) {
-        console.error('[ViewerInit] Failed to clear localStorage:', error)
-      }
-      
-      // Camera will start at default position (5, 5, 5) as defined in ViewerCanvas
-      console.log('[ViewerInit] Using default camera position (no saved settings)')
+      // Camera view localStorage auto-restore is intentionally unused (default camera).
+      // Do not clear unrelated keys — Streets GL session prefs and hotspots live in localStorage.
       
       // Auto-load default model: Pagani Utopia 2023
       // Path: files-upload/Pagani-glb/Pagani Utopia 2023.gltf
@@ -614,7 +613,8 @@ function App() {
           {showPointCloudPanel && <PointCloudPanel />}
           {showOSMGroundV2Panel && <OSMGroundV2Panel />}
           {showPolygonDrawingPanel && <PolygonDrawingPanel />}
-          {showHotspotsPanel && <HotspotsPanel />}
+          {/* Always mounted so hotspot scene objects + click bridge stay alive when the panel is closed */}
+          <HotspotsPanel />
           {showCubesViewer && <CubesViewer />}
           {showStreetsGLDemo && <StreetsGLDemo />}
           {showAIEnhancementPanel && <AIEnhancementPanel />}
@@ -643,6 +643,7 @@ function App() {
             />
           )}
       </div>
+      <ViewerFeatureAnnouncements />
       <CameraViewsQuickMenu />
       <Toast />
       <Stats />

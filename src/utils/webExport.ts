@@ -20,7 +20,12 @@ import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
 import { getCameraBoundsClampSource } from '../viewer/utils/cameraBounds'
 import { ExportWorkerPool } from './webExportWorker'
 import { generateHotspotMarkerRuntimeJs } from './hotspotMarkerRuntime'
-import { generateWebExportWeatherRuntimeJs } from './webExportWeatherRuntime'
+import { generateWebExportWeatherRuntimeJs, webExportIsSunLightConfig } from './webExportWeatherRuntime'
+import {
+  encodeJsonForScriptTag,
+  escapeHtmlAttr,
+  escapeHtmlText
+} from './hotspotContentSafety'
 
 export interface WebExportOptions {
   includeModel: boolean
@@ -28,7 +33,10 @@ export interface WebExportOptions {
   includeCameraViews: boolean
   includeAnimations: boolean
   presentationMode: boolean
-  transitionDuration: number // in seconds
+  /** Camera move duration between views (seconds). */
+  transitionDuration: number
+  /** How long to stay on each camera view after the transition finishes (seconds). */
+  viewHoldDuration: number
   autoPlay: boolean
   loop: boolean
   quality: 'low' | 'medium' | 'high' | 'ultra'
@@ -435,49 +443,53 @@ export function createStandaloneViewerHTML(
 ): string {
   // Ensure cameraViews is always an array
   const safeCameraViews = Array.isArray(cameraViews) ? cameraViews : []
-  const transitionDuration = options.transitionDuration || 2.0
-  const autoPlay = options.autoPlay !== false
+  const transitionDuration =
+    typeof options.transitionDuration === 'number' && isFinite(options.transitionDuration) && options.transitionDuration > 0
+      ? options.transitionDuration
+      : 2.0
+  const viewHoldDuration =
+    typeof options.viewHoldDuration === 'number' && isFinite(options.viewHoldDuration) && options.viewHoldDuration >= 0
+      ? options.viewHoldDuration
+      : 1.0
+  const autoPlay = options.autoPlay === true
   const loop = options.loop !== false
+
+  // Presentation timing must live at CONFIG top-level — the embedded player reads
+  // CONFIG.transitionDuration / CONFIG.viewHoldDuration / CONFIG.autoPlay / CONFIG.loop.
+  // Older exports nested these under config.options, so the player ignored the UI values.
+  const presentationConfig = {
+    transitionDuration,
+    viewHoldDuration,
+    autoPlay,
+    loop,
+    cameraViews: safeCameraViews
+  }
   
-  // Build config string - if config is provided, use it, otherwise build a default one
-  // CRITICAL: Ensure configString is always valid JSON to prevent syntax errors
-  let configString: string
+  // Build config payload - if config is provided, merge presentation settings on top.
+  // Encode for safe embedding inside <script> (blocks </script> breakouts, etc.).
+  let configPayload: unknown = presentationConfig
   try {
     if (config) {
-      configString = JSON.stringify(config, null, 2)
-    } else {
-      configString = JSON.stringify({
-        transitionDuration,
-        autoPlay,
-        loop,
-        cameraViews: safeCameraViews
-      }, null, 2)
-    }
-    // Ensure configString is not empty or undefined
-    if (!configString || configString.trim() === '') {
-      configString = JSON.stringify({
-        transitionDuration,
-        autoPlay,
-        loop,
-        cameraViews: safeCameraViews
-      }, null, 2)
+      configPayload = {
+        ...config,
+        ...presentationConfig,
+        // Prefer explicit cameraViews already on config when present
+        cameraViews: Array.isArray(config.cameraViews) ? config.cameraViews : safeCameraViews
+      }
     }
   } catch (error) {
-    console.error('[WebExport] Error stringifying config:', error)
-    // Fallback to minimal valid config
-    configString = JSON.stringify({
-      transitionDuration,
-      autoPlay,
-      loop,
-      cameraViews: safeCameraViews
-    }, null, 2)
+    console.error('[WebExport] Error preparing config:', error)
+    configPayload = presentationConfig
   }
+  const configString = encodeJsonForScriptTag(configPayload)
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com blob:; style-src 'unsafe-inline'; img-src data: blob: https: http:; media-src data: blob: https: http:; connect-src data: blob: https: http:; font-src data: https:; frame-src https: http:; worker-src blob:; child-src blob:; object-src 'none'; base-uri 'none'">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -500,6 +512,96 @@ export function createStandaloneViewerHTML(
       width: 100vw;
       height: 100vh;
       position: relative;
+    }
+
+    .yt-hotspot-overlay-root {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .yt-hotspot-overlay-root.is-open {
+      pointer-events: auto;
+    }
+    .yt-hotspot-overlay-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .yt-hotspot-overlay-shell {
+      position: relative;
+      z-index: 1;
+      width: min(92vw, 960px);
+      max-height: 90vh;
+      background: rgba(18, 18, 22, 0.98);
+      border: 2px solid #00AAFF;
+      border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .yt-hotspot-overlay-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.35);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .yt-hotspot-overlay-header h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .yt-hotspot-overlay-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .yt-hotspot-overlay-actions button {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid rgba(74, 158, 255, 0.7);
+      background: rgba(0, 0, 0, 0.65);
+      color: #9fd0ff;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .yt-hotspot-overlay-actions button.close-btn {
+      border-color: rgba(255, 80, 80, 0.8);
+      color: #fff;
+      background: rgba(180, 0, 0, 0.75);
+    }
+    .yt-hotspot-overlay-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+    }
+    .yt-hotspot-overlay-frame iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+    .yt-hotspot-overlay-shell:fullscreen,
+    .yt-hotspot-overlay-shell:-webkit-full-screen {
+      width: 100vw;
+      max-height: 100vh;
+      border-radius: 0;
     }
     
     #canvas {
@@ -1226,13 +1328,15 @@ export function createStandaloneViewerHTML(
       </div>
       <div class="camera-views-list" id="camera-views-list" style="min-width: ${safeCameraViews.length * 132}px;">
         ${safeCameraViews.map((view, index) => {
-          const viewNameEscaped = (view.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-          const thumbnailUrl = thumbnails.get(view.id) || '';
+          const viewName = escapeHtmlText(view.name || '')
+          const viewNameAttr = escapeHtmlAttr(view.name || '')
+          const viewIdAttr = escapeHtmlAttr(view.id || '')
+          const thumbnailUrl = escapeHtmlAttr(thumbnails.get(view.id) || '')
           return `
-          <div class="camera-view-item" data-view-id="${view.id}" data-index="${index}">
-            <img src="${thumbnailUrl}" alt="${viewNameEscaped}" class="camera-view-thumbnail" onerror="this.style.display='none'; this.parentElement.innerHTML='<div style=\\'padding:20px;text-align:center;color:#888;\\'>📹<br>' + '${viewNameEscaped}' + '</div>'">
+          <div class="camera-view-item" data-view-id="${viewIdAttr}" data-index="${index}">
+            <img src="${thumbnailUrl}" alt="${viewNameAttr}" class="camera-view-thumbnail" onerror="this.style.display='none'">
             <div class="camera-view-number">${index + 1}</div>
-            <div class="camera-view-name">${view.name || ''}</div>
+            <div class="camera-view-name">${viewName}</div>
           </div>
         `;
         }).join('')}
@@ -1505,7 +1609,6 @@ export function createStandaloneViewerHTML(
     import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
     import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
     import { GroundedSkybox } from 'three/addons/objects/GroundedSkybox.js';
-    import { Sky } from 'three/addons/objects/Sky.js';
     import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
     
     // Load MeshoptSimplifier dynamically (it's a large library)
@@ -1600,16 +1703,22 @@ export function createStandaloneViewerHTML(
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10000);
     
-    // Initialize CSS3D renderer for YouTube videos
+    // Initialize CSS3D renderer for YouTube videos (above the WebGL canvas)
     const css3dRenderer = new CSS3DRenderer();
     css3dRenderer.setSize(window.innerWidth, window.innerHeight);
     css3dRenderer.domElement.style.position = 'absolute';
     css3dRenderer.domElement.style.top = '0';
     css3dRenderer.domElement.style.left = '0';
+    css3dRenderer.domElement.style.width = '100%';
+    css3dRenderer.domElement.style.height = '100%';
     css3dRenderer.domElement.style.pointerEvents = 'none';
-    css3dRenderer.domElement.style.zIndex = '21';
-    css3dRenderer.domElement.style.overflow = 'hidden';
+    css3dRenderer.domElement.style.zIndex = '40';
+    css3dRenderer.domElement.style.overflow = 'visible';
     document.getElementById('viewer-container').appendChild(css3dRenderer.domElement);
+    // Keep WebGL canvas under the CSS3D layer
+    canvas.style.position = 'absolute';
+    canvas.style.inset = '0';
+    canvas.style.zIndex = '1';
     
     // Controls
     const controls = new OrbitControls(camera, canvas);
@@ -1623,8 +1732,9 @@ export function createStandaloneViewerHTML(
     
     // Presentation state
     let currentViewIndex = 0;
-    let isPlaying = CONFIG.autoPlay;
+    let isPlaying = false; // set true when autoplay actually starts (after scene ready)
     let transitionAnimation = null;
+    let presentationReady = false; // true after model/HDR load + first camera applied
     
     // Simple camera debug tracker
     const cameraDebug = {
@@ -1802,7 +1912,7 @@ export function createStandaloneViewerHTML(
       if (transitionAnimation || !Array.isArray(CONFIG.cameraViews) || CONFIG.cameraViews.length === 0) return;
       const next = (currentViewIndex + 1) % CONFIG.cameraViews.length;
       if (next === 0 && !CONFIG.loop) {
-        isPlaying = false;
+        stopAutoPlay();
         updatePlayPauseButton();
         return;
       }
@@ -1828,33 +1938,99 @@ export function createStandaloneViewerHTML(
       }
     }
     
-    // Auto-play
-    let autoPlayInterval = null;
+    // Auto-play: stay on each view (hold), then animate to the next (transition).
+    // Timing comes from CONFIG (set at export from the Export panel).
+    let autoPlayTimeout = null;
+    function getTransitionSec() {
+      return (typeof CONFIG.transitionDuration === 'number' && isFinite(CONFIG.transitionDuration) && CONFIG.transitionDuration > 0)
+        ? CONFIG.transitionDuration
+        : 2.0;
+    }
+    function getHoldSec() {
+      return (typeof CONFIG.viewHoldDuration === 'number' && isFinite(CONFIG.viewHoldDuration) && CONFIG.viewHoldDuration >= 0)
+        ? CONFIG.viewHoldDuration
+        : 1.0;
+    }
+    function clearAutoPlayTimer() {
+      if (autoPlayTimeout) {
+        clearTimeout(autoPlayTimeout);
+        autoPlayTimeout = null;
+      }
+    }
     function startAutoPlay() {
-      if (autoPlayInterval) clearInterval(autoPlayInterval);
-      autoPlayInterval = setInterval(() => {
-        if (isPlaying && !transitionAnimation) {
-          nextView();
+      if (!presentationReady) {
+        // Queue until the scene finishes loading (see loadModel → sceneReady)
+        isPlaying = true;
+        updatePlayPauseButton();
+        return;
+      }
+      clearAutoPlayTimer();
+      isPlaying = true;
+      updatePlayPauseButton();
+      const advance = () => {
+        if (!isPlaying) return;
+        if (transitionAnimation) {
+          // Wait out an in-flight transition, then retry
+          autoPlayTimeout = setTimeout(advance, 100);
+          return;
         }
-      }, CONFIG.transitionDuration * 1000 + 1000); // transition + 1s pause
+        nextView();
+        // After starting a move: wait for transition + hold on the new view
+        autoPlayTimeout = setTimeout(advance, (getTransitionSec() + getHoldSec()) * 1000);
+      };
+      // Initial hold on camera 1 (index 0) before advancing to camera 2
+      autoPlayTimeout = setTimeout(advance, getHoldSec() * 1000);
     }
     
     function stopAutoPlay() {
-      if (autoPlayInterval) {
-        clearInterval(autoPlayInterval);
-        autoPlayInterval = null;
+      clearAutoPlayTimer();
+      isPlaying = false;
+    }
+
+    /** Snap to the first saved camera view (no animation) and mark it active. */
+    function goToFirstCameraViewImmediate() {
+      if (!Array.isArray(CONFIG.cameraViews) || CONFIG.cameraViews.length === 0) return false;
+      const firstView = CONFIG.cameraViews[0];
+      if (!firstView || !firstView.cameraPosition || !firstView.cameraTarget) return false;
+      camera.position.set(
+        firstView.cameraPosition.x,
+        firstView.cameraPosition.y,
+        firstView.cameraPosition.z
+      );
+      controls.target.set(
+        firstView.cameraTarget.x,
+        firstView.cameraTarget.y,
+        firstView.cameraTarget.z
+      );
+      controls.update();
+      updateActiveView(0);
+      camera.updateProjectionMatrix();
+      renderer.render(scene, camera);
+      return true;
+    }
+
+    /** Called once the exported scene is ready — starts autoplay from camera 1 if enabled. */
+    function beginPresentationPlayback() {
+      presentationReady = true;
+      const wantsAutoPlay = CONFIG.autoPlay === true;
+      if (wantsAutoPlay) {
+        goToFirstCameraViewImmediate();
+        startAutoPlay();
+      } else if (isPlaying) {
+        // User pressed Play during load — start now from camera 1
+        goToFirstCameraViewImmediate();
+        startAutoPlay();
       }
     }
     
     const playPauseBtn = document.getElementById('play-pause-btn');
     if (playPauseBtn) {
       playPauseBtn.addEventListener('click', () => {
-      isPlaying = !isPlaying;
-      updatePlayPauseButton();
       if (isPlaying) {
-        startAutoPlay();
-      } else {
         stopAutoPlay();
+        updatePlayPauseButton();
+      } else {
+        startAutoPlay();
       }
     });
     }
@@ -1968,11 +2144,15 @@ export function createStandaloneViewerHTML(
         }
       }
 
+      const standaloneWeatherActive = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
+
       // CRITICAL: Apply shadow settings to ALL directional lights with shadows
       // This works for BOTH ground projection and standard 360 HDR modes
       // The shadow settings are independent of the HDR projection type
       scene.traverse((light) => {
         if (light instanceof THREE.DirectionalLight && light.castShadow && light.shadow) {
+          const isSunLight = light.userData.isSun || light.userData.isGlobalSun ||
+            (standaloneWeatherActive && light.userData.lightId === 'light_1');
           // ANTI-ARTIFACT FIXES based on Three.js best practices:
           // 1. Calculate optimal bias based on shadow map resolution and scene scale
           //    This prevents shadow acne (self-shadowing artifacts) and peter panning
@@ -2041,7 +2221,12 @@ export function createStandaloneViewerHTML(
             shadowCamera.near = Math.max(currentShadowCameraNear, 0.0001);
             
             // Keep far plane tight to maximize shadow map resolution
-            shadowCamera.far = Math.min(currentShadowCameraFar, currentShadowDistance);
+            // Standalone weather sun: keep generous far plane so car + ground catcher stay in frustum
+            if (!standaloneWeatherActive || !isSunLight) {
+              shadowCamera.far = Math.min(currentShadowCameraFar, currentShadowDistance);
+            } else {
+              shadowCamera.far = Math.max(shadowCamera.far || 0, currentShadowCameraFar, currentShadowDistance);
+            }
             
             // CRITICAL: Update projection matrix and force shadow map regeneration
             // Shadow camera near/far changes require shadow map regeneration to be visible
@@ -2060,23 +2245,25 @@ export function createStandaloneViewerHTML(
           
           light.shadow.needsUpdate = true;
           
-          // Optionally adjust light distance and direction (sun azimuth/elevation)
-          const target = light.target || { position: new THREE.Vector3(0, 0, 0) };
-          const targetPos = target.position || new THREE.Vector3(0, 0, 0);
+          // Standalone weather owns sun direction from timeOfDay — do not override with tuning sliders
+          if (!standaloneWeatherActive || !isSunLight) {
+            const target = light.target || { position: new THREE.Vector3(0, 0, 0) };
+            const targetPos = target.position || new THREE.Vector3(0, 0, 0);
 
-          const azimuthRad = (currentSunAzimuthDeg * Math.PI) / 180;
-          const elevationRad = (currentSunElevationDeg * Math.PI) / 180;
+            const azimuthRad = (currentSunAzimuthDeg * Math.PI) / 180;
+            const elevationRad = (currentSunElevationDeg * Math.PI) / 180;
 
-          const distance = currentShadowLightDistance;
-          const dir = new THREE.Vector3(
-            Math.cos(elevationRad) * Math.cos(azimuthRad),
-            Math.sin(elevationRad),
-            Math.cos(elevationRad) * Math.sin(azimuthRad)
-          );
+            const distance = currentShadowLightDistance;
+            const dir = new THREE.Vector3(
+              Math.cos(elevationRad) * Math.cos(azimuthRad),
+              Math.sin(elevationRad),
+              Math.cos(elevationRad) * Math.sin(azimuthRad)
+            );
 
-          if (isFinite(dir.x) && isFinite(dir.y) && isFinite(dir.z)) {
-            const pos = targetPos.clone().add(dir.multiplyScalar(distance));
-            light.position.copy(pos);
+            if (isFinite(dir.x) && isFinite(dir.y) && isFinite(dir.z)) {
+              const pos = targetPos.clone().add(dir.multiplyScalar(distance));
+              light.position.copy(pos);
+            }
           }
         }
       });
@@ -2500,7 +2687,10 @@ export function createStandaloneViewerHTML(
     });
     
     if (CONFIG.autoPlay) {
-      startAutoPlay();
+      // Do not start here — model/HDR are still loading. beginPresentationPlayback()
+      // runs after the scene is ready and always begins on camera view 1.
+      isPlaying = true;
+      updatePlayPauseButton();
     }
     ` : ''}
     
@@ -2536,16 +2726,19 @@ export function createStandaloneViewerHTML(
       percentageEl.textContent = Math.round(overallProgress) + '%';
     }
     
-    // Helper function to extract YouTube video ID
+    // Helper function to extract YouTube video ID (matches editor hotspotUtils)
     function extractYouTubeId(url) {
       if (!url) return null;
+      const trimmed = String(url).trim();
+      if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
       const patterns = [
-        new RegExp('(?:youtube\\.com/watch\\?v=|youtu\\.be/|youtube\\.com/embed/)([^&\\n?#]+)'),
-        new RegExp('youtube\\.com/watch\\?.*v=([^&\\n?#]+)'),
-        new RegExp('youtu\\.be/([^?\\n#]+)')
+        new RegExp('(?:youtube\\.com/watch\\?v=|youtu\\.be/|youtube\\.com/embed/|youtube\\.com/live/)([a-zA-Z0-9_-]{11})'),
+        new RegExp('youtube\\.com/watch\\?.*v=([a-zA-Z0-9_-]{11})'),
+        new RegExp('youtube\\.com/live/([a-zA-Z0-9_-]{11})'),
+        new RegExp('youtube\\.com/shorts/([a-zA-Z0-9_-]{11})')
       ];
       for (const pattern of patterns) {
-        const match = url.match(pattern);
+        const match = trimmed.match(pattern);
         if (match && match[1]) return match[1];
       }
       return null;
@@ -2590,6 +2783,8 @@ export function createStandaloneViewerHTML(
     }
 
     function applyHotspotFrozenOrientation(object, frozen, objectPosition, cameraPosition) {
+      // Prefer stored freeze; otherwise freeze from this object's position at capture time.
+      // Callers should pass the same frozen quaternion to label + panel.
       if (frozen) {
         object.quaternion.set(frozen.x, frozen.y, frozen.z, frozen.w);
       } else if (cameraPosition) {
@@ -2597,36 +2792,326 @@ export function createStandaloneViewerHTML(
       }
       object.updateMatrixWorld(true);
     }
+
+    function resolveSharedFrozenRotation(faceCamera, existing, anchorPosition, cameraPosition) {
+      if (faceCamera) return undefined;
+      if (existing) return existing;
+      if (!cameraPosition) return undefined;
+      const q = computeBillboardQuaternion(anchorPosition, cameraPosition);
+      return { x: q.x, y: q.y, z: q.z, w: q.w };
+    }
+
+    function isDomElement(el) {
+      return !!(el && typeof el === 'object' && el.nodeType === 1 && el.style);
+    }
+
+    function setDomVisibility(el, visible) {
+      if (!isDomElement(el)) return;
+      el.style.display = visible ? 'block' : 'none';
+      el.style.visibility = visible ? 'visible' : 'hidden';
+      el.style.opacity = visible ? '1' : '0';
+    }
+
+    // YouTube in preview/online uses a reliable HTML overlay (CSS3D is fragile with GLB leftovers).
+    const youtubeOverlays = new Map();
+
+    function setHotspotLineVisible(scene, hotspotId, visible) {
+      scene.traverse((obj) => {
+        if (obj.userData && obj.userData.isHotspotLine && obj.userData.hotspotId === hotspotId) {
+          obj.visible = visible;
+        }
+      });
+    }
+
+    function removeStaleHotspotPanels(scene, hotspotId) {
+      const toRemove = [];
+      scene.traverse((obj) => {
+        if (!obj.userData) return;
+        if (obj.userData.hotspotId !== hotspotId) return;
+        if (!obj.userData.isHotspotPanel) return;
+        // Keep only runtime-created panels; drop GLB leftovers / broken CSS3D shells.
+        const hasLiveDom = isDomElement(obj.userData.divElement) || isDomElement(obj.element);
+        const hasCanvas = !!obj.userData.canvas;
+        if (obj.userData.isCSS3DPanel || obj.userData.isYouTubeHtmlOverlay || (!hasLiveDom && !hasCanvas)) {
+          toRemove.push(obj);
+        }
+      });
+      toRemove.forEach((obj) => {
+        try {
+          const div = isDomElement(obj.userData.divElement) ? obj.userData.divElement
+            : (isDomElement(obj.element) ? obj.element : null);
+          if (div && div.parentNode) div.parentNode.removeChild(div);
+        } catch (_) {}
+        if (obj.parent) obj.parent.remove(obj);
+      });
+      return toRemove.length;
+    }
+
+    function findInWorldYouTubeIframe(scene, hotspotId) {
+      if (!scene) return null;
+      let found = null;
+      scene.traverse((obj) => {
+        if (found) return;
+        if (obj.userData && obj.userData.isCSS3DPanel && obj.userData.hotspotId === hotspotId) {
+          const iframe = obj.userData.iframeElement;
+          if (iframe) found = iframe;
+        }
+      });
+      return found;
+    }
+
+    function youtubeEmbedSrcWithoutAutoplay(src) {
+      try {
+        const u = new URL(src);
+        u.searchParams.delete('autoplay');
+        u.searchParams.delete('mute');
+        return u.toString();
+      } catch (_) {
+        return String(src || '')
+          .replace(/([?&])autoplay=1&?/g, '$1')
+          .replace(/([?&])mute=1&?/g, '$1')
+          .replace(/[?&]$/, '');
+      }
+    }
+
+    /** Stop in-world CSS3D YouTube so overlay does not dual-play audio. */
+    function pauseInWorldYouTube(scene, hotspotId) {
+      const iframe = findInWorldYouTubeIframe(scene, hotspotId);
+      if (!iframe) return;
+      const current = iframe.src || '';
+      if (current && current !== 'about:blank' && !iframe.dataset.baseSrc) {
+        iframe.dataset.baseSrc = current;
+      }
+      try { iframe.src = 'about:blank'; } catch (_) { iframe.src = ''; }
+    }
+
+    /** Restore in-world panel after overlay closes (paused, no autoplay). */
+    function resumeInWorldYouTube(scene, hotspotId) {
+      const iframe = findInWorldYouTubeIframe(scene, hotspotId);
+      if (!iframe || !iframe.dataset.baseSrc) return;
+      applyYouTubeIframeEmbedFlags(iframe);
+      iframe.src = youtubeEmbedSrcWithoutAutoplay(iframe.dataset.baseSrc);
+    }
+
+    function closeYouTubeOverlay(hotspotId, scene) {
+      const entry = youtubeOverlays.get(hotspotId);
+      if (!entry) return;
+      entry.root.classList.remove('is-open');
+      entry.root.style.display = 'none';
+      entry.isOpen = false;
+      // Stop overlay player so it cannot keep audio after close.
+      if (entry.iframe) {
+        const base = entry.iframe.dataset.baseSrc || entry.iframe.src;
+        try { entry.iframe.src = 'about:blank'; } catch (_) { entry.iframe.src = ''; }
+        entry.iframe.dataset.baseSrc = base;
+      }
+      if (scene) {
+        resumeInWorldYouTube(scene, hotspotId);
+        setHotspotLineVisible(scene, hotspotId, true);
+        scene.traverse((obj) => {
+          if (obj.userData && obj.userData.isYouTubeHtmlOverlay && obj.userData.hotspotId === hotspotId) {
+            obj.userData.isVisible = false;
+          }
+        });
+      }
+      console.log('[WebExport] Closed YouTube overlay:', hotspotId);
+    }
+
+    function openYouTubeOverlay(hotspotId, scene) {
+      const entry = youtubeOverlays.get(hotspotId);
+      if (!entry) return false;
+      // Pause in-world CSS3D first so only the overlay plays.
+      pauseInWorldYouTube(scene, hotspotId);
+      entry.root.style.display = 'flex';
+      entry.root.classList.add('is-open');
+      entry.isOpen = true;
+      if (entry.iframe && entry.iframe.dataset.baseSrc) {
+        const base = entry.iframe.dataset.baseSrc;
+        const joiner = base.includes('?') ? '&' : '?';
+        applyYouTubeIframeEmbedFlags(entry.iframe);
+        entry.iframe.src = base + joiner + 'autoplay=1&mute=1';
+      }
+      if (scene) {
+        setHotspotLineVisible(scene, hotspotId, false);
+        scene.traverse((obj) => {
+          if (obj.userData && obj.userData.isYouTubeHtmlOverlay && obj.userData.hotspotId === hotspotId) {
+            obj.userData.isVisible = true;
+          }
+        });
+      }
+      console.log('[WebExport] Opened YouTube overlay:', hotspotId);
+      return true;
+    }
+
+    function buildYouTubeEmbedSrc(videoId, siParam, autoplay) {
+      const params = new URLSearchParams({
+        controls: '1',
+        rel: '0',
+        modestbranding: '1',
+        playsinline: '1',
+        enablejsapi: '1'
+      });
+      if (siParam) params.set('si', siParam);
+      if (autoplay) {
+        params.set('autoplay', '1');
+        params.set('mute', '1');
+      }
+      try {
+        if (typeof location !== 'undefined' && location.protocol && location.protocol.indexOf('http') === 0) {
+          params.set('origin', location.origin);
+        }
+      } catch (_) {}
+      // nocookie reduces Error 153 in strict embed environments
+      return 'https://www.youtube-nocookie.com/embed/' + videoId + '?' + params.toString();
+    }
+
+    /** Lift COEP iframe embedding rules when parent still has COEP (e.g. blob: fallback). */
+    function applyYouTubeIframeEmbedFlags(iframe) {
+      try {
+        iframe.credentialless = true;
+      } catch (_) {}
+      try {
+        iframe.setAttribute('credentialless', '');
+      } catch (_) {}
+    }
+
+    function createYouTubeHtmlOverlay(hotspot, contentData, scene) {
+      const videoId = extractYouTubeId(contentData);
+      if (!videoId) {
+        console.warn('[WebExport] Could not extract YouTube video ID from:', contentData);
+        return null;
+      }
+      const existing = youtubeOverlays.get(hotspot.id);
+      if (existing && existing.root && existing.root.parentNode) {
+        existing.scene = scene;
+        return existing;
+      }
+      if (existing) {
+        youtubeOverlays.delete(hotspot.id);
+      }
+
+      const siParam = extractYouTubeSi(contentData) || '';
+      const baseSrc = buildYouTubeEmbedSrc(videoId, siParam, false);
+
+      const root = document.createElement('div');
+      root.className = 'yt-hotspot-overlay-root';
+      root.style.display = 'none';
+      root.setAttribute('data-hotspot-id', hotspot.id);
+      root.setAttribute('role', 'dialog');
+      root.setAttribute('aria-modal', 'true');
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'yt-hotspot-overlay-backdrop';
+
+      const shell = document.createElement('div');
+      shell.className = 'yt-hotspot-overlay-shell';
+
+      const header = document.createElement('div');
+      header.className = 'yt-hotspot-overlay-header';
+      const title = document.createElement('h3');
+      title.textContent = hotspot.name || (hotspot.label && hotspot.label.text) || 'Video';
+      const actions = document.createElement('div');
+      actions.className = 'yt-hotspot-overlay-actions';
+
+      const fsBtn = document.createElement('button');
+      fsBtn.type = 'button';
+      fsBtn.title = 'Fullscreen';
+      fsBtn.textContent = '⛶';
+      fsBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          if (document.fullscreenElement) await document.exitFullscreen();
+          else await shell.requestFullscreen();
+        } catch (err) {
+          console.warn('[WebExport] Fullscreen failed:', err);
+        }
+      });
+
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'close-btn';
+      closeBtn.title = 'Close';
+      closeBtn.textContent = '✕';
+
+      const frame = document.createElement('div');
+      frame.className = 'yt-hotspot-overlay-frame';
+      const iframe = document.createElement('iframe');
+      applyYouTubeIframeEmbedFlags(iframe);
+      iframe.src = baseSrc;
+      iframe.dataset.baseSrc = baseSrc;
+      iframe.title = hotspot.name || 'YouTube video player';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+      iframe.setAttribute('allowfullscreen', '');
+
+      actions.appendChild(fsBtn);
+      actions.appendChild(closeBtn);
+      header.appendChild(title);
+      header.appendChild(actions);
+      frame.appendChild(iframe);
+      shell.appendChild(header);
+      shell.appendChild(frame);
+      root.appendChild(backdrop);
+      root.appendChild(shell);
+      document.body.appendChild(root);
+
+      const entry = { root, shell, iframe, isOpen: false, hotspotId: hotspot.id, scene: scene };
+      youtubeOverlays.set(hotspot.id, entry);
+
+      const doClose = (e) => {
+        if (e) e.stopPropagation();
+        const live = youtubeOverlays.get(hotspot.id);
+        closeYouTubeOverlay(hotspot.id, (live && live.scene) ? live.scene : scene);
+      };
+      closeBtn.addEventListener('click', doClose);
+      backdrop.addEventListener('click', doClose);
+
+      return entry;
+    }
     
     // Create hotspot panel (matches main 3D viewer implementation)
     function createHotspotPanel(hotspot, position, scene) {
-      // DUPLICATE PREVENTION: Check if panel already exists for this hotspot
+      const contentType = hotspot.content && hotspot.content.type;
+      const contentData = hotspot.content && hotspot.content.data;
+      // YouTube must always start visible in preview/online.
+      const isOpen = contentType === 'youtube' ? true : ((hotspot.panelState || 'closed') === 'open');
+
+      // Drop GLB leftover / broken CSS3D shells before creating a live panel
+      if (contentType === 'youtube') {
+        removeStaleHotspotPanels(scene, hotspot.id);
+      }
+
+      // If a live panel already exists for non-YouTube, skip duplicate creation.
       let existingPanel = null;
       scene.traverse((obj) => {
-        if (obj.userData.hotspotId === hotspot.id && obj.userData.isHotspotPanel) {
-          existingPanel = obj;
+        if (obj.userData.hotspotId === hotspot.id && obj.userData.isHotspotPanel && !obj.userData.isYouTubeHtmlOverlay) {
+          if (obj.userData.canvas || isDomElement(obj.userData.divElement) || isDomElement(obj.element)) {
+            existingPanel = obj;
+          }
         }
       });
       
       if (existingPanel) {
-        console.log('[WebExport] Panel already exists for hotspot:', hotspot.id, '- skipping duplicate creation');
+        if (contentType === 'youtube') {
+          existingPanel.visible = true;
+          existingPanel.userData.isVisible = true;
+          setDomVisibility(existingPanel.userData.divElement || existingPanel.element, true);
+          setHotspotLineVisible(scene, hotspot.id, false);
+          console.log('[WebExport] Reusing existing YouTube CSS3D panel:', hotspot.id);
+        } else {
+          console.log('[WebExport] Panel already exists for hotspot:', hotspot.id, '- skipping duplicate creation');
+        }
         return;
       }
       
-      // Check panelState - only create visible panel if state is 'open', otherwise create hidden panel
-      const panelState = hotspot.panelState || 'closed'; // Default to closed (matches main viewer)
-      const isOpen = panelState === 'open';
-      
-      console.log('[WebExport] Creating panel for hotspot:', hotspot.id, 'type:', (hotspot.content && hotspot.content.type) || 'unknown', 'panelState:', panelState, 'isOpen:', isOpen);
-        const contentType = hotspot.content.type;
-        const contentData = hotspot.content.data;
+      console.log('[WebExport] Creating panel for hotspot:', hotspot.id, 'type:', contentType || 'unknown', 'isOpen:', isOpen);
         const panelConfig = hotspot.panelDimensions || {};
         const panelWidthPixels = panelConfig.widthPixels || null;
         const panelHeightPixels = panelConfig.heightPixels || null;
         
         // Get formatting settings (matches main viewer)
-        const formatting = hotspot.content.formatting || {};
-        const popupSettings = hotspot.content.popupSettings || {};
+        const formatting = (hotspot.content && hotspot.content.formatting) || {};
+        const popupSettings = (hotspot.content && hotspot.content.popupSettings) || {};
         const fontSize = formatting.fontSize || 16;
         const fontFamily = formatting.fontFamily || 'Arial, sans-serif';
         const textColor = formatting.color || '#ffffff';
@@ -2639,54 +3124,46 @@ export function createStandaloneViewerHTML(
           ? formatting.backgroundColor 
           : (popupSettings.backgroundColor || 'rgba(25, 25, 30, 0.98)');
         const borderRadius = popupSettings.borderRadius || 12;
-        const borderWidth = hotspot.panelBorder?.width || 2;
-        const borderColor = hotspot.panelBorder?.color || '#00AAFF';
+        const borderWidth = (hotspot.panelBorder && hotspot.panelBorder.width) || 2;
+        const borderColor = (hotspot.panelBorder && hotspot.panelBorder.color) || '#00AAFF';
         const maxWidth = popupSettings.maxWidth || 300;
         const maxHeight = popupSettings.maxHeight || 400;
       
       // Position panel below marker (matches main viewer: -1.2 units below)
       const panelPosition = position.clone().add(new THREE.Vector3(0, -1.2, 0));
       
-      // For YouTube videos, use CSS3D panel (matches main 3D viewer implementation)
+      // For YouTube videos, use in-world CSS3D hotspot panel (not a centered modal)
       if (contentType === 'youtube' && contentData) {
         const videoId = extractYouTubeId(contentData);
-        const siParam = extractYouTubeSi(contentData) || 'TRivzqXJKfnNdTo6';
+        const siParam = extractYouTubeSi(contentData) || '';
         
         if (videoId) {
-          // Calculate panel dimensions (matches main viewer CSS3D panel logic)
           const videoMaxWidth = popupSettings.maxWidth || 400;
-          const videoMaxHeight = popupSettings.maxHeight || 600;
           const videoPadding = padding;
           
           let panelWidth, panelHeight, videoWidth, videoHeight;
           
           if (panelWidthPixels !== null && panelWidthPixels !== undefined) {
-            // Use provided width
             panelWidth = panelWidthPixels;
             if (panelHeightPixels !== null && panelHeightPixels !== undefined) {
-              // Use provided height
               panelHeight = panelHeightPixels;
             } else {
-              // Calculate height from width using 16:9 aspect ratio
               panelHeight = (panelWidth - videoPadding * 2) / (16 / 9) + videoPadding * 2;
             }
-            // Calculate video dimensions from panel dimensions (subtract padding)
             videoWidth = panelWidth - videoPadding * 2;
             videoHeight = panelHeight - videoPadding * 2;
           } else {
-            // Calculate from defaults (3x multiplier for CSS3D panels, matches main viewer)
-            const sizeMultiplier = 3;
-            videoWidth = Math.min((videoMaxWidth * sizeMultiplier) - videoPadding * 2, 1200);
+            // Preview / online: larger default YouTube panel than the editor.
+            const sizeMultiplier = 5;
+            videoWidth = Math.min((videoMaxWidth * sizeMultiplier) - videoPadding * 2, 1600);
             videoHeight = videoWidth / (16 / 9);
             panelWidth = videoWidth + videoPadding * 2;
-            panelHeight = panelHeightPixels ?? (videoHeight + videoPadding * 2);
-            // If height was provided, recalculate video height
+            panelHeight = (panelHeightPixels != null) ? panelHeightPixels : (videoHeight + videoPadding * 2);
             if (panelHeightPixels !== null && panelHeightPixels !== undefined) {
               videoHeight = panelHeight - videoPadding * 2;
             }
           }
           
-          // Create container div (matches main viewer styling)
           const div = document.createElement('div');
           div.style.width = panelWidth + 'px';
           div.style.height = panelHeight + 'px';
@@ -2705,16 +3182,18 @@ export function createStandaloneViewerHTML(
           div.style.webkitUserSelect = 'none';
           div.setAttribute('data-css3d-panel', 'true');
           
-          // Create YouTube iframe (matches main viewer)
           const iframe = document.createElement('iframe');
           iframe.width = videoWidth;
           iframe.height = videoHeight;
-          iframe.src = 'https://www.youtube.com/embed/' + videoId + '?si=' + siParam + '&controls=1';
+          applyYouTubeIframeEmbedFlags(iframe);
+          // Keep a non-autoplay base for restore after "Play on screen" overlay closes.
+          iframe.dataset.baseSrc = buildYouTubeEmbedSrc(videoId, siParam, false);
+          iframe.src = buildYouTubeEmbedSrc(videoId, siParam, isOpen);
           iframe.title = hotspot.name || 'YouTube video player';
           iframe.setAttribute('frameborder', '0');
-          iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+          iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
           iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-          iframe.allowFullscreen = true;
+          iframe.setAttribute('allowfullscreen', '');
           iframe.style.width = '100%';
           iframe.style.height = '100%';
           iframe.style.border = 'none';
@@ -2725,7 +3204,6 @@ export function createStandaloneViewerHTML(
           iframe.style.position = 'relative';
           iframe.style.overflow = 'visible';
           
-          // Add close button for CSS3D panel
           const closeButton = document.createElement('div');
           closeButton.style.position = 'absolute';
           closeButton.style.top = '8px';
@@ -2743,11 +3221,38 @@ export function createStandaloneViewerHTML(
           closeButton.style.fontSize = '16px';
           closeButton.style.fontWeight = 'bold';
           closeButton.style.lineHeight = '1';
+          closeButton.style.pointerEvents = 'auto';
           closeButton.textContent = '×';
           closeButton.title = 'Close panel';
           closeButton.setAttribute('data-hotspot-id', hotspot.id);
+
+          const screenButton = document.createElement('div');
+          screenButton.style.position = 'absolute';
+          screenButton.style.top = '8px';
+          screenButton.style.right = '40px';
+          screenButton.style.width = '24px';
+          screenButton.style.height = '24px';
+          screenButton.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+          screenButton.style.border = '1px solid rgba(74, 158, 255, 0.8)';
+          screenButton.style.borderRadius = '50%';
+          screenButton.style.display = 'flex';
+          screenButton.style.alignItems = 'center';
+          screenButton.style.justifyContent = 'center';
+          screenButton.style.cursor = 'pointer';
+          screenButton.style.zIndex = '1000';
+          screenButton.style.color = '#9fd0ff';
+          screenButton.style.fontSize = '12px';
+          screenButton.style.fontWeight = 'bold';
+          screenButton.style.lineHeight = '1';
+          screenButton.style.pointerEvents = 'auto';
+          screenButton.textContent = '⛶';
+          screenButton.title = 'Play on screen';
+          screenButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            createYouTubeHtmlOverlay(hotspot, contentData, scene);
+            openYouTubeOverlay(hotspot.id, scene);
+          });
           
-          // Add hover effect
           closeButton.addEventListener('mouseenter', () => {
             closeButton.style.backgroundColor = 'rgba(255, 0, 0, 0.9)';
           });
@@ -2755,46 +3260,35 @@ export function createStandaloneViewerHTML(
             closeButton.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
           });
           
-          // Add click handler to close panel
+          // Create CSS3D object first so close handler can reference it
+          const css3dObject = new CSS3DObject(div);
+          css3dObject.position.copy(panelPosition);
+          
           closeButton.addEventListener('click', (e) => {
             e.stopPropagation();
             css3dObject.visible = false;
             css3dObject.userData.isVisible = false;
-            renderer.render(scene, camera);
+            setDomVisibility(div, false);
+            setHotspotLineVisible(scene, hotspot.id, true);
+            if (typeof renderer !== 'undefined' && renderer) renderer.render(scene, camera);
             if (css3dRenderer) css3dRenderer.render(scene, camera);
             console.log('[WebExport] Closed CSS3D panel for hotspot:', hotspot.id);
           });
           
           div.appendChild(iframe);
+          div.appendChild(screenButton);
           div.appendChild(closeButton);
           
-          // Create CSS3D object
-          const css3dObject = new CSS3DObject(div);
-          css3dObject.position.copy(panelPosition);
-          
-          // CSS3D scale calculation (matches main viewer)
-          // Target height in 3D units (increased to 2.0 for better visibility)
-          const targetHeight3DUnits = 2.0;
+          const targetHeight3DUnits = 3.2;
           let scale = targetHeight3DUnits / panelHeight;
-          
-          // Ensure minimum scale for very large panels
-          const minHeight3DUnits = 1.5;
+          const minHeight3DUnits = 2.4;
           const minScale = minHeight3DUnits / panelHeight;
-          if (scale < minScale) {
-            scale = minScale;
-          }
-          
-          // Cap maximum scale
-          const maxHeight3DUnits = 3.0;
+          if (scale < minScale) scale = minScale;
+          const maxHeight3DUnits = 4.5;
           const maxScale = maxHeight3DUnits / panelHeight;
-          if (scale > maxScale) {
-            scale = maxScale;
-          }
-          
-          // Use uniform scale to maintain aspect ratio
+          if (scale > maxScale) scale = maxScale;
           css3dObject.scale.set(scale, scale, 1);
           
-          // Store metadata (matches main viewer)
           css3dObject.userData.isCSS3DPanel = true;
           css3dObject.userData.isHotspotPanel = true;
           css3dObject.userData.hotspotId = hotspot.id;
@@ -2806,24 +3300,23 @@ export function createStandaloneViewerHTML(
           css3dObject.userData.actualHeight = panelHeight;
           css3dObject.userData.divElement = div;
           css3dObject.userData.iframeElement = iframe;
-          css3dObject.userData.isVisible = isOpen; // Track panel visibility (matches main viewer panelState)
-          css3dObject.userData.closeButton = closeButton; // Store close button reference
+          css3dObject.userData.isVisible = isOpen;
+          css3dObject.userData.closeButton = closeButton;
           
-          // Set visibility based on panelState (matches main viewer)
           css3dObject.visible = isOpen;
-          if (!isOpen) {
-            div.style.display = 'none'; // Hide the DOM element for CSS3D
-          }
+          setDomVisibility(div, isOpen);
+          if (isOpen) setHotspotLineVisible(scene, hotspot.id, false);
           
           scene.add(css3dObject);
-          if (hotspot.faceCamera !== false) {
-            if (typeof camera !== 'undefined' && camera) {
-              css3dObject.lookAt(camera.position);
+          // Face camera immediately (CSS3D billboards copy camera quaternion each frame)
+          if (typeof camera !== 'undefined' && camera) {
+            if (hotspot.faceCamera !== false) {
+              css3dObject.quaternion.copy(camera.quaternion);
+            } else {
+              applyHotspotFrozenOrientation(css3dObject, hotspot.frozenRotation, css3dObject.position, camera.position);
             }
-          } else if (typeof camera !== 'undefined' && camera) {
-            applyHotspotFrozenOrientation(css3dObject, hotspot.frozenRotation, css3dObject.position, camera.position);
           }
-          console.log('[WebExport] Created CSS3D panel for YouTube video:', hotspot.id, 'videoId:', videoId, 'visible:', isOpen);
+          console.log('[WebExport] Created CSS3D hotspot panel for YouTube:', hotspot.id, 'videoId:', videoId, 'visible:', isOpen);
         } else {
           console.warn('[WebExport] Could not extract YouTube video ID from:', contentData);
         }
@@ -3206,6 +3699,17 @@ export function createStandaloneViewerHTML(
             hotspot.position.y,
             hotspot.position.z
           );
+          const faceCamera = (hotspot.label && hotspot.label.faceCamera != null)
+            ? hotspot.label.faceCamera
+            : (hotspot.faceCamera !== false);
+          const labelAnchor = new THREE.Vector3(
+            position.x + ((hotspot.label && hotspot.label.offsetX) || 0),
+            position.y + ((hotspot.label && hotspot.label.offsetY) || 0),
+            position.z
+          );
+          const sharedFrozen = (typeof camera !== 'undefined' && camera)
+            ? resolveSharedFrozenRotation(faceCamera, hotspot.frozenRotation, labelAnchor, camera.position)
+            : hotspot.frozenRotation;
           const showIcon = hotspot.showIcon !== false;
           const group = createHotspotMarkerGroup(hotspot, position, showIcon);
           scene.add(group);
@@ -3336,7 +3840,13 @@ export function createStandaloneViewerHTML(
             
             const labelFaceCamera = hotspot.label.faceCamera ?? hotspot.faceCamera ?? true;
             const aspectRatio = baseWidth / baseHeight;
-            const baseScale = 0.4;
+            const pixelsToWorldUnits = 0.01;
+            let baseScale = 0.8;
+            if (hotspot.label.heightPixels != null && hotspot.label.heightPixels !== undefined) {
+              baseScale = hotspot.label.heightPixels * pixelsToWorldUnits;
+            } else if (hotspot.label.widthPixels != null && hotspot.label.widthPixels !== undefined) {
+              baseScale = (hotspot.label.widthPixels / 3) * pixelsToWorldUnits;
+            }
             const labelOffsetY = hotspot.label.offsetY || 0;
             const labelOffsetX = hotspot.label.offsetX || 0;
             const labelPosition = new THREE.Vector3(
@@ -3383,7 +3893,7 @@ export function createStandaloneViewerHTML(
                 labelObject.lookAt(camera.position);
               }
             } else if (typeof camera !== 'undefined' && camera) {
-              applyHotspotFrozenOrientation(labelObject, hotspot.frozenRotation, labelObject.position, camera.position);
+              applyHotspotFrozenOrientation(labelObject, sharedFrozen, labelObject.position, camera.position);
             }
             scene.add(labelObject);
           }
@@ -3414,7 +3924,7 @@ export function createStandaloneViewerHTML(
           // Create 3D panel if hotspot has content
           if (hotspot.content && hotspot.content.type && hotspot.content.data) {
             console.log('[WebExport] Hotspot has content, creating panel:', hotspot.id, 'contentType:', hotspot.content.type);
-            createHotspotPanel(hotspot, position, scene);
+            createHotspotPanel({ ...hotspot, frozenRotation: sharedFrozen, faceCamera }, position, scene);
           } else {
             console.log('[WebExport] Hotspot has no content, skipping panel:', hotspot.id, 'content:', hotspot.content);
           }
@@ -3705,8 +4215,11 @@ export function createStandaloneViewerHTML(
                 // Disable unnecessary features if not used
                 if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial) {
                   // Only enable features that are actually used
-                  if (mat.envMapIntensity === 0 || !mat.envMap) {
+                  if (!mat.envMap || mat.envMapIntensity === 0) {
                     mat.envMap = null;
+                    if (mat.envMapIntensity === 0) {
+                      mat.envMapIntensity = 1;
+                    }
                   }
                 }
               });
@@ -4208,7 +4721,10 @@ export function createStandaloneViewerHTML(
                 obj instanceof THREE.AmbientLight ||
                 userData.isAutoInteriorFill === true ||
                 userData.isIndirectLightingProbe === true ||
-                userData.isSystemLight === true
+                userData.isSystemLight === true ||
+                userData.isCSMLight === true ||
+                userData.isInternal === true ||
+                userData.isStandaloneWeatherLight === true
               );
             };
 
@@ -4480,8 +4996,8 @@ export function createStandaloneViewerHTML(
                   return;
                 }
 
-                // Skip auto-managed system lights (interior fill, HDR probe, etc.)
-                if (obj.userData && (obj.userData.isAutoInteriorFill || obj.userData.isIndirectLightingProbe || obj.userData.isSystemLight)) {
+                // Skip auto-managed system lights (interior fill, HDR probe, CSM, weather sun helpers)
+                if (obj.userData && (obj.userData.isAutoInteriorFill || obj.userData.isIndirectLightingProbe || obj.userData.isSystemLight || obj.userData.isCSMLight || obj.userData.isInternal || obj.userData.isStandaloneWeatherLight)) {
                   return;
                 }
                 
@@ -4867,6 +5383,43 @@ export function createStandaloneViewerHTML(
             
             // Initial build
             rebuildSceneTree();
+
+            // Lights/helpers have no mesh geometry — use car bounds or a small box at the light position
+            function webExportGetObjectFocusBox(object) {
+              if (!object) return null;
+              const ud = object.userData || {};
+              const isLight = object instanceof THREE.Light;
+              const isNonMeshHelper = !!(ud.isHelper || ud.isLightGizmo || ud.isLightHelper || ud.isTransformControls);
+              if (isLight || isNonMeshHelper) {
+                if (typeof renderLoopCarRoot !== 'undefined' && renderLoopCarRoot && typeof computeSubjectBounds === 'function') {
+                  const carBox = computeSubjectBounds(renderLoopCarRoot);
+                  if (!carBox.isEmpty()) return carBox;
+                }
+                if (object.position && isFinite(object.position.x)) {
+                  return new THREE.Box3().setFromCenterAndSize(
+                    object.position.clone(),
+                    new THREE.Vector3(2, 2, 2)
+                  );
+                }
+                return null;
+              }
+              try {
+                if (typeof object.updateWorldMatrix === 'function') {
+                  object.updateWorldMatrix(true, true);
+                } else if (typeof object.updateMatrixWorld === 'function') {
+                  object.updateMatrixWorld(true);
+                }
+                const box = new THREE.Box3().setFromObject(object);
+                if (!box.isEmpty()) return box;
+                if (typeof computeSubjectBounds === 'function') {
+                  const subjectBox = computeSubjectBounds(object);
+                  if (!subjectBox.isEmpty()) return subjectBox;
+                }
+              } catch (boxErr) {
+                console.warn('[WebExport] Failed to calculate bounding box for focus', object.name || 'unnamed', boxErr);
+              }
+              return null;
+            }
             
             // Render a node recursively - matching ObjectsPanel structure exactly
             const renderNode = (node, depth = 0) => {
@@ -4981,7 +5534,10 @@ export function createStandaloneViewerHTML(
               });
               actionsContainer.appendChild(visBtn);
 
-              // Focus button
+              // Focus button (skip for lights — they have no geometry)
+              const isFocusable = !(node.object instanceof THREE.Light) &&
+                !(node.object.userData && (node.object.userData.isHelper || node.object.userData.isLightGizmo || node.object.userData.isLightHelper));
+              if (isFocusable) {
               const focusBtn = document.createElement('button');
               focusBtn.className = 'objects-action-btn';
               focusBtn.textContent = '🎯';
@@ -5017,21 +5573,7 @@ export function createStandaloneViewerHTML(
                     return;
                   }
                   
-                  // Try to calculate bounding box directly - if it works, the object is valid
-                  let box;
-                  try {
-                    // Update world matrix if the method exists
-                    if (typeof node.object.updateWorldMatrix === 'function') {
-                      node.object.updateWorldMatrix(true, true);
-                    } else if (typeof node.object.updateMatrixWorld === 'function') {
-                      node.object.updateMatrixWorld(true);
-                    }
-                    box = new THREE.Box3().setFromObject(node.object);
-                  } catch (boxErr) {
-                    console.warn('[WebExport] Failed to calculate bounding box for focus', node.name, boxErr);
-                    return;
-                  }
-                  
+                  const box = webExportGetObjectFocusBox(node.object);
                   if (!box || box.isEmpty()) {
                     console.warn('[WebExport] Cannot focus: bounding box is empty', node.name);
                     return;
@@ -5066,6 +5608,7 @@ export function createStandaloneViewerHTML(
                 }
               });
               actionsContainer.appendChild(focusBtn);
+              }
               
               nodeContent.appendChild(actionsContainer);
               nodeDiv.appendChild(nodeContent);
@@ -5444,12 +5987,26 @@ export function createStandaloneViewerHTML(
         
         // MATCH WORKING EXPORT: Configure shadow plane to be transparent (only shows shadows) and fit it under the car
         const shadowConfig = CONFIG.shadows || {};
-        const shadowPlaneTransparent = shadowConfig.shadowPlaneTransparent !== undefined ? shadowConfig.shadowPlaneTransparent : true;
+        const lightingConfigEarly = CONFIG.lighting || {};
+        const shadowsEnabled = shadowConfig.enabled !== false && lightingConfigEarly.shadowsEnabled !== false;
+        const hdrActive = hdrConfig.enabled !== false;
+        const useShadowCatcher = (typeof webExportShouldUseShadowCatcher === 'function')
+          ? webExportShouldUseShadowCatcher(CONFIG.weather || {}, hdrActive, shadowsEnabled)
+          : (hdrActive && shadowsEnabled);
+        const shadowPlaneTransparent = useShadowCatcher
+          ? true
+          : (shadowConfig.shadowPlaneTransparent !== undefined ? shadowConfig.shadowPlaneTransparent : false);
         const shadowIntensity = shadowConfig.shadowIntensity !== undefined ? shadowConfig.shadowIntensity : 1.0;
+        const shadowPlaneVisible = (function() {
+          const showShadowPlane = shadowConfig.showShadowPlane === true;
+          const standaloneWeather = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
+          const autoShow = (hdrActive && shadowsEnabled) || (standaloneWeather && shadowsEnabled);
+          return showShadowPlane || autoShow;
+        })();
         
         // Configure found shadow plane (match working export setup)
         if (shadowPlane) {
-          shadowPlane.visible = true;
+          shadowPlane.visible = shadowPlaneVisible;
           shadowPlane.receiveShadow = true;
           shadowPlane.castShadow = false;
           
@@ -5467,7 +6024,11 @@ export function createStandaloneViewerHTML(
                   // Minimum 0.3 ensures shadows are always visible, even with low shadowIntensity
                   const shadowOpacity = Math.min(1.0, Math.max(0.3, 0.1 + (shadowIntensity / 2.0) * 0.9));
                   const shadowMaterial = new THREE.ShadowMaterial({ 
-                    opacity: shadowOpacity
+                    opacity: shadowOpacity,
+                    transparent: true,
+                    depthWrite: true,
+                    depthTest: true,
+                    side: THREE.DoubleSide
                   });
                   shadowMaterial.depthWrite = true;
                   // CRITICAL: Store base opacity for shadow color intensity adjustment
@@ -5523,7 +6084,11 @@ export function createStandaloneViewerHTML(
           // Minimum 0.3 ensures shadows are always visible, even with low shadowIntensity
           const shadowPlaneMaterial = shadowPlaneTransparent 
             ? new THREE.ShadowMaterial({ 
-                opacity: Math.min(1.0, Math.max(0.3, 0.1 + (shadowIntensity / 2.0) * 0.9))
+                opacity: Math.min(1.0, Math.max(0.3, 0.1 + (shadowIntensity / 2.0) * 0.9)),
+                transparent: true,
+                depthWrite: true,
+                depthTest: true,
+                side: THREE.DoubleSide
               })
             : new THREE.MeshStandardMaterial({ 
                 color: 0x333333,
@@ -5534,6 +6099,8 @@ export function createStandaloneViewerHTML(
               });
           if (shadowPlaneMaterial instanceof THREE.ShadowMaterial) {
             shadowPlaneMaterial.depthWrite = true;
+            shadowPlaneMaterial.depthTest = true;
+            shadowPlaneMaterial.side = THREE.FrontSide;
             // CRITICAL: Store base opacity for shadow color intensity adjustment
             shadowPlaneMaterial.userData.baseOpacity = shadowPlaneMaterial.opacity;
           }
@@ -5544,7 +6111,7 @@ export function createStandaloneViewerHTML(
           shadowPlane.receiveShadow = true;
           shadowPlane.castShadow = false;
           shadowPlane.userData.isShadowPlane = true;
-          shadowPlane.visible = true;
+          shadowPlane.visible = shadowPlaneVisible;
           
           // CRITICAL: Use renderOrder = 0 like main app (not 1)
           shadowPlane.renderOrder = 0; // Render early (before objects with positive renderOrder)
@@ -5556,7 +6123,7 @@ export function createStandaloneViewerHTML(
             // Shadow plane should be at ground surface: Y = -0.01
             shadowPlane.position.y = -0.01; // Match ground surface level (Y = (height - 0.01) - height)
           } else {
-            shadowPlane.position.y = -0.001; // Slightly below grid (matches main app)
+            shadowPlane.position.y = WEB_EXPORT_SHADOW_PLANE_GROUND_Y; // Slightly below grid (matches main app)
           }
           
           scene.add(shadowPlane);
@@ -5571,6 +6138,38 @@ export function createStandaloneViewerHTML(
             material: shadowPlane.material.constructor.name,
             groundProjectionEnabled: groundProjectionEnabled
           });
+        }
+        
+        // Grid ground (matches editor when standalone weather is active)
+        const helpersConfig = CONFIG.helpers || {};
+        const standaloneWeatherActive = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
+        if (standaloneWeatherActive && helpersConfig.showGrid !== false) {
+          const gridSize = 100;
+          const gridHelper = new THREE.GridHelper(10000, gridSize, 0x444444, 0x222222);
+          gridHelper.name = 'Grid';
+          gridHelper.userData.isGridHelper = true;
+          gridHelper.userData.isHelper = true;
+          gridHelper.renderOrder = 1;
+          gridHelper.position.y = 0;
+          if (typeof webExportConfigureGridHelperForShadows === 'function') {
+            webExportConfigureGridHelperForShadows(gridHelper);
+          } else {
+            const gridMats = Array.isArray(gridHelper.material) ? gridHelper.material : [gridHelper.material];
+            gridMats.forEach(function(mat) {
+              if (mat) { mat.depthWrite = false; mat.depthTest = true; mat.transparent = true; mat.needsUpdate = true; }
+            });
+          }
+          scene.add(gridHelper);
+          console.log('[WebExport] Grid helper added for standalone weather');
+          if (shadowPlane && typeof webExportApplyShadowCatcherMaterial === 'function') {
+            webExportApplyShadowCatcherMaterial(
+              shadowPlane,
+              shadowIntensity,
+              true,
+              scene
+            );
+            console.log('[WebExport] Shadow catcher reconfigured for grid composite (depthWrite=false, renderOrder=2)');
+          }
         }
         
         // Helper function to get shadow map size based on quality setting
@@ -5621,13 +6220,13 @@ export function createStandaloneViewerHTML(
             // Scale plane in X/Z so it extends beyond car footprint
             // For 10000x10000 geometry: scale = (carSize * 0.75) / 5 = radiusX / 5
             // This gives us a plane that's about 15% larger than the car in each direction
-            const targetScaleX = radiusX / 5;
-            const targetScaleZ = radiusZ / 5;
+            const targetScaleX = Math.max(radiusX / 5, 1);
+            const targetScaleZ = Math.max(radiusZ / 5, 1);
             shadowPlane.scale.x = targetScaleX;
             shadowPlane.scale.z = targetScaleZ;
             
             // CRITICAL: Ensure shadow plane is visible and configured for shadows (applies to both modes)
-            shadowPlane.visible = true;
+            shadowPlane.visible = shadowPlaneVisible;
             shadowPlane.receiveShadow = true;
             shadowPlane.castShadow = false;
             
@@ -5639,15 +6238,13 @@ export function createStandaloneViewerHTML(
               'Position: (' + shadowPlane.position.x.toFixed(2) + ', ' + shadowPlane.position.y.toFixed(2) + ', ' + shadowPlane.position.z.toFixed(2) + '), ' +
               'Ground projection: ' + groundProjectionEnabled);
             
-            // CRITICAL: For standard 360 HDR, verify shadow plane is below car
+            // CRITICAL: For standard 360 HDR, keep shadow plane at subject bottom (matches editor)
             if (!groundProjectionEnabled) {
-              const carMinY = carBox.min.y;
-              if (shadowPlane.position.y >= carMinY) {
-                console.warn('[WebExport] Standard 360 HDR - Shadow plane Y position (' + shadowPlane.position.y.toFixed(3) + ') is not below car min Y (' + carMinY.toFixed(3) + '), adjusting...');
-                shadowPlane.position.y = carMinY - 0.1; // Ensure plane is below car
-                shadowPlane.updateMatrixWorld(true);
-                console.log('[WebExport] Standard 360 HDR - Shadow plane Y adjusted to:', shadowPlane.position.y.toFixed(3));
-              }
+              shadowPlane.position.y = typeof webExportResolveShadowCatcherY === 'function'
+                ? webExportResolveShadowCatcherY(carRoot, false)
+                : WEB_EXPORT_SHADOW_PLANE_GROUND_Y;
+              shadowPlane.updateMatrixWorld(true);
+              console.log('[WebExport] Standard 360 HDR - Shadow plane Y at subject bottom:', shadowPlane.position.y.toFixed(3));
               
               // Verify shadow plane configuration
               const material = Array.isArray(shadowPlane.material) ? shadowPlane.material[0] : shadowPlane.material;
@@ -5667,45 +6264,56 @@ export function createStandaloneViewerHTML(
                 'MaterialOpacity: ' + (material?.opacity?.toFixed(3) || 'N/A') + ', ' +
                 'DepthWrite: ' + (material?.depthWrite !== false) + ', ' +
                 'InScene: ' + (scene.children.includes(shadowPlane) || scene.getObjectById(shadowPlane.id) !== undefined));
-              
-              // Verify lights are casting shadows
-              let lightsCastingShadows = 0;
-              scene.traverse((light) => {
-                if (light instanceof THREE.DirectionalLight && light.castShadow) {
-                  lightsCastingShadows++;
-                  if (light.shadow) {
-                    const cam = light.shadow.camera;
-                    console.log('[WebExport] Standard 360 HDR - Light shadow camera:', 
-                      'Light: ' + (light.name || 'unnamed') + ', ' +
-                      'CastShadow: ' + light.castShadow + ', ' +
-                      'Bounds: L=' + (cam.left?.toFixed(2) || 'N/A') + ', R=' + (cam.right?.toFixed(2) || 'N/A') + ', ' +
-                      'T=' + (cam.top?.toFixed(2) || 'N/A') + ', B=' + (cam.bottom?.toFixed(2) || 'N/A') + ', ' +
-                      'Near=' + cam.near + ', Far=' + cam.far);
-                  }
-                }
-              });
-              console.log('[WebExport] Standard 360 HDR - Total lights casting shadows:', lightsCastingShadows);
-              
-              // Verify renderer shadow maps
-              console.log('[WebExport] Standard 360 HDR - Renderer shadow maps:', 
-                'Enabled: ' + renderer.shadowMap.enabled + ', ' +
-                'AutoUpdate: ' + renderer.shadowMap.autoUpdate + ', ' +
-                'Type: ' + renderer.shadowMap.type);
             }
           }
         }
         
+        function logWebExportShadowLightDiagnostics(label) {
+          let lightsCastingShadows = 0;
+          scene.traverse((light) => {
+            if (light instanceof THREE.DirectionalLight && light.castShadow) {
+              lightsCastingShadows++;
+              if (light.shadow) {
+                const cam = light.shadow.camera;
+                console.log('[WebExport] ' + label + ' - Light shadow camera:',
+                  'Light: ' + (light.userData.lightId || light.name || 'unnamed') + ', ' +
+                  'CastShadow: ' + light.castShadow + ', ' +
+                  'Bounds: L=' + (cam.left?.toFixed(2) || 'N/A') + ', R=' + (cam.right?.toFixed(2) || 'N/A') + ', ' +
+                  'T=' + (cam.top?.toFixed(2) || 'N/A') + ', B=' + (cam.bottom?.toFixed(2) || 'N/A') + ', ' +
+                  'Near=' + cam.near + ', Far=' + cam.far);
+              }
+            }
+          });
+          console.log('[WebExport] ' + label + ' - Total lights casting shadows:', lightsCastingShadows);
+          console.log('[WebExport] ' + label + ' - Renderer shadow maps:',
+            'Enabled: ' + renderer.shadowMap.enabled + ', ' +
+            'AutoUpdate: ' + renderer.shadowMap.autoUpdate + ', ' +
+            'Type: ' + renderer.shadowMap.type);
+          return lightsCastingShadows;
+        }
+        
         // Add directional lights from config
+        const standaloneWeatherNoCsm = CONFIG.weather && CONFIG.weather.enableStandaloneWeather === true;
         if (lightingConfig.directionalLights && lightingConfig.directionalLights.length > 0) {
-          lightingConfig.directionalLights.forEach(lightConfig => {
+          lightingConfig.directionalLights.forEach((lightConfig, lightIndex) => {
             if (lightConfig.enabled) {
               const light = new THREE.DirectionalLight(
                 new THREE.Color(lightConfig.color.r, lightConfig.color.g, lightConfig.color.b),
                 lightConfig.intensity
               );
               light.position.set(lightConfig.position.x, lightConfig.position.y, lightConfig.position.z);
-              // CRITICAL: Explicitly enable shadow casting
-              light.castShadow = lightConfig.castShadow !== false ? true : false;
+              if (lightConfig.id) light.userData.lightId = lightConfig.id;
+              // Editor disables sun castShadow when CSM is active; export has no CSM — force sun shadows on
+              const isSunLight =
+                lightConfig.id === 'sun' ||
+                lightConfig.isSun === true ||
+                (standaloneWeatherNoCsm && lightIndex === 0);
+              if (isSunLight) light.userData.isSun = true;
+              let shouldCastShadow = lightConfig.castShadow !== false;
+              if (standaloneWeatherNoCsm && isSunLight) {
+                shouldCastShadow = true;
+              }
+              light.castShadow = shouldCastShadow;
               
               if (light.castShadow) {
                 // Use shadow map size based on quality setting
@@ -5737,7 +6345,11 @@ export function createStandaloneViewerHTML(
               }
               
               scene.add(light);
+              scene.add(light.target);
             }
+          });
+          scene.traverse(function(obj) {
+            if (obj instanceof THREE.Light) obj.visible = true;
           });
         } else if (lightingConfig.sceneLights && lightingConfig.sceneLights.length > 0) {
           // Fallback to scene lights if directional lights not available
@@ -5750,8 +6362,11 @@ export function createStandaloneViewerHTML(
               if (lightConfig.position) {
                 light.position.set(lightConfig.position.x, lightConfig.position.y, lightConfig.position.z);
               }
-              // CRITICAL: Explicitly enable shadow casting
-              light.castShadow = lightConfig.castShadow !== false ? true : false;
+              let shouldCastShadow = lightConfig.castShadow !== false;
+              if (standaloneWeatherNoCsm && lightConfig.castShadow === false) {
+                shouldCastShadow = true;
+              }
+              light.castShadow = shouldCastShadow;
               if (lightConfig.shadow) {
                 // Use shadow map size based on quality setting
                 const lightShadowMapSize = lightConfig.shadow?.mapSize?.width || shadowMapSize;
@@ -5780,6 +6395,7 @@ export function createStandaloneViewerHTML(
                 // Don't set bias here - it will be set in updateLightShadowCamera
               }
               scene.add(light);
+              scene.add(light.target);
             }
           });
         } else {
@@ -5811,6 +6427,7 @@ export function createStandaloneViewerHTML(
           directionalLight.shadow.camera.updateProjectionMatrix();
           
           scene.add(directionalLight);
+          scene.add(directionalLight.target);
           console.log('Default directional light (sun) with shadows added (matches main app):', {
             shadowMapSize: lightShadowMapSize,
             bias: directionalLight.shadow.bias,
@@ -5822,6 +6439,10 @@ export function createStandaloneViewerHTML(
 
           // Note: Main app doesn't create a separate detail light
           // Only create default sun light to match main app behavior
+        }
+
+        if (!groundProjectionEnabled && typeof logWebExportShadowLightDiagnostics === 'function') {
+          logWebExportShadowLightDiagnostics('After lights configured');
         }
         
         // After lights are created, tighten shadow camera to the exported model bounds
@@ -6290,18 +6911,23 @@ export function createStandaloneViewerHTML(
               }
               renderer.shadowMap.autoUpdate = true;
               
-              // Verify all directional lights are casting shadows
-              scene.traverse((light) => {
-                if (light instanceof THREE.DirectionalLight) {
-                  if (!light.castShadow) {
-                    light.castShadow = true;
-                    console.warn('[WebExport] Directional light was not casting shadows, enabled:', light.name || 'unnamed');
+              // Verify sun directional light casts shadows (standalone weather: sun only)
+              if (typeof webExportSyncSunOnlyShadowCasters === 'function') {
+                webExportSyncSunOnlyShadowCasters(scene);
+              } else {
+                scene.traverse((light) => {
+                  if (light instanceof THREE.DirectionalLight) {
+                    const isSun = light.userData.isSun || light.userData.isGlobalSun;
+                    if (isSun && !light.castShadow) {
+                      light.castShadow = true;
+                      console.warn('[WebExport] Sun light was not casting shadows, enabled:', light.name || 'unnamed');
+                    }
+                    if (light.shadow) {
+                      light.shadow.needsUpdate = true;
+                    }
                   }
-                  if (light.shadow) {
-                    light.shadow.needsUpdate = true;
-                  }
-                }
-              });
+                });
+              }
               
               // Force shadow map update
               renderer.shadowMap.needsUpdate = true;
@@ -6457,9 +7083,22 @@ export function createStandaloneViewerHTML(
         }
         ` : '// No HDR - set default background\n        scene.background = new THREE.Color(0x1a1a1a);\n        '}
         
-        // MATCH WORKING EXPORT: Set initial camera position (prefer currentCamera, then first camera view)
-        // Set camera AFTER HDR loads to ensure everything is ready
-        if (CONFIG.currentCamera && CONFIG.currentCamera.position && CONFIG.currentCamera.target) {
+        // Set initial camera: with Auto-play, always start on camera view 1.
+        // Otherwise prefer the editor's current framing, then fall back to the first view.
+        const preferFirstCameraForAutoPlay =
+          CONFIG.autoPlay === true &&
+          Array.isArray(CONFIG.cameraViews) &&
+          CONFIG.cameraViews.length > 0;
+
+        if (preferFirstCameraForAutoPlay) {
+          const firstView = CONFIG.cameraViews[0];
+          camera.position.set(firstView.cameraPosition.x, firstView.cameraPosition.y, firstView.cameraPosition.z);
+          controls.target.set(firstView.cameraTarget.x, firstView.cameraTarget.y, firstView.cameraTarget.z);
+          controls.update();
+          if (typeof updateActiveView === 'function') {
+            updateActiveView(0);
+          }
+        } else if (CONFIG.currentCamera && CONFIG.currentCamera.position && CONFIG.currentCamera.target) {
           // Use current camera position from export
           camera.position.set(
             CONFIG.currentCamera.position.x,
@@ -6496,13 +7135,79 @@ export function createStandaloneViewerHTML(
         if (typeof initializeWebExportWeather === 'function') {
           initializeWebExportWeather({ scene, camera, renderer });
         }
+
+        if (typeof webExportEnsureExportLightsVisible === 'function') {
+          const restoredLights = webExportEnsureExportLightsVisible(scene);
+          if (restoredLights > 0) {
+            console.log('[WebExport] Restored visibility on', restoredLights, 'scene light(s) after weather init');
+          }
+        }
+
+        if (typeof webExportApplyHdrShadowContrastToMaterials === 'function' && window.__hdrTextureLoaded) {
+          const hdrCfg = CONFIG.hdr || {};
+          const shadowsOn = (CONFIG.shadows || {}).enabled !== false && (CONFIG.lighting || {}).shadowsEnabled !== false;
+          const contrastCount = webExportApplyHdrShadowContrastToMaterials(scene, hdrCfg.intensity || 1.0, shadowsOn);
+          if (contrastCount > 0) {
+            console.log('[WebExport] Post-weather HDR shadow contrast on', contrastCount, 'material(s)');
+          }
+        }
+
+        // Re-apply shadow tuning now that lights exist (standalone sun keeps fitted frustum)
+        applyShadowTuning();
+
+        if (standaloneWeatherNoCsm && renderLoopCarRoot && typeof webExportFitSunShadowCameraToSubject === 'function') {
+          webExportFitSunShadowCameraToSubject(scene, renderLoopCarRoot);
+        }
+
+        // Standalone weather uses CSM in editor; export must keep sun directional shadows enabled
+        if (standaloneWeatherNoCsm) {
+          if (typeof webExportSyncSunOnlyShadowCasters === 'function') {
+            webExportSyncSunOnlyShadowCasters(scene);
+          } else {
+            let sunShadowEnabled = false;
+            scene.traverse((obj) => {
+              if (obj instanceof THREE.DirectionalLight && (obj.userData.isSun || obj.userData.isGlobalSun)) {
+                if (!obj.castShadow) {
+                  obj.castShadow = true;
+                  if (obj.shadow) obj.shadow.needsUpdate = true;
+                  console.log('[WebExport] Enabled sun shadow casting for standalone weather (no CSM in export)');
+                }
+                sunShadowEnabled = true;
+              }
+            });
+            if (!sunShadowEnabled) {
+              for (let i = 0; i < scene.children.length; i++) {
+                const obj = scene.children[i];
+                if (obj instanceof THREE.DirectionalLight) {
+                  obj.userData.isSun = true;
+                  obj.castShadow = true;
+                  if (obj.shadow) obj.shadow.needsUpdate = true;
+                  console.log('[WebExport] Enabled first directional as sun for standalone weather shadows:', obj.userData.lightId || obj.name || 'default');
+                  break;
+                }
+              }
+            }
+          }
+        }
         
-        // Configure shadows on ALL meshes (including interior surfaces like car interiors)
-        // CRITICAL: All materials need to cast shadows for interior shadows to work
+        // Configure shadows on ALL meshes after weather init (car castShadow must stay on)
         let shadowConfiguredCount = 0;
         let interiorMeshCount = 0;
+        if (renderLoopCarRoot && typeof webExportEnsureSubjectCastShadow === 'function') {
+          shadowConfiguredCount = webExportEnsureSubjectCastShadow(renderLoopCarRoot);
+        } else if (renderLoopCarRoot) {
+          renderLoopCarRoot.traverse((obj) => {
+            if (obj instanceof THREE.Mesh && obj.castShadow) shadowConfiguredCount++;
+          });
+        }
         
-        const lightsWithShadows = scene.children.filter(child => child instanceof THREE.DirectionalLight && child.castShadow).length;
+        let lightsWithShadows = 0;
+        scene.traverse((obj) => {
+          if (obj instanceof THREE.DirectionalLight && obj.castShadow) lightsWithShadows++;
+        });
+        if (!groundProjectionEnabled && typeof logWebExportShadowLightDiagnostics === 'function') {
+          logWebExportShadowLightDiagnostics('Shadow configuration complete');
+        }
         console.log('Shadow configuration complete:', 
           'Meshes configured: ' + shadowConfiguredCount + ', ' +
           'Interior meshes: ' + interiorMeshCount + ', ' +
@@ -6527,6 +7232,11 @@ export function createStandaloneViewerHTML(
           if (typeof setupCameraViewHandlers === 'function') {
             setupCameraViewHandlers();
           }
+
+          // Start presentation autoplay only after load — begins on camera view 1
+          if (typeof beginPresentationPlayback === 'function') {
+            beginPresentationPlayback();
+          }
           
           // CRITICAL: Force shadow map update but keep autoUpdate enabled
           // Shadows need to update when objects move, so don't disable autoUpdate
@@ -6545,6 +7255,26 @@ export function createStandaloneViewerHTML(
           if (CONFIG.hotspots && Array.isArray(CONFIG.hotspots) && CONFIG.hotspots.length > 0) {
             console.log('[WebExport] Initializing', CONFIG.hotspots.length, 'hotspots');
             initializeHotspots(CONFIG.hotspots, scene, camera, renderer);
+            // Force in-world YouTube CSS3D hotspot panels visible (not a centered modal).
+            scene.traverse((obj) => {
+              if (obj.userData && obj.userData.isCSS3DPanel && obj.userData.isHotspotPanel) {
+                obj.visible = true;
+                obj.userData.isVisible = true;
+                setDomVisibility(obj.userData.divElement || obj.element, true);
+                if (obj.userData.hotspotId) setHotspotLineVisible(scene, obj.userData.hotspotId, false);
+                console.log('[WebExport] Forced CSS3D hotspot panel visible:', obj.userData.hotspotId);
+              }
+            });
+            // Cache must include panels created above — rebuild after functions are defined
+            setTimeout(() => {
+              if (typeof window !== 'undefined' && typeof window.__rebuildCSS3DCache === 'function') {
+                window.__rebuildCSS3DCache();
+                console.log('[WebExport] Rebuilt CSS3D cache after hotspot init');
+              }
+            }, 0);
+            if (css3dRenderer) {
+              css3dRenderer.render(scene, camera);
+            }
           }
           
           // Setup hotspot panel click handling (X button and label clicks)
@@ -6557,14 +7287,32 @@ export function createStandaloneViewerHTML(
             
             panel.userData.isVisible = isVisible;
             panel.visible = isVisible;
-            
-            // For CSS3D panels, also update the DOM element visibility
-            if (panel.userData.isCSS3DPanel && panel.userData.divElement) {
-              panel.userData.divElement.style.display = isVisible ? 'block' : 'none';
+
+            if (panel.userData.isYouTubeHtmlOverlay) {
+              if (isVisible) openYouTubeOverlay(panel.userData.hotspotId, scene);
+              else closeYouTubeOverlay(panel.userData.hotspotId, scene);
+              return;
             }
             
-            // For canvas panels, we could regenerate texture, but for now just toggle visibility
-            // The X button is always drawn, clicking it just hides the panel
+            // For CSS3D panels, also update the DOM element visibility
+            if (panel.userData.isCSS3DPanel) {
+              setDomVisibility(panel.userData.divElement, isVisible);
+            } else if (panel.material) {
+              // For canvas panels, update material opacity
+              if (Array.isArray(panel.material)) {
+                panel.material.forEach(mat => {
+                  if (mat) {
+                    mat.opacity = isVisible ? 0.95 : 0;
+                    mat.transparent = true;
+                    mat.needsUpdate = true;
+                  }
+                });
+              } else {
+                panel.material.opacity = isVisible ? 0.95 : 0;
+                panel.material.transparent = true;
+                panel.material.needsUpdate = true;
+              }
+            }
           }
           
           // Function to handle mouse clicks
@@ -6587,18 +7335,19 @@ export function createStandaloneViewerHTML(
               
               // Check if clicked on label (to open panel)
               if (obj.userData.isHotspotLabel && obj.userData.canClickToOpen) {
-                // Find the panel for this hotspot (both canvas and CSS3D panels)
+                // Prefer in-world CSS3D / canvas hotspot panel
+                let opened = false;
                 scene.traverse((panel) => {
-                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId) {
+                  if (opened) return;
+                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId && !panel.userData.isYouTubeHtmlOverlay) {
                     if (!panel.userData.isVisible) {
                       updatePanelVisibility(panel, true);
-                      // For CSS3D panels, also update the DOM element visibility
-                      if (panel.userData.isCSS3DPanel && panel.userData.divElement) {
-                        panel.userData.divElement.style.display = 'block';
-                      }
+                      setDomVisibility(panel.userData.divElement || panel.element, true);
+                      if (panel.userData.isCSS3DPanel) setHotspotLineVisible(scene, hotspotId, false);
                       renderer.render(scene, camera);
                       if (css3dRenderer) css3dRenderer.render(scene, camera);
                       console.log('[WebExport] Opened panel for hotspot via label click:', hotspotId);
+                      opened = true;
                     }
                   }
                 });
@@ -6608,19 +7357,18 @@ export function createStandaloneViewerHTML(
               
               // Check if clicked on hotspot marker/icon (to open panel)
               if (obj.userData.isHotspot || obj.userData.isHotspotHelper) {
-                // Find the panel for this hotspot (both canvas and CSS3D panels)
+                let toggled = false;
                 scene.traverse((panel) => {
-                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId) {
-                    // Toggle panel visibility
+                  if (toggled) return;
+                  if (panel.userData.isHotspotPanel && panel.userData.hotspotId === hotspotId && !panel.userData.isYouTubeHtmlOverlay) {
                     const newVisibility = !panel.userData.isVisible;
                     updatePanelVisibility(panel, newVisibility);
-                    // For CSS3D panels, also update the DOM element visibility
-                    if (panel.userData.isCSS3DPanel && panel.userData.divElement) {
-                      panel.userData.divElement.style.display = newVisibility ? 'block' : 'none';
-                    }
+                    setDomVisibility(panel.userData.divElement || panel.element, newVisibility);
+                    if (panel.userData.isCSS3DPanel) setHotspotLineVisible(scene, hotspotId, !newVisibility);
                     renderer.render(scene, camera);
                     if (css3dRenderer) css3dRenderer.render(scene, camera);
                     console.log('[WebExport] Toggled panel for hotspot via icon click:', hotspotId, 'visible:', newVisibility);
+                    toggled = true;
                   }
                 });
                 event.stopPropagation();
@@ -6723,6 +7471,7 @@ export function createStandaloneViewerHTML(
             }
           });
         }
+        window.__rebuildCSS3DCache = rebuildCSS3DCache;
         
         // MATCH WORKING EXPORT: Start render loop AFTER model loads and loading overlay is hidden
         // CRITICAL: Must run continuously to prevent black screen
@@ -6778,16 +7527,13 @@ export function createStandaloneViewerHTML(
               }
             });
             
-            // PERFORMANCE: Update CSS3D panels (more expensive, so throttled)
+            // PERFORMANCE: Update CSS3D panels — match camera rotation so they face the viewer like labels
             css3dPanels.forEach((panel) => {
               try {
-                if (panel.userData.isBillboard && panel.visible) {
-                  // Check if panel is roughly in view (simple distance check)
-                  const distance = camera.position.distanceTo(panel.position);
-                  // Only update if panel is within reasonable distance (100 units)
-                  if (distance < 100) {
-                    panel.lookAt(camera.position);
-                  }
+                if (!panel.visible) return;
+                // Always billboard YouTube/CSS3D panels toward the camera (same behavior as Sprite labels)
+                if (panel.userData.isBillboard !== false) {
+                  panel.quaternion.copy(camera.quaternion);
                 }
               } catch (e) {
                 // Silently handle errors
@@ -6799,10 +7545,7 @@ export function createStandaloneViewerHTML(
             canvasPanels.forEach((panel) => {
               try {
                 if (panel.userData.isBillboard && panel.visible) {
-                  const distance = camera.position.distanceTo(panel.position);
-                  if (distance < 100) {
-                    panel.lookAt(camera.position);
-                  }
+                  panel.lookAt(camera.position);
                 }
               } catch (e) {
                 // Silently handle errors
@@ -6810,19 +7553,9 @@ export function createStandaloneViewerHTML(
             });
           }
           
-          // PERFORMANCE: Only render CSS3D if there are visible panels
+          // PERFORMANCE: Always render CSS3D when panels exist (visibility is handled per-object)
           if (css3dRenderer && css3dPanels.size > 0) {
-            // Quick check if any CSS3D panel is visible
-            let hasVisiblePanel = false;
-            for (const panel of css3dPanels) {
-              if (panel.visible) {
-                hasVisiblePanel = true;
-                break;
-              }
-            }
-            if (hasVisiblePanel) {
             css3dRenderer.render(scene, camera);
-            }
           }
           
           frameCount++; // DEBUG: Increment frame count
@@ -6859,14 +7592,16 @@ export function createStandaloneViewerHTML(
             }
           }
           
-          // ANTI-FLICKERING: Don't update shadow maps on every frame
-          // Shadow maps are static - they only need to update when lights or objects move
-          // Updating them on every frame causes flickering when camera moves
-          // CRITICAL: Disable auto-update to prevent flickering, only update when needed
-          if (renderer.shadowMap.autoUpdate && frameCount % 2 === 0) {
-            // Only update shadow maps every other frame to reduce flickering
+          // Keep shadow maps updating whenever shadows are enabled
+          const exportShadowsEnabled = (CONFIG.shadows || {}).enabled !== false &&
+            (CONFIG.lighting || {}).shadowsEnabled !== false;
+          if (standaloneWeatherNoCsm || exportShadowsEnabled) {
+            if (!renderer.shadowMap.autoUpdate) {
+              renderer.shadowMap.autoUpdate = true;
+            }
+          } else if (renderer.shadowMap.autoUpdate && frameCount % 2 === 0) {
+            // Only throttle auto-update when shadows are off
             renderer.shadowMap.autoUpdate = false;
-            // Force update once, then disable
             renderer.shadowMap.needsUpdate = true;
           }
           
@@ -6911,28 +7646,40 @@ export function createStandaloneViewerHTML(
                       transmission > 0 ||
                       (transparentFlag && opacity < 1.0) ||
                       isGlassLike;
+                    const isShadowCatcher = obj.userData.isShadowPlane ||
+                      mat instanceof THREE.ShadowMaterial ||
+                      (mat.userData && mat.userData.isHdrGroundShadowCatcher);
                     
                     // Ensure proper depth settings to prevent z-fighting
                     if (mat.depthTest === false) {
                       mat.depthTest = true;
                     }
                     
-                    // CRITICAL: Preserve depthWrite = false for transparent materials so light can pass through
-                    // Transparent materials should NOT write to depth buffer to allow interior lighting
-                    if (isTransparent && mat.depthWrite !== false) {
+                    // ShadowMaterial is transparent; depthWrite depends on standalone grid composite mode
+                    if (isTransparent && !isShadowCatcher && mat.depthWrite !== false) {
                       mat.depthWrite = false;
                       mat.needsUpdate = true;
                     }
                     
-                    // Ensure shadow plane has proper depth write (shadow planes are NOT transparent)
-                    if (obj.userData.isShadowPlane && !isTransparent && mat.depthWrite === false) {
-                      mat.depthWrite = true;
-                      mat.needsUpdate = true;
+                    if (isShadowCatcher) {
+                      const compositeOverGrid = mat.userData && mat.userData.webExportStandaloneGridComposite === true;
+                      const desiredDepthWrite = compositeOverGrid ? false : true;
+                      if (mat.depthWrite !== desiredDepthWrite) {
+                        mat.depthWrite = desiredDepthWrite;
+                        mat.needsUpdate = true;
+                      }
+                      if (mat.depthTest !== true) {
+                        mat.depthTest = true;
+                        mat.needsUpdate = true;
+                      }
                     }
                     
-                    // Fix render order for objects that might overlap
-                    if (obj.userData.isShadowPlane && obj.renderOrder !== 0) {
-                      obj.renderOrder = 0;
+                    // Fix render order for shadow plane (composite mode renders above grid)
+                    if (obj.userData.isShadowPlane) {
+                      const compositeOrder = mat.userData && mat.userData.webExportStandaloneGridComposite === true ? 2 : 0;
+                      if (obj.renderOrder !== compositeOrder) {
+                        obj.renderOrder = compositeOrder;
+                      }
                     }
                   });
                 }
@@ -6985,25 +7732,31 @@ export function createStandaloneViewerHTML(
                   }
                   
                   // CRITICAL: Use renderOrder = 0 like main app (not 1) - only check when needed
-                  if (obj.renderOrder !== 0) {
-                    obj.renderOrder = 0; // Render early (before objects with positive renderOrder)
+                  const shadowMat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+                  const compositeOrder = shadowMat && shadowMat.userData && shadowMat.userData.webExportStandaloneGridComposite === true ? 2 : 0;
+                  if (obj.renderOrder !== compositeOrder) {
+                    obj.renderOrder = compositeOrder;
                   }
                   
                   // PERFORMANCE: Only do expensive operations every 10 frames
                   if (shouldUpdateShadowPlane) {
-                    // CRITICAL: Ensure material is properly configured for shadows
-                    const material = Array.isArray(obj.material) ? obj.material[0] : obj.material;
-                    if (material) {
-                      // Only update if values are wrong (don't force update every frame)
-                      if (!material.visible) {
-                        material.visible = true;
+                      // CRITICAL: Ensure material has depthWrite configured for shadow composite mode
+                      if (shadowMat) {
+                        if (!shadowMat.visible) {
+                          shadowMat.visible = true;
+                        }
+                        if (shadowMat instanceof THREE.ShadowMaterial) {
+                          const compositeOverGrid = shadowMat.userData && shadowMat.userData.webExportStandaloneGridComposite === true;
+                          const desiredDepthWrite = compositeOverGrid ? false : true;
+                          if (shadowMat.depthWrite !== desiredDepthWrite) {
+                            shadowMat.depthWrite = desiredDepthWrite;
+                            shadowMat.needsUpdate = true;
+                          }
+                        } else if (shadowMat.depthWrite !== true) {
+                          shadowMat.depthWrite = true;
+                          shadowMat.needsUpdate = true;
+                        }
                       }
-                      // CRITICAL: Ensure material has depthWrite = true (match main app)
-                      if (material.depthWrite !== true) {
-                        material.depthWrite = true;
-                        material.needsUpdate = true;
-                      }
-                    }
                     
                     // CRITICAL: Position based on mode (match main app behavior)
                     // Only recalculate position when needed (not every frame)
@@ -7058,12 +7811,15 @@ export function createStandaloneViewerHTML(
                         renderer.shadowMap.needsUpdate = true;
                       }
                       
-                      // CRITICAL: Always ensure Y position is correct (check every frame, not just every 30)
-                      if (Math.abs(obj.position.y - (-0.001)) > 0.01) {
-                        obj.position.y = -0.001;
+                      // CRITICAL: Keep Y just below subject bottom (matches editor shadow catcher)
+                      const targetCatcherY = typeof webExportResolveShadowCatcherY === 'function'
+                        ? webExportResolveShadowCatcherY(renderLoopCarRoot, false)
+                        : WEB_EXPORT_SHADOW_PLANE_GROUND_Y;
+                      if (Math.abs(obj.position.y - targetCatcherY) > 0.01) {
+                        obj.position.y = targetCatcherY;
                         needsUpdate = true;
                         if (frameCount % 60 === 0) {
-                          console.log('[WebExport] Standard 360 HDR - Shadow plane Y position corrected to -0.001');
+                          console.log('[WebExport] Standard 360 HDR - Shadow plane Y corrected to subject bottom:', targetCatcherY.toFixed(3));
                         }
                       }
                       
@@ -7206,14 +7962,19 @@ export function createStandaloneViewerHTML(
                               console.warn('[WebExport] Standard 360 HDR - Shadow plane opacity was too low, fixed to', material.opacity.toFixed(3));
                             }
                           }
-                          // CRITICAL: ShadowMaterial must have depthWrite = true
-                          if (material.depthWrite !== true) {
+                          // ShadowMaterial depthWrite depends on standalone grid composite mode
+                          if (material instanceof THREE.ShadowMaterial) {
+                            const compositeOverGrid = material.userData && material.userData.webExportStandaloneGridComposite === true;
+                            const desiredDepthWrite = compositeOverGrid ? false : true;
+                            if (material.depthWrite !== desiredDepthWrite) {
+                              material.depthWrite = desiredDepthWrite;
+                              material.needsUpdate = true;
+                              needsUpdate = true;
+                            }
+                          } else if (material.depthWrite !== true) {
                             material.depthWrite = true;
                             material.needsUpdate = true;
                             needsUpdate = true;
-                            if (frameCount % 60 === 0) {
-                              console.warn('[WebExport] Standard 360 HDR - Shadow plane depthWrite was false, set to true');
-                            }
                           }
                         } else {
                           // CRITICAL: If material is not ShadowMaterial, log warning
@@ -7359,7 +8120,11 @@ export function createStandaloneViewerHTML(
                   const objType = obj.type || '';
                   
                   // Re-check if object should be hidden (in case it was missed earlier)
-                  const shouldBeHidden = 
+                  // Keep runtime standalone-weather grid visible (added after GLTF helper purge)
+                  const isStandaloneWeatherGrid =
+                    standaloneWeatherNoCsm &&
+                    (userData.isGridHelper === true || obj instanceof THREE.GridHelper);
+                  const shouldBeHidden = !isStandaloneWeatherGrid && (
                     objType === 'TransformControlsGizmo' ||
                     objType === 'TransformControlsPlane' ||
                     objType.includes('Gizmo') ||
@@ -7373,10 +8138,10 @@ export function createStandaloneViewerHTML(
                     userData.isLightHelper === true ||
                     userData.isTransformControls === true ||
                     userData.isDemoShaderScreen === true ||
-                    userData.lightId !== undefined ||
+                    (userData.lightId !== undefined && !(obj instanceof THREE.Light)) ||
                     userData.gizmoKind !== undefined ||
                     userData.skipExport === true ||
-                    (objName && (objName.includes('helper') || objName.includes('gizmo') || objName.includes('cineshader')));
+                    (objName && (objName.includes('helper') || objName.includes('gizmo') || objName.includes('cineshader'))));
                   
                   if (shouldBeHidden) {
                     obj.visible = false;
@@ -7401,32 +8166,46 @@ export function createStandaloneViewerHTML(
               // Don't use autoUpdate=true as it causes flickering - manually trigger updates
               renderer.shadowMap.needsUpdate = true;
               
-              // CRITICAL: Ensure directional lights are casting shadows
-              // This applies to BOTH ground projection and standard 360 HDR modes
-              scene.traverse((light) => {
-                if (light instanceof THREE.DirectionalLight) {
-                  const lightConfig = lightingConfig.directionalLights?.find(l => l.id === light.userData.lightId);
-                  // If light should cast shadows (from config or default), ensure it does
-                  const shouldCastShadow = (lightConfig && lightConfig.castShadow !== false) || (!lightConfig && light.userData.isSun) || (!lightConfig && !light.userData.lightId);
-                  if (shouldCastShadow) {
-                    if (!light.castShadow) {
-                      light.castShadow = true;
-                      if (light.shadow) {
-                        light.shadow.needsUpdate = true;
+              // CRITICAL: Ensure directional lights cast shadows appropriately
+              if (typeof webExportSyncSunOnlyShadowCasters === 'function') {
+                webExportSyncSunOnlyShadowCasters(scene);
+              }
+              if (typeof webExportEnsureExportLightsVisible === 'function') {
+                webExportEnsureExportLightsVisible(scene);
+              } else {
+                scene.traverse((light) => {
+                  if (light instanceof THREE.DirectionalLight) {
+                    const lightConfig = lightingConfig.directionalLights?.find(l => l.id === light.userData.lightId);
+                    const isFirstConfiguredLight =
+                      lightingConfig.directionalLights &&
+                      lightingConfig.directionalLights.length > 0 &&
+                      lightingConfig.directionalLights[0].id === light.userData.lightId;
+                    const shouldCastShadow = (lightConfig && lightConfig.castShadow !== false) ||
+                      (!lightConfig && light.userData.isSun) ||
+                      (!lightConfig && !light.userData.lightId) ||
+                      (CONFIG.weather && CONFIG.weather.enableStandaloneWeather && (light.userData.isSun || light.userData.isGlobalSun || isFirstConfiguredLight));
+                    if (shouldCastShadow) {
+                      if (!light.castShadow) {
+                        light.castShadow = true;
+                        if (light.shadow) {
+                          light.shadow.needsUpdate = true;
+                        }
+                        console.log('[WebExport] Re-enabled shadow casting for light:', light.userData.lightId || light.name || 'default');
                       }
-                      console.log('[WebExport] Re-enabled shadow casting for light:', light.userData.lightId || light.name || 'default');
-                    }
-                    // Ensure shadow map size is set
-                    if (light.shadow && (light.shadow.mapSize.width === 0 || light.shadow.mapSize.height === 0)) {
-                      const shadowMapSize = window.getShadowMapSize ? window.getShadowMapSize(CONFIG.shadowQuality || 'high') : 4096;
-                      light.shadow.mapSize.width = shadowMapSize;
-                      light.shadow.mapSize.height = shadowMapSize;
-                      light.shadow.needsUpdate = true;
-                      console.warn('[WebExport] Light shadow map size was 0, fixed:', light.userData.lightId || light.name || 'default');
+                      if (light.shadow && (light.shadow.mapSize.width === 0 || light.shadow.mapSize.height === 0)) {
+                        const shadowMapSize = window.getShadowMapSize ? window.getShadowMapSize(CONFIG.shadowQuality || 'high') : 4096;
+                        light.shadow.mapSize.width = shadowMapSize;
+                        light.shadow.mapSize.height = shadowMapSize;
+                        light.shadow.needsUpdate = true;
+                        console.warn('[WebExport] Light shadow map size was 0, fixed:', light.userData.lightId || light.name || 'default');
+                      }
+                    } else if (light.castShadow) {
+                      light.castShadow = false;
+                      if (light.shadow) light.shadow.needsUpdate = true;
                     }
                   }
-                }
-              });
+                });
+              }
               
               // CRITICAL: Ensure shadow plane is visible and receiving shadows
               // This applies to BOTH ground projection and standard 360 HDR modes
@@ -7569,6 +8348,10 @@ export function createStandaloneViewerHTML(
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height);
+          if (css3dRenderer) {
+            css3dRenderer.setSize(width, height);
+            css3dRenderer.render(scene, camera);
+          }
           renderer.render(scene, camera);
         }
         window.addEventListener('resize', handleResize);
@@ -7615,6 +8398,7 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
     includeAnimations: true,
     presentationMode: true,
     transitionDuration: 2.0,
+    viewHoldDuration: 1.0,
     autoPlay: false,
     loop: true,
     quality: 'high',
@@ -7914,6 +8698,11 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
     exportedAt: exportDate,
     exportTimestamp: exportTimestamp, // Add timestamp for cache-busting
     options: defaultOptions,
+    // Top-level presentation timing (standalone HTML player reads these directly)
+    transitionDuration: defaultOptions.transitionDuration,
+    viewHoldDuration: defaultOptions.viewHoldDuration,
+    autoPlay: defaultOptions.autoPlay,
+    loop: defaultOptions.loop,
 
     assets: {
       basePath: './',
@@ -7973,16 +8762,26 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
       shadowColor: store.shadowColor,
       shadowOpacity: store.shadowOpacity,
       shadowOpacityEnabled: store.shadowOpacityEnabled,
-      directionalLights: Array.isArray(store.directionalLights) ? store.directionalLights.map(light => ({
-        id: light.id,
-        enabled: light.enabled,
-        color: light.color,
-        intensity: light.intensity,
-        position: light.position,
-        target: light.target,
-        castShadow: light.castShadow,
-        shadowRadius: light.shadowRadius
-      })) : [],
+      directionalLights: Array.isArray(store.directionalLights)
+        ? store.directionalLights.map((light, index) => {
+            const standaloneWeather = store.enableStandaloneWeather === true
+            const isSun = standaloneWeather
+              ? webExportIsSunLightConfig(light, index, true)
+              : light.isSun
+            return {
+              id: light.id,
+              enabled: light.enabled,
+              isSun,
+              color: light.color,
+              intensity: light.intensity,
+              position: light.position,
+              target: light.target,
+              // CSM disables sun castShadow in editor; export has no CSM — sun must cast shadows
+              castShadow: isSun && standaloneWeather ? true : light.castShadow,
+              shadowRadius: light.shadowRadius
+            }
+          })
+        : [],
       sceneLights: sceneLights // Lights actually in the scene
     },
     
@@ -7991,8 +8790,14 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
       enabled: store.shadowsEnabled,
       shadowIntensity: store.shadowIntensity,
       shadowPlaneTransparent: store.shadowPlaneTransparent,
+      showShadowPlane: store.showShadowPlane,
       shadowBias: store.shadowBias,
       shadowMapSize: store.shadowMapSize
+    },
+
+    // Scene helpers (grid matches editor ground reference)
+    helpers: {
+      showGrid: store.showGrid
     },
     
     // Weather Settings
@@ -8001,7 +8806,7 @@ export async function exportForWeb(options: Partial<WebExportOptions> = {}): Pro
       preset: store.weatherPreset,
       timeOfDay: store.timeOfDay,
       northOffset: store.northOffset,
-      dynamicSkyEnabled: store.dynamicSkyEnabled,
+      dynamicSkyEnabled: store.enableStandaloneWeather ? true : store.dynamicSkyEnabled,
       sunSize: store.sunSize,
       moonSize: store.moonSize,
       weatherQuality: store.weatherQuality,
@@ -8294,53 +9099,91 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
   // The cache clearing script above ensures fresh state on each preview
   console.log('[WebExport] Preview HTML prepared with cache clearing, export timestamp:', exportTimestamp);
   
-  // Create blob and open in new browser tab (not popup)
-  // OPTIMIZATION: Use requestIdleCallback or setTimeout to avoid blocking UI
-  const openPreview = () => {
+  // Open via localhost HTTP preview WITHOUT COEP (YouTube blocked under COEP;
+  // blob: also inherits parent COEP and triggers Error 153 / sad-file icon).
+  const openPreview = async () => {
     try {
       const htmlBlob = new Blob([htmlWithBlobUrls], { type: 'text/html' })
-      const htmlUrl = URL.createObjectURL(htmlBlob)
-      
-      // Open in new tab with unique name to prevent reusing old window
       const previewWindowName = `web-export-preview-${Date.now()}`
+      let previewUrl = ''
+      let usedLocalhost = false
+
+      // Prefer same-origin Vite preview host: valid HTTP Referer + no COEP on that path.
+      const isHttpOrigin = typeof window !== 'undefined'
+        && (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+      if (isHttpOrigin) {
+        const publishUrl = new URL('/__web-export-preview/publish', window.location.origin).toString()
+        let lastPublishError: unknown = null
+        for (let attempt = 0; attempt < 2 && !usedLocalhost; attempt++) {
+          try {
+            const response = await fetch(publishUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/html; charset=utf-8' },
+              body: htmlWithBlobUrls
+            })
+            if (response.ok) {
+              previewUrl = new URL('/__web-export-preview/', window.location.origin).toString()
+              usedLocalhost = true
+              console.log('[WebExport] Preview hosted on localhost (no COEP) for YouTube embeds:', previewUrl)
+            } else {
+              lastPublishError = new Error(`publish HTTP ${response.status}`)
+              console.warn('[WebExport] Localhost preview publish failed:', response.status)
+            }
+          } catch (publishError) {
+            lastPublishError = publishError
+            console.warn('[WebExport] Localhost preview publish attempt failed:', publishError)
+          }
+        }
+        // Do NOT fall back to blob: on http(s) — blob inherits the app's COEP and blocks YouTube.
+        if (!usedLocalhost) {
+          throw new Error(
+            'Web-export preview requires the Vite /__web-export-preview/ host (no COEP). ' +
+            'Restart the Vite dev server and try Preview again. ' +
+            (lastPublishError instanceof Error ? lastPublishError.message : '')
+          )
+        }
+      } else {
+        // Non-http origins (e.g. file:) cannot use the Vite preview route.
+        // Blob inherits creator COEP; YouTube iframes use credentialless attr as mitigation.
+        previewUrl = URL.createObjectURL(htmlBlob)
+        console.warn(
+          '[WebExport] Preview using blob: URL (non-http origin). YouTube may still fail if the opener has COEP; prefer http://localhost Vite preview.'
+        )
+      }
+
       let previewWindow: Window | null = null
-      
       try {
-        previewWindow = window.open(htmlUrl, previewWindowName)
+        previewWindow = window.open(previewUrl, previewWindowName)
       } catch (e) {
         console.warn('[WebExport] window.open failed, trying alternative method:', e)
       }
-      
-      // Focus the new window/tab
+
       if (previewWindow && !previewWindow.closed) {
         try {
           previewWindow.focus()
         } catch (e) {
-          // Ignore focus errors (may fail if window is blocked)
+          // Ignore focus errors
         }
       } else {
-        // Window was blocked by popup blocker - try alternative method
-        // Create a link and click it programmatically
         const link = document.createElement('a')
-        link.href = htmlUrl
+        link.href = previewUrl
         link.target = '_blank'
         link.rel = 'noopener noreferrer'
         link.style.display = 'none'
         document.body.appendChild(link)
         link.click()
-        // Remove link after a short delay to allow click to process
         setTimeout(() => {
           document.body.removeChild(link)
         }, 100)
       }
-      
-      // Clean up URLs when window closes (non-blocking)
+
       const cleanup = () => {
         try {
-          URL.revokeObjectURL(htmlUrl)
+          if (!usedLocalhost) {
+            URL.revokeObjectURL(previewUrl)
+          }
           if (modelBlobUrl) URL.revokeObjectURL(modelBlobUrl)
           if (hdrBlobUrl) URL.revokeObjectURL(hdrBlobUrl)
-          // Clean up thumbnail blob URLs
           for (const blobUrl of thumbnailBlobUrls.values()) {
             URL.revokeObjectURL(blobUrl)
           }
@@ -8348,9 +9191,8 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
           console.warn('[WebExport] Cleanup error (non-critical):', e)
         }
       }
-      
+
       if (previewWindow && !previewWindow.closed) {
-        // Try to detect when window closes (non-blocking)
         const checkClosed = setInterval(() => {
           try {
             if (previewWindow.closed) {
@@ -8358,30 +9200,26 @@ export async function previewWebExport(options: Partial<WebExportOptions> = {}):
               cleanup()
             }
           } catch (e) {
-            // Window may be cross-origin, cleanup anyway
             clearInterval(checkClosed)
             cleanup()
           }
         }, 1000)
-        
-        // Also cleanup after 5 minutes as fallback
+
         setTimeout(() => {
           clearInterval(checkClosed)
           cleanup()
         }, 5 * 60 * 1000)
       } else {
-        // Cleanup after a delay (user should have opened the tab)
-        setTimeout(cleanup, 2000);
+        setTimeout(cleanup, 2000)
       }
     } catch (error) {
       console.error('[WebExport] Failed to open preview window:', error)
       throw error
     }
   }
-  
+
   // OPTIMIZATION: Use setTimeout to avoid blocking the UI thread
-  // This ensures the preview opens even if the export process was heavy
-  setTimeout(openPreview, 0)
+  setTimeout(() => { void openPreview() }, 0)
   } catch (error) {
     console.error('Preview export error:', error)
     throw new Error(`Preview failed: ${error instanceof Error ? error.message : 'Unknown error'}`)

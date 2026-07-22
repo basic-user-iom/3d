@@ -7,9 +7,17 @@ import {
   type MenuLayout,
   type MenuRowBreaks
 } from '../config/toolbarMenu'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, type ProjectObject } from '../store/useAppStore'
 import { getSharedViewer } from '../viewer/useViewer'
 import { loadModel } from '../viewer/loaders'
+import { renderModeForStreetsGLOverlay } from './streetsGLSessionPersistence'
+import {
+  applyStreetsGLRegistryToScene,
+  extractStreetsGLFieldsFromMesh,
+  normalizeProjectObjectsForLoad,
+  rebuildProjectObjectsFromSceneForLegacyLoad,
+  serializeProjectObjectsForSave
+} from '../viewer/streetsGLRegistryPersistence'
 
 /**
  * Global File Registry - Tracks original File objects for project save/load
@@ -373,6 +381,25 @@ export interface SavedProject {
       iframeOverlay: boolean
       iframeInteractive: boolean
       showUI: boolean
+      /** Packed Streets GL building feature ids hidden by the user */
+      hiddenBuildingIds?: string[]
+    }
+    /**
+     * Phase 2: object registry with Streets GL anchors / visibility / presence.
+     * Restored before ResyncCoordinator re-adds into the iframe.
+     */
+    projectObjects?: ProjectObject[]
+    /** Product / City / Hybrid — required so Streets GL iframe remounts after load */
+    renderMode?: 'product' | 'city' | 'hybrid'
+    cameraBounds?: {
+      enabled: boolean
+      mode: 'disc' | 'box'
+      autoSync: boolean
+      discRadius: number
+      centerX: number
+      centerZ: number
+      min: { x: number; y: number; z: number }
+      max: { x: number; y: number; z: number }
     }
     gridSize?: number
     selectedObjectId?: string | null // UUID of selected object
@@ -884,6 +911,15 @@ const serializeSceneObject = async (obj: THREE.Object3D, scene: THREE.Scene, isT
     // Also save fileUrl if available (for loading referenced files)
     if (obj.userData.fileUrl) {
       saved.fileUrl = obj.userData.fileUrl
+    }
+  }
+
+  // Phase 2: persist Streets GL registry fields on scene objects (belt-and-suspenders
+  // with store.projectObjects). Includes projectObjectId + Mercator anchors + channel.
+  if (isDirectChildOfScene && (obj.userData.isModel || obj.userData.isImportedModel || obj.userData.isPrimitive)) {
+    const streetsFields = extractStreetsGLFieldsFromMesh(obj)
+    if (Object.keys(streetsFields).length > 0) {
+      saved.userData = { ...(saved.userData || {}), ...streetsFields }
     }
   }
   
@@ -1673,7 +1709,21 @@ export async function createProjectSnapshot(onProgress?: (progress: number, mess
         groundLayerType: store.streetsGLGroundLayerType,
         iframeOverlay: store.streetsGLIframeOverlay,
         iframeInteractive: store.streetsGLIframeInteractive,
-        showUI: store.streetsGLShowUI
+        showUI: store.streetsGLShowUI,
+        hiddenBuildingIds: [...store.streetsGLHiddenBuildingIds]
+      },
+      // Phase 2: registry anchors / streetsGLVisible / presence for reload re-add
+      projectObjects: serializeProjectObjectsForSave(store.projectObjects),
+      renderMode: store.renderMode,
+      cameraBounds: {
+        enabled: store.cameraBoundsEnabled,
+        mode: store.cameraBoundsMode,
+        autoSync: store.cameraBoundsAutoSync,
+        discRadius: store.cameraBoundsDiscRadius,
+        centerX: store.cameraBoundsCenterX,
+        centerZ: store.cameraBoundsCenterZ,
+        min: { ...store.cameraBoundsMin },
+        max: { ...store.cameraBoundsMax }
       },
       gridSize: store.gridSize,
       selectedObjectId: store.selectedObject?.uuid || null,
@@ -2448,6 +2498,12 @@ const applyOSMBuildings = (snapshot: SavedProject['store']['osmBuildings'] | und
 
 const applyStreetsGL = (snapshot: SavedProject['store']['streetsGL'] | undefined) => {
   if (!snapshot) return
+  const currentMode = useAppStore.getState().renderMode
+  // Overlay only draws when renderMode is city/hybrid (see StreetsGLIframeOverlay)
+  const nextRenderMode = renderModeForStreetsGLOverlay(!!snapshot.iframeOverlay, currentMode)
+  const hiddenBuildingIds = Array.isArray(snapshot.hiddenBuildingIds)
+    ? snapshot.hiddenBuildingIds.map((id) => String(id)).filter(Boolean)
+    : []
   useAppStore.setState({
     streetsGLGroundEnabled: snapshot.groundEnabled,
     streetsGLGroundSize: snapshot.groundSize,
@@ -2458,7 +2514,60 @@ const applyStreetsGL = (snapshot: SavedProject['store']['streetsGL'] | undefined
     streetsGLGroundLayerType: snapshot.groundLayerType as any,
     streetsGLIframeOverlay: snapshot.iframeOverlay,
     streetsGLIframeInteractive: snapshot.iframeInteractive,
-    streetsGLShowUI: snapshot.showUI
+    streetsGLShowUI: snapshot.showUI,
+    streetsGLHiddenBuildingIds: hiddenBuildingIds,
+    renderMode: nextRenderMode
+  })
+
+  // Re-apply hides into the iframe once the bridge is ready (tiles may still be loading).
+  const bridge = useAppStore.getState().streetsGLBridge
+  if (bridge?.isReady) {
+    const numericIds = hiddenBuildingIds
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id))
+    void bridge.syncHiddenBuildings(numericIds)
+  }
+}
+
+/**
+ * Phase 2: restore projectObjects (Mercator anchors, streetsGLVisible, presence→absent).
+ * Phase 3: also used after legacy scene rebuild (already-normalized or raw both OK).
+ * ResyncCoordinator re-adds into the iframe when Streets GL is ready — do not rewrite anchors from GPS.
+ */
+const applyProjectObjects = (snapshot: SavedProject['store']['projectObjects'] | undefined) => {
+  const normalized = normalizeProjectObjectsForLoad(snapshot)
+  useAppStore.setState({
+    projectObjects: normalized,
+    sceneRevision: useAppStore.getState().sceneRevision + 1
+  })
+  if (normalized.length > 0) {
+    console.log(
+      `[ProjectPersistence] Restored ${normalized.length} project object descriptor(s) (Streets GL registry)`
+    )
+  }
+}
+
+const applyRenderMode = (mode: SavedProject['store']['renderMode'] | undefined) => {
+  if (!mode) return
+  if (mode !== 'product' && mode !== 'city' && mode !== 'hybrid') return
+  // Never leave product + overlay on — iframe mounts only in city/hybrid
+  const overlay = useAppStore.getState().streetsGLIframeOverlay
+  useAppStore.setState({
+    renderMode: renderModeForStreetsGLOverlay(overlay, mode)
+  })
+}
+
+const applyCameraBounds = (snapshot: SavedProject['store']['cameraBounds'] | undefined) => {
+  if (!snapshot) return
+  useAppStore.setState({
+    cameraBoundsEnabled: snapshot.enabled,
+    cameraBoundsMode: snapshot.mode === 'box' ? 'box' : 'disc',
+    cameraBoundsAutoSync: snapshot.autoSync !== false,
+    cameraBoundsDiscRadius: snapshot.discRadius,
+    cameraBoundsCenterX: snapshot.centerX,
+    cameraBoundsCenterZ: snapshot.centerZ,
+    cameraBoundsMin: { ...snapshot.min },
+    cameraBoundsMax: { ...snapshot.max }
   })
 }
 
@@ -3701,6 +3810,9 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
   applyWeather(snapshot.store.weather)
   applyRendering(snapshot.store.rendering)
   
+  // Phase 3: missing projectObjects → rebuild registry from scene after restore
+  const legacyMissingProjectObjects = snapshot.store.projectObjects == null
+
   // Restore new settings (version 3+)
   if (snapshot.version >= 3) {
     if (snapshot.store.water) {
@@ -3720,6 +3832,23 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
     }
     if (snapshot.store.streetsGL) {
       applyStreetsGL(snapshot.store.streetsGL)
+    }
+    // Phase 2: restore registry before scene stamp / ResyncCoordinator re-add
+    if (snapshot.store.projectObjects) {
+      applyProjectObjects(snapshot.store.projectObjects)
+    } else {
+      // Legacy projects: clear stale in-memory registry so load does not mix sessions
+      applyProjectObjects([])
+    }
+    // Apply after streetsGL so explicit project renderMode wins over overlay fallback
+    if (snapshot.store.renderMode) {
+      applyRenderMode(snapshot.store.renderMode)
+    } else if (snapshot.store.streetsGL?.iframeOverlay) {
+      // Legacy projects: overlay saved without renderMode → ensure iframe can mount
+      applyRenderMode('hybrid')
+    }
+    if (snapshot.store.cameraBounds) {
+      applyCameraBounds(snapshot.store.cameraBounds)
     }
     if (snapshot.store.gridSize !== undefined) {
       useAppStore.setState({ gridSize: snapshot.store.gridSize })
@@ -3940,6 +4069,34 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
           useAppStore.getState().setSelectedObject(selectedObject)
           console.log('[ProjectPersistence] ✅ Selected object restored')
         }
+      }
+
+      // Phase 3: legacy / scene-only — rebuild registry from restored scene so channel
+      // defaults + presence absent exist before ResyncCoordinator (never copy Three.js hide).
+      if (legacyMissingProjectObjects) {
+        const streetsGLContext =
+          !!snapshot.store.streetsGL?.iframeOverlay ||
+          snapshot.store.renderMode === 'city' ||
+          snapshot.store.renderMode === 'hybrid'
+        const rebuilt = rebuildProjectObjectsFromSceneForLegacyLoad(viewer.scene, {
+          streetsGLContext
+        })
+        if (rebuilt.length > 0) {
+          applyProjectObjects(rebuilt)
+          console.log(
+            `[ProjectPersistence] Phase 3: rebuilt ${rebuilt.length} project object(s) from legacy scene`
+          )
+        }
+      }
+
+      // Phase 2/3: stamp restored registry Streets GL fields onto live meshes
+      // (anchors + streetsGLVisible + ids). ResyncCoordinator re-adds when bridge is ready.
+      const registry = useAppStore.getState().projectObjects
+      if (registry.length > 0) {
+        const stamped = applyStreetsGLRegistryToScene(viewer.scene, registry)
+        console.log(
+          `[ProjectPersistence] Stamped Streets GL registry onto ${stamped} scene object(s)`
+        )
       }
     }
 
