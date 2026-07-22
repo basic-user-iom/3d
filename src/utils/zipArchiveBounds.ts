@@ -22,7 +22,10 @@ export const ZIP_ARCHIVE_BOUNDS = {
   maxConcurrentExtracts: 4
 } as const
 
-export type ZipArchiveBounds = typeof ZIP_ARCHIVE_BOUNDS
+/** Bounds accept any number so callers/tests can tighten limits without literal-type conflicts. */
+export type ZipArchiveBounds = {
+  -readonly [K in keyof typeof ZIP_ARCHIVE_BOUNDS]: number
+}
 
 export class ZipBoundsError extends Error {
   constructor(message: string) {

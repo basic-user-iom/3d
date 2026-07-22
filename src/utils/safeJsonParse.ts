@@ -22,7 +22,10 @@ export const PROJECT_JSON_BOUNDS = {
   parseTimeoutMs: 30_000
 } as const
 
-export type ProjectJsonBounds = typeof PROJECT_JSON_BOUNDS
+/** Bounds accept any number so callers/tests can tighten limits without literal-type conflicts. */
+export type ProjectJsonBounds = {
+  -readonly [K in keyof typeof PROJECT_JSON_BOUNDS]: number
+}
 
 export class JsonBoundsError extends Error {
   constructor(message: string) {

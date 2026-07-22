@@ -23,6 +23,10 @@ export interface SavedMaterialFixture {
 export interface SavedHierarchyNodeWithMaterials extends SavedHierarchyNode {
   materials?: SavedMaterialFixture[]
   children?: SavedHierarchyNodeWithMaterials[]
+  /** Present on imported scene roots after serialize/reload. */
+  instanceId?: string
+  fileName?: string
+  type?: string
 }
 
 /**
@@ -250,7 +254,7 @@ export function applySavedMaterialsInPlace(
  */
 export function applySavedImportedInstanceInPlace(
   liveRoot: THREE.Object3D,
-  saved: SavedHierarchyNodeWithMaterials & { instanceId?: string },
+  saved: SavedHierarchyNodeWithMaterials,
   restoreMaterial: (saved: SavedMaterialFixture) => THREE.Material = restoreMaterialFixture
 ): void {
   applySavedTransformToObject(liveRoot, saved)

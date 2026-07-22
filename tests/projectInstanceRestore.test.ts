@@ -10,16 +10,19 @@ import {
   shouldReuseImportedInstanceByFileName
 } from '../src/utils/projectInstanceRestore'
 
+type TestSavedNode = {
+  name: string
+  position: { x: number; y: number; z: number }
+  rotation: { x: number; y: number; z: number }
+  scale: { x: number; y: number; z: number }
+  visible: boolean
+  children?: TestSavedNode[]
+}
+
 function makeSavedNode(
   name: string,
-  overrides: Partial<{
-    position: { x: number; y: number; z: number }
-    rotation: { x: number; y: number; z: number }
-    scale: { x: number; y: number; z: number }
-    visible: boolean
-    children: ReturnType<typeof makeSavedNode>[]
-  }> = {}
-) {
+  overrides: Partial<Omit<TestSavedNode, 'name'>> = {}
+): TestSavedNode {
   return {
     name,
     position: overrides.position ?? { x: 0, y: 0, z: 0 },

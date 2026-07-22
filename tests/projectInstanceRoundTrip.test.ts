@@ -98,8 +98,7 @@ describe('project instance fixture round-trip (DATA-1)', () => {
     expect(new Set(imported.map((obj) => obj.instanceId)).size).toBe(2)
 
     // Simulate save/load of the project JSON fixture.
-    const reloaded = JSON.parse(JSON.stringify(imported)) as SavedHierarchyNodeWithMaterials[] &
-      Array<{ instanceId?: string; fileName?: string; type?: string }>
+    const reloaded = JSON.parse(JSON.stringify(imported)) as SavedHierarchyNodeWithMaterials[]
 
     const liveA = cloneAssetTree(a)
     const liveB = cloneAssetTree(b)
