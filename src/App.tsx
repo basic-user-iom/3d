@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { useShallow } from 'zustand/react/shallow'
 import ViewerCanvas from './viewer/ViewerCanvas'
 import { getSharedViewer, useViewer } from './viewer/useViewer'
 import {
@@ -16,41 +17,39 @@ import Sidebar from './components/Sidebar'
 import LightingPanel from './components/LightingPanel'
 import TransformPanel from './components/TransformPanel'
 import MaterialPanel from './components/MaterialPanel'
-import TextureManagementPanel from './components/TextureManagementPanel'
 import CameraViewsPanel from './components/CameraViewsPanel'
 import OptimizationPanel from './components/OptimizationPanel'
 import ObjectsPanel from './components/ObjectsPanel'
 import ObjectRegistryReconciler from './components/ObjectRegistryReconciler'
-import RoomsPanel from './components/RoomsPanel'
 import RenderingQualityPanel from './components/RenderingQualityPanel'
 import WeatherPanel from './components/WeatherPanel'
 import CameraViewsQuickMenu from './components/CameraViewsQuickMenu'
 import { useAppStore } from './store/useAppStore'
+import { selectAppShellStore } from './utils/perfStoreSelectors'
 import ShortcutsOverlay from './components/ShortcutsOverlay'
 import BugTrackerPanel from './components/BugTrackerPanel'
-import PathTracerDemoPanel from './components/PathTracerDemoPanel'
-import TodoPanel from './components/TodoPanel'
-import PrimitivesPanel from './components/PrimitivesPanel'
-import RenderingEffectsPanel from './components/RenderingEffectsPanel'
-import EdgeEnhancementPanel from './components/EdgeEnhancementPanel'
-import SmoothingPanel from './components/SmoothingPanel'
-import PointCloudPanel from './components/PointCloudPanel'
-import OSMGroundV2Panel from './components/OSMGroundV2Panel'
 import MissingTextureDialog, { MissingTextureInfo } from './components/MissingTextureDialog'
-import { diagnoseTexture, diagnoseTextures } from './utils/textureOptimizerDiagnostics'
 import { StreetsGLIframeOverlay } from './components/StreetsGLIframeOverlay'
 import { CityTransformOverlay } from './components/CityTransformOverlay'
 import ViewerFeatureAnnouncements from './components/ViewerFeatureAnnouncements'
+import HotspotsPanel from './components/HotspotsPanel'
+import { AppOptionalPanels } from './components/AppOptionalPanels'
+import { EnvironmentManager } from './viewer/effects/EnvironmentManager'
+import './App.css'
+import { runTextureMergingTests } from './utils/testTextureMerging'
+import { testLODGeneration } from './utils/lodTestUtils'
+import { createCineShaderScreen } from './utils/cineShaderScreen'
 
-// Expose diagnostic functions to console for testing
+// PERF-5: keep optional texture diagnostics out of the initial App module graph
 if (typeof window !== 'undefined') {
-  (window as any).diagnoseTexture = diagnoseTexture
-  ;(window as any).diagnoseTextures = diagnoseTextures
-  console.log('💡 Texture diagnostics available: window.diagnoseTexture(file, format) and window.diagnoseTextures(files, format)')
-  
-  // Expose project save/load debug functions
+  import('./utils/textureOptimizerDiagnostics').then(({ diagnoseTexture, diagnoseTextures }) => {
+    ;(window as any).diagnoseTexture = diagnoseTexture
+    ;(window as any).diagnoseTextures = diagnoseTextures
+    console.log('💡 Texture diagnostics available: window.diagnoseTexture(file, format) and window.diagnoseTextures(files, format)')
+  })
+
   import('./utils/projectPersistence').then((module) => {
-    (window as any).debugProjectState = module.debugProjectState
+    ;(window as any).debugProjectState = module.debugProjectState
     ;(window as any).validateProjectSnapshot = module.validateProjectSnapshot
     ;(window as any).createProjectSnapshot = module.createProjectSnapshot
     ;(window as any).testFileRegistry = () => {
@@ -78,23 +77,6 @@ if (typeof window !== 'undefined') {
     console.log('   - window.testFileRegistry() - Check what files are registered')
   })
 }
-import PolygonDrawingPanel from './components/PolygonDrawingPanel'
-import HotspotsPanel from './components/HotspotsPanel'
-import CubesViewer from './components/CubesViewer'
-import AIEnhancementPanel from './components/AIEnhancementPanel'
-import ShaderEditorPanel from './components/ShaderEditorPanel'
-import WebExportPanel from './components/WebExportPanel'
-import PlacesPanel from './components/PlacesPanel'
-import ShadowSystemTestPanel from './components/ShadowSystemTestPanel'
-import HDRTestPanel from './components/HDRTestPanel'
-import HDRShadowDemoPanel from './components/HDRShadowDemoPanel'
-import StreetsGLDemo from './components/StreetsGLDemo'
-import RevitConnectionPanel from './components/RevitConnectionPanel'
-import { EnvironmentManager } from './viewer/effects/EnvironmentManager'
-import './App.css'
-import { runTextureMergingTests } from './utils/testTextureMerging'
-import { testLODGeneration } from './utils/lodTestUtils'
-import { createCineShaderScreen } from './utils/cineShaderScreen'
 
 function App() {
   // Filter out WebGL errors and CORS warnings from Streets GL iframe (they're harmless warnings from the embedded app)
@@ -171,13 +153,13 @@ function App() {
   const [showMissingTextureDialog, setShowMissingTextureDialog] = useState(false)
   
 
-  const { 
-    showGrid, 
+  const {
+    showGrid,
     showAxes,
     showLightHelpers,
     showBoundingBoxes,
-    showShadowPlane, 
-    showMaterialPanel, 
+    showShadowPlane,
+    showMaterialPanel,
     showTextureManagementPanel,
     selectedObject,
     setSelectedObject,
@@ -203,7 +185,6 @@ function App() {
     showPointCloudPanel,
     showOSMGroundV2Panel,
     showPolygonDrawingPanel,
-    showHotspotsPanel,
     showShaderEditorPanel,
     showCubesViewer,
     showStreetsGLDemo,
@@ -211,6 +192,7 @@ function App() {
     showShadowSystemTestPanel,
     showHDRTestPanel,
     showHDRShadowDemoPanel,
+    showTodoPanel,
     streetsGLIframeOverlay,
     streetsGLIframeInteractive,
     streetsGLShowUI,
@@ -232,7 +214,12 @@ function App() {
     canUndo,
     canRedo,
     redo
-  } = useAppStore()
+  } = useAppStore(useShallow(selectAppShellStore))
+
+  const handleClosePathTracer = useCallback(() => {
+    setPathTracerActive(false)
+    togglePathTracerPreview()
+  }, [setPathTracerActive, togglePathTracerPreview])
 
   // Session restore: if Streets GL was enabled last time, ask Electron to start :8081 immediately
   // (browser relies on Vite plugin / `npm run dev`; process still dies when the terminal closes).
@@ -598,7 +585,6 @@ function App() {
       <Toolbar />
       <div className="main-content">
         {showMaterialPanel && <MaterialPanel />}
-        {showTextureManagementPanel && <TextureManagementPanel />}
         {showTransformPanel && selectedObject && <TransformPanel />}
         <DragDropZone>
           <div className={`viewer-container ${
@@ -638,45 +624,46 @@ function App() {
           {showLightingPanel && <LightingPanel />}
           {showOptimizationPanel && <OptimizationPanel />}
           {showObjectsPanel && <ObjectsPanel />}
-          {showRoomsPanel && <RoomsPanel />}
-          {showRevitConnectionPanel && <RevitConnectionPanel />}
           {showRenderingQualityPanel && <RenderingQualityPanel />}
           {showCameraViewsPanel && <CameraViewsPanel />}
           {showWeatherPanel && <WeatherPanel />}
-          {showWebExportPanel && <WebExportPanel />}
-          {showPlacesPanel && <PlacesPanel />}
-          {showShadowSystemTestPanel && <ShadowSystemTestPanel />}
-          {showHDRTestPanel && <HDRTestPanel />}
-          {showHDRShadowDemoPanel && <HDRShadowDemoPanel />}
-          {showPathTracerPreview && viewer && (
-            <PathTracerDemoPanel 
-              viewer={{
-                renderer: viewer.renderer,
-                camera: viewer.camera,
-                scene: viewer.scene,
-                controls: (viewer as any).controls || undefined
-              }} 
-              onClose={() => {
-                setPathTracerActive(false)
-                togglePathTracerPreview()
-              }} 
-            />
-          )}
-          {showPrimitivesPanel && <PrimitivesPanel />}
-          {showRenderingEffectsPanel && <RenderingEffectsPanel />}
-          {showEdgeEnhancementPanel && <EdgeEnhancementPanel />}
-          {showSmoothingPanel && <SmoothingPanel />}
-          {showPointCloudPanel && <PointCloudPanel />}
-          {showOSMGroundV2Panel && <OSMGroundV2Panel />}
-          {showPolygonDrawingPanel && <PolygonDrawingPanel />}
           {/* Always mounted so hotspot scene objects + click bridge stay alive when the panel is closed */}
           <HotspotsPanel />
-          {showCubesViewer && <CubesViewer />}
-          {showStreetsGLDemo && <StreetsGLDemo />}
-          {showAIEnhancementPanel && <AIEnhancementPanel />}
-          <ShaderEditorPanel />
+          <AppOptionalPanels
+            showTextureManagementPanel={showTextureManagementPanel}
+            showRoomsPanel={showRoomsPanel}
+            showRevitConnectionPanel={showRevitConnectionPanel}
+            showWebExportPanel={showWebExportPanel}
+            showPlacesPanel={showPlacesPanel}
+            showShadowSystemTestPanel={showShadowSystemTestPanel}
+            showHDRTestPanel={showHDRTestPanel}
+            showHDRShadowDemoPanel={showHDRShadowDemoPanel}
+            showPathTracerPreview={showPathTracerPreview}
+            showPrimitivesPanel={showPrimitivesPanel}
+            showRenderingEffectsPanel={showRenderingEffectsPanel}
+            showEdgeEnhancementPanel={showEdgeEnhancementPanel}
+            showSmoothingPanel={showSmoothingPanel}
+            showPointCloudPanel={showPointCloudPanel}
+            showOSMGroundV2Panel={showOSMGroundV2Panel}
+            showPolygonDrawingPanel={showPolygonDrawingPanel}
+            showCubesViewer={showCubesViewer}
+            showStreetsGLDemo={showStreetsGLDemo}
+            showAIEnhancementPanel={showAIEnhancementPanel}
+            showShaderEditorPanel={showShaderEditorPanel}
+            showTodoPanel={showTodoPanel}
+            viewer={
+              viewer
+                ? {
+                    renderer: viewer.renderer,
+                    camera: viewer.camera,
+                    scene: viewer.scene,
+                    controls: (viewer as any).controls || undefined
+                  }
+                : null
+            }
+            onClosePathTracer={handleClosePathTracer}
+          />
           <ShortcutsOverlay />
-          <TodoPanel />
           <BugTrackerPanel />
           {showMissingTextureDialog && missingTextures.length > 0 && (
             <MissingTextureDialog

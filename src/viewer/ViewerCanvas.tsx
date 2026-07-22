@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { useShallow } from 'zustand/react/shallow'
 import { EnvironmentManager } from './effects/EnvironmentManager'
 import { OrbitControls, TransformControls, RectAreaLightHelper } from 'three-stdlib'
 import { useAppStore } from '../store/useAppStore'
+import { selectViewerCanvasStore } from '../utils/perfStoreSelectors'
 import { HDRSystem } from './effects/HDRSystem'
 import { IndirectLightingSystem } from './effects/IndirectLightingSystem'
 import { ParticleSystem } from './particles/ParticleSystem'
@@ -451,25 +453,21 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
   }).current
 
-  const { 
-    transformMode, 
-    selectedObject, 
-    setSelectedObject, 
-    setTransformMode, 
-    showMaterialPanel, 
+  // PERF-5: narrow subscription — init-only GPU prefs / FPS caps read via getState()
+  const {
+    transformMode,
+    selectedObject,
+    setSelectedObject,
+    setTransformMode,
+    showMaterialPanel,
     showLightingPanel,
     pixelRatio,
     maxPixelRatio,
-    useLogarithmicDepthBuffer,
-    useHighPerformanceGPU,
-    preferCPU,
-    vsyncEnabled,
-    maxFPS,
     streetsGLIframeOverlay,
     renderMode,
     streetsGLIframeInteractive,
     pathTracerActive
-  } = useAppStore()
+  } = useAppStore(useShallow(selectViewerCanvasStore))
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -570,6 +568,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       // Determine power preference: preferCPU > low weather quality > useHighPerformanceGPU > default
       let powerPreference: "high-performance" | "low-power" | "default" = "default"
       const initWeatherQuality = appStoreInit.weatherQuality ?? 'high'
+      const preferCPU = !!appStoreInit.preferCPU
+      const useHighPerformanceGPU = !!appStoreInit.useHighPerformanceGPU
+      const useLogarithmicDepthBuffer = !!appStoreInit.useLogarithmicDepthBuffer
       if (preferCPU || prefersLowPowerGpu(initWeatherQuality)) {
         powerPreference = "low-power" // Prefer integrated GPU or CPU fallback (software rendering)
       } else if (useHighPerformanceGPU) {
@@ -4244,7 +4245,7 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       const store = useAppStore.getState()
       const effectiveFps = getEffectiveMaxFps(
         store.weatherQuality ?? 'high',
-        maxFPS,
+        store.maxFPS,
         !!store.enableStandaloneWeather
       )
       if (effectiveFps <= 0) return 0 // Unlimited or VSync (-1)
@@ -4365,20 +4366,23 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         return
       }
       
-      // Handle VSync and FPS limiting
-      if (vsyncEnabled && maxFPS === -1) {
-        // Standard VSync: continue below and schedule at end
-      } else if (maxFPS > 0) {
-        // FPS cap: manually limit frame rate
-        const frameInterval = getFrameInterval()
-        const elapsed = currentTime - lastFrameTime
-        
-        if (elapsed < frameInterval) {
-          scheduleAnimationFrame()
-          return
-        }
+      // Handle VSync and FPS limiting (read live store — avoid broad ViewerCanvas subscriptions)
+      {
+        const { vsyncEnabled, maxFPS } = useAppStore.getState()
+        if (vsyncEnabled && maxFPS === -1) {
+          // Standard VSync: continue below and schedule at end
+        } else if (maxFPS > 0) {
+          // FPS cap: manually limit frame rate
+          const frameInterval = getFrameInterval()
+          const elapsed = currentTime - lastFrameTime
+          
+          if (elapsed < frameInterval) {
+            scheduleAnimationFrame()
+            return
+          }
 
-        lastFrameTime = currentTime - (elapsed % frameInterval)
+          lastFrameTime = currentTime - (elapsed % frameInterval)
+        }
       }
       
       // Update camera controls (handles damping)
