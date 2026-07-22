@@ -10,6 +10,11 @@ import {
 import { useAppStore, type ProjectObject } from '../store/useAppStore'
 import { getSharedViewer } from '../viewer/useViewer'
 import { loadModel } from '../viewer/loaders'
+import {
+  bumpViewerSessionGeneration,
+  discardStaleLoadedModel,
+  getViewerSessionGeneration
+} from '../viewer/viewerLoadSession'
 import { renderModeForStreetsGLOverlay } from './streetsGLSessionPersistence'
 import {
   applyStreetsGLRegistryToScene,
@@ -3751,6 +3756,8 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
   
   // Set flag to prevent auto-loading during project restoration
   isProjectLoading = true
+  // LIFE-1: abort in-flight viewer imports so they cannot attach after restore begins
+  bumpViewerSessionGeneration('project restore started')
 
   try {
   const setMenuLayout = useAppStore.getState().setMenuLayout
@@ -4097,12 +4104,40 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
       if (!paganiInSnapshot) {
         // Pagani wasn't in snapshot, so auto-load it after a short delay
         console.log(`[ProjectPersistence] Pagani model not in snapshot and not in scene - will auto-load after restoration`)
+        const postRestoreSessionGeneration = getViewerSessionGeneration()
+        const restoreViewer = viewer
         setTimeout(async () => {
           try {
+            if (
+              getViewerSessionGeneration() !== postRestoreSessionGeneration ||
+              getSharedViewer() !== restoreViewer
+            ) {
+              console.log('[ProjectPersistence] Skipping post-restore Pagani auto-load: viewer session changed')
+              return
+            }
+            const hasNonAutoModels = restoreViewer.scene.children.some(
+              (obj) =>
+                (obj.userData?.isModel || obj.userData?.isImportedModel) &&
+                !obj.userData?.isAutoLoaded
+            )
+            if (hasNonAutoModels) {
+              console.log('[ProjectPersistence] Skipping post-restore Pagani auto-load: project models present')
+              return
+            }
+
             const autoLoadPath = 'files-upload/Pagani-glb/Pagani Utopia 2023.gltf'
             const loadedModel = await loadModel({ url: autoLoadPath })
             
             if (loadedModel && loadedModel.scene) {
+              if (
+                getViewerSessionGeneration() !== postRestoreSessionGeneration ||
+                getSharedViewer() !== restoreViewer
+              ) {
+                discardStaleLoadedModel(loadedModel)
+                console.log('[ProjectPersistence] Discarded stale post-restore Pagani auto-load')
+                return
+              }
+
               // Mark as auto-loaded model
               loadedModel.scene.userData.isModel = true
               loadedModel.scene.userData.isImportedModel = true
@@ -4113,7 +4148,7 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
               loadedModel.scene.userData.excludeFromWeatherModifications = true
               
               // Add to scene
-              viewer.scene.add(loadedModel.scene)
+              restoreViewer.scene.add(loadedModel.scene)
               
               // Register file in FileRegistry if possible
               try {

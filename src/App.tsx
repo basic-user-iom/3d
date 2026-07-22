@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import ViewerCanvas from './viewer/ViewerCanvas'
-import { useViewer } from './viewer/useViewer'
+import { getSharedViewer, useViewer } from './viewer/useViewer'
+import {
+  ViewerLoadAbortedError,
+  getViewerSessionGeneration
+} from './viewer/viewerLoadSession'
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation'
 import { useHelperVisibility } from './hooks/useHelperVisibility'
 import Toolbar from './components/Toolbar'
@@ -362,12 +366,31 @@ function App() {
       // Note: The file must be in the public folder for URL loading to work
       // For now, auto-load is disabled - user can load manually via file picker
       // To enable auto-load: Copy files-upload/Pagani-glb folder to public/files-upload/Pagani-glb/
+      // LIFE-1: capture session generation so a remount/project restore during the delay cancels this load
+      const autoLoadSessionGeneration = getViewerSessionGeneration()
       setTimeout(async () => {
         // CRITICAL: Don't auto-load if a project is currently being loaded
         // This prevents conflicts between auto-loaded models and project restoration
         const { isProjectCurrentlyLoading } = await import('./utils/projectPersistence')
         if (isProjectCurrentlyLoading()) {
           console.log('[AutoLoad] Skipping auto-load: Project is currently being loaded')
+          return
+        }
+        if (getViewerSessionGeneration() !== autoLoadSessionGeneration) {
+          console.log('[AutoLoad] Skipping auto-load: viewer session changed during delay')
+          return
+        }
+        if (getSharedViewer() !== viewerInstance) {
+          console.log('[AutoLoad] Skipping auto-load: shared viewer no longer matches')
+          return
+        }
+        const hasNonAutoModels = viewerInstance.scene.children.some(
+          (obj: any) =>
+            (obj.userData?.isModel || obj.userData?.isImportedModel) &&
+            !obj.userData?.isAutoLoaded
+        )
+        if (hasNonAutoModels) {
+          console.log('[AutoLoad] Skipping auto-load: project/user models already present')
           return
         }
         
@@ -387,16 +410,35 @@ function App() {
           // Load the model using loadFromUrl
           if (loadFromUrl) {
             try {
-              await loadFromUrl(autoLoadPath, (progress) => {
-                if (progress > 0 && progress < 100 && Math.floor(progress) % 10 === 0) {
-                  console.log(`[AutoLoad] Loading Pagani model: ${progress.toFixed(1)}%`)
-                }
-              })
+              await loadFromUrl(
+                autoLoadPath,
+                (progress) => {
+                  if (progress > 0 && progress < 100 && Math.floor(progress) % 10 === 0) {
+                    console.log(`[AutoLoad] Loading Pagani model: ${progress.toFixed(1)}%`)
+                  }
+                },
+                { replaceExisting: false }
+              )
+              // Re-check after await — project restore or remount may have won the race
+              if (
+                isProjectCurrentlyLoading() ||
+                getViewerSessionGeneration() !== autoLoadSessionGeneration ||
+                getSharedViewer() !== viewerInstance
+              ) {
+                console.log('[AutoLoad] Skipping post-load framing: session changed or project loading')
+                return
+              }
               console.log('[AutoLoad] ✅ Successfully auto-loaded Pagani Utopia 2023 model')
               
               // Position and frame the model
               if (viewerInstance.frameObject) {
                 setTimeout(() => {
+                  if (
+                    getViewerSessionGeneration() !== autoLoadSessionGeneration ||
+                    getSharedViewer() !== viewerInstance
+                  ) {
+                    return
+                  }
                   const scene = viewerInstance.scene
                   let foundModel: THREE.Object3D | null = null
                   
@@ -426,6 +468,13 @@ function App() {
                 }, 300)
               }
             } catch (urlError) {
+              if (
+                urlError instanceof ViewerLoadAbortedError ||
+                (urlError as any)?.name === 'ViewerLoadAbortedError'
+              ) {
+                console.log('[AutoLoad] Auto-load aborted (stale viewer/session)')
+                return
+              }
               console.warn('[AutoLoad] Failed to load from URL:', urlError)
               console.warn('[AutoLoad] To fix: Copy the files-upload folder to the public directory, or load the model manually using the file picker')
               // If URL loading fails, the file might not be in the public folder
@@ -433,6 +482,13 @@ function App() {
             }
           }
         } catch (autoLoadError) {
+          if (
+            autoLoadError instanceof ViewerLoadAbortedError ||
+            (autoLoadError as any)?.name === 'ViewerLoadAbortedError'
+          ) {
+            console.log('[AutoLoad] Auto-load aborted (stale viewer/session)')
+            return
+          }
           console.warn('[AutoLoad] Could not auto-load default model:', autoLoadError)
           // Don't throw - this is optional functionality
         }

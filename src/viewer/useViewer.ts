@@ -33,6 +33,17 @@ import {
   requestRegistryResync,
   type StreetsGLResyncReason
 } from './streetsGLResyncCoordinator'
+import {
+  ViewerLoadAbortedError,
+  assertViewerLoadCurrent,
+  assertViewerSessionCurrent,
+  beginViewerLoad,
+  bumpViewerSessionGeneration,
+  discardStaleLoadedModel,
+  endViewerLoad,
+  getViewerSessionGeneration,
+  isViewerLoadCurrent
+} from './viewerLoadSession'
 
 export {
   ensureStreetsGLIframeVisibilityChannel,
@@ -1084,6 +1095,10 @@ export function clearSharedViewer(viewer?: ViewerInstance | null): void {
     // A newer viewer is already registered; don't clear it.
     return
   }
+  if (sharedViewer) {
+    // LIFE-1: invalidate in-flight async loads targeting the disposed viewer
+    bumpViewerSessionGeneration('viewer disposed')
+  }
   sharedViewer = null
   if (typeof window !== 'undefined') {
     ;(window as any).sharedViewer = null
@@ -1946,7 +1961,13 @@ export function useViewer() {
       } catch (e) {
         // Ignore cleanup errors
       }
-
+      // LIFE-1: abort loads that still hold the previous viewer reference
+      bumpViewerSessionGeneration(viewer ? 'viewer replaced' : 'viewer cleared')
+    } else if (!previousViewer && viewer) {
+      // First registration also opens a fresh load session epoch
+      bumpViewerSessionGeneration('viewer registered')
+    } else if (previousViewer && !viewer) {
+      bumpViewerSessionGeneration('viewer cleared')
     }
     sharedViewer = viewer
     if (typeof window !== 'undefined') {
@@ -2145,11 +2166,17 @@ export function useViewer() {
       }
     }
 
+    // LIFE-1: session token for this import — invalidate after await if viewer/session changed
+    const loadHandle = beginViewerLoad()
+    let loadedModel: LoadedModel | null = null
+    try {
     const model = await loadModel({ file, textureFiles, mergedTextures }, onProgress)
+    loadedModel = model
     const fileName = file.name || 'Imported Model'
 
     // City mode: no Three.js scene — register, cache, and sync to Streets GL only.
     if (cityModeStreetsGL) {
+      assertViewerSessionCurrent(loadHandle, model)
       tagImportedModelScene(model.scene, fileName, {
         isAutoLoaded: false,
         fileSource: 'disk',
@@ -2162,16 +2189,32 @@ export function useViewer() {
       const objectId = registerImportedModelInRegistry(model.scene, fileName, { markStreetsGLPending: true })
       streetsGLDebugLog('[ModelLoad] City mode import registered:', { fileName, objectId })
 
+      const citySessionGeneration = loadHandle.sessionGeneration
       setTimeout(() => {
+        if (
+          loadHandle.signal.aborted ||
+          getViewerSessionGeneration() !== citySessionGeneration
+        ) {
+          return
+        }
         model.scene.updateMatrixWorld(true)
         positionModelOnGround(model.scene, true)
-        setTimeout(() => mirrorImportedModelPlacementToRegistry(objectId, model.scene), 2500)
+        setTimeout(() => {
+          if (
+            loadHandle.signal.aborted ||
+            getViewerSessionGeneration() !== citySessionGeneration
+          ) {
+            return
+          }
+          mirrorImportedModelPlacementToRegistry(objectId, model.scene)
+        }, 2500)
       }, 100)
 
       return model
     }
 
     const viewer = currentViewer!
+    assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
     
     try {
       console.log(`[ViewerInit] Viewer ready, proceeding with file load: ${file.name}`)
@@ -2307,10 +2350,14 @@ export function useViewer() {
         console.log(`[FogDebug] Disabled fog on ${fogDisabledCount} imported model materials - fog only affects lighting, not visual textures`)
       } catch {}
     }
+
+    // LIFE-1: re-validate immediately before mutating the live scene
+    assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
     
     scene.add(model.scene)
     attachModelAnimations(viewer, model)
     requestAnimationFrame(() => {
+      if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
       try {
         buildScenePickBVH(scene)
       } catch (error) {
@@ -2324,6 +2371,7 @@ export function useViewer() {
     // Update bounding boxes if enabled (delay to ensure model is fully added to scene)
     if (!isGaussianSplat) {
       setTimeout(() => {
+        if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
         if ((viewer as any).updateBoundingBoxes) {
           (viewer as any).updateBoundingBoxes()
         }
@@ -2332,6 +2380,7 @@ export function useViewer() {
     
     // Get custom anisotropy setting if available
     const appStore = await import('../store/useAppStore')
+    assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
     const textureAnisotropy = appStore.useAppStore.getState().textureAnisotropy
     const customAnisotropy = textureAnisotropy >= 0 ? textureAnisotropy : undefined
     
@@ -2795,12 +2844,16 @@ export function useViewer() {
     if (appliedFallbackMaterial) {
       try {
         const appStore = await import('../store/useAppStore')
+        assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
         appStore.useAppStore.getState().setError('Some materials/textures were missing. Applied default editable materials. You can adjust them in the Material panel.')
-      } catch {}
+      } catch (error) {
+        if (error instanceof ViewerLoadAbortedError) throw error
+      }
     }
 
     // After HDR/envMap — interior dimming must run last so values are not overwritten
     await applyInteriorEnhancementsToModel(model.scene, scene, viewer)
+    assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
     refreshHdrShadowPlaneAfterModelLoad(scene, viewer)
     }
 
@@ -2809,9 +2862,11 @@ export function useViewer() {
     // This ensures objects receive CSM shadows and don't disappear
     if ((viewer as any).csmShadowSystem && (viewer as any).csmShadowSystem.isEnabled()) {
       try {
+        assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model);
         (viewer as any).csmShadowSystem.setupSceneMaterials()
         console.log('[CSMShadowSystem] Setup CSM materials for newly loaded model (loadFromFile)')
       } catch (error) {
+        if (error instanceof ViewerLoadAbortedError) throw error
         console.warn('[CSMShadowSystem] Failed to setup CSM materials for new model:', error)
       }
     }
@@ -2859,6 +2914,7 @@ export function useViewer() {
       
       if (!isGaussianSplat) {
         setTimeout(() => {
+          if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
           const store = useAppStore.getState()
           if (store.streetsGLIframeOverlay) {
             positionModelOnGround(model.scene, true)
@@ -2870,6 +2926,7 @@ export function useViewer() {
     // Update shadow camera bounds and mesh shadow/smooth-shading fixes — skip for Gaussian splats (don't touch DropInViewer internals)
     if (viewer.updateShadowCameraBounds && !isGaussianSplat) {
       setTimeout(() => {
+        if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
         let shadowFixedCount = 0
         let shadowCastingCount = 0
         let shadowReceivingCount = 0
@@ -3000,12 +3057,21 @@ export function useViewer() {
     
     // Force a render update to ensure textures are properly applied
     setTimeout(() => {
+      if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
       if (viewer && viewer.renderer) {
         viewer.renderer.render(viewer.scene, viewer.camera)
       }
     }, 100)
     
     return model
+    } catch (error) {
+      if (error instanceof ViewerLoadAbortedError) {
+        discardStaleLoadedModel(loadedModel)
+      }
+      throw error
+    } finally {
+      endViewerLoad(loadHandle)
+    }
   }, [])
   
   const loadFromUrl = useCallback(async (
@@ -3045,7 +3111,12 @@ export function useViewer() {
       }
     }
 
+    // LIFE-1: session token for this URL import
+    const loadHandle = beginViewerLoad()
+    let loadedModel: LoadedModel | null = null
+    try {
     const model = await loadModel({ url }, onProgress)
+    loadedModel = model
 
     let fileName = 'Imported Model'
     if (url) {
@@ -3054,21 +3125,34 @@ export function useViewer() {
       fileName = fileName.split('?')[0]
     }
 
+    // Default Pagani / files-upload auto-loads must not wipe restored project models
+    const isLikelyAutoLoad =
+      url.includes('Pagani') || url.includes('/files-upload/')
+    const replaceExisting = options.replaceExisting ?? !isLikelyAutoLoad
+
     if (cityModeStreetsGL) {
+      assertViewerSessionCurrent(loadHandle, model)
       tagImportedModelScene(model.scene, fileName, {
-        isAutoLoaded: url.includes('Pagani') || url.includes('/files-upload/'),
+        isAutoLoaded: isLikelyAutoLoad,
         fileUrl: url
       })
       model.scene.userData.fileUrl = url
 
       try {
-        const response = await fetch(url)
+        const response = await fetch(url, { signal: loadHandle.signal })
+        assertViewerSessionCurrent(loadHandle, model)
         if (response.ok) {
           const blob = await response.blob()
+          assertViewerSessionCurrent(loadHandle, model)
           const regFile = new File([blob], fileName, { type: blob.type || 'application/octet-stream' })
           fileRegistry.registerModelFile(fileName, regFile)
         }
       } catch (error) {
+        if (error instanceof ViewerLoadAbortedError) throw error
+        if ((error as any)?.name === 'AbortError') {
+          discardStaleLoadedModel(model)
+          throw new ViewerLoadAbortedError()
+        }
         console.warn(`[FileRegistry] Could not fetch and register file from URL ${url}:`, error)
       }
 
@@ -3082,20 +3166,45 @@ export function useViewer() {
       streetsGLDebugLog('[ModelLoad] City mode URL import registered:', { fileName, objectId, url })
 
       setTimeout(() => {
+        if (loadHandle.signal.aborted) return
         model.scene.updateMatrixWorld(true)
         positionModelOnGround(model.scene, true)
-        setTimeout(() => mirrorImportedModelPlacementToRegistry(objectId, model.scene), 2500)
+        setTimeout(() => {
+          if (loadHandle.signal.aborted) return
+          mirrorImportedModelPlacementToRegistry(objectId, model.scene)
+        }, 2500)
       }, 100)
 
       return model
     }
 
     const viewer = currentViewer!
+    assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
+
+    // Auto-load must not race past a project restore that started during decode
+    if (isLikelyAutoLoad) {
+      const { isProjectCurrentlyLoading } = await import('../utils/projectPersistence')
+      assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
+      if (isProjectCurrentlyLoading()) {
+        discardStaleLoadedModel(model)
+        throw new ViewerLoadAbortedError('auto-load skipped: project is loading')
+      }
+      const hasProjectModels = viewer.scene.children.some(
+        (obj) =>
+          (obj.userData?.isModel || obj.userData?.isImportedModel) &&
+          !obj.userData?.isAutoLoaded
+      )
+      if (hasProjectModels) {
+        discardStaleLoadedModel(model)
+        throw new ViewerLoadAbortedError('auto-load skipped: project models present')
+      }
+    }
     
     const { scene, renderer } = viewer
     // Remove previous USER-IMPORTED models to prevent duplicates
     // BUT keep auto-loaded models (like the car) - they have isAutoLoaded flag
-    removePreviousModel(scene, options.replaceExisting ?? true)
+    // LIFE-1: auto-loads default to replaceExisting=false so they cannot wipe project models
+    removePreviousModel(scene, replaceExisting)
     
     // If the loaded model contains Revit room data (from DXF), push it into app state
     const storeForRooms = useAppStore.getState()
@@ -3147,7 +3256,7 @@ export function useViewer() {
     // Industry-standard: Use exclusion layers to prevent sky/environmental effects from modifying imported models
     model.scene.userData.isModel = true
     // Mark as auto-loaded if it's from the Pagani path (car model)
-    model.scene.userData.isAutoLoaded = url.includes('Pagani') || url.includes('/files-upload/')
+    model.scene.userData.isAutoLoaded = isLikelyAutoLoad
     model.scene.userData.excludeFromSkyModifications = true // Industry-standard exclusion flag
     model.scene.userData.excludeFromWeatherModifications = true // Prevent weather system from modifying imported models
     model.scene.animations = model.animations
@@ -3163,14 +3272,21 @@ export function useViewer() {
     // IMPROVED: Try to fetch and register the file for project save/load
     // This allows us to embed file data when saving projects
     try {
-      const response = await fetch(url)
+      const response = await fetch(url, { signal: loadHandle.signal })
+      assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
       if (response.ok) {
         const blob = await response.blob()
+        assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
         const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' })
         fileRegistry.registerModelFile(fileName, file)
         console.log(`[FileRegistry] Registered model file from URL: ${fileName} (${(file.size / 1024 / 1024).toFixed(2)} MB)`)
       }
     } catch (error) {
+      if (error instanceof ViewerLoadAbortedError) throw error
+      if ((error as any)?.name === 'AbortError') {
+        discardStaleLoadedModel(model)
+        throw new ViewerLoadAbortedError()
+      }
       // If fetch fails (CORS, network error, etc.), just log a warning
       // The fileUrl will still be saved for reference
       console.warn(`[FileRegistry] Could not fetch and register file from URL ${url}:`, error)
@@ -3247,10 +3363,22 @@ export function useViewer() {
         console.log(`[FogDebug] Disabled fog on ${fogDisabledCount} imported model materials - fog only affects lighting, not visual textures`)
       } catch {}
     }
+
+    // LIFE-1: final gate before attaching to the live scene
+    assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
+    if (isLikelyAutoLoad) {
+      const { isProjectCurrentlyLoading } = await import('../utils/projectPersistence')
+      assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
+      if (isProjectCurrentlyLoading()) {
+        discardStaleLoadedModel(model)
+        throw new ViewerLoadAbortedError('auto-load skipped: project is loading')
+      }
+    }
     
     scene.add(model.scene)
     attachModelAnimations(viewer, model)
     requestAnimationFrame(() => {
+      if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
       try {
         buildScenePickBVH(scene)
       } catch (error) {
@@ -3273,6 +3401,7 @@ export function useViewer() {
     // Update bounding boxes, texture filtering, CSM setup — skip for Gaussian splats
     if (!isGaussianSplatUrl) {
       setTimeout(() => {
+        if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
         if ((viewer as any).updateBoundingBoxes) {
           (viewer as any).updateBoundingBoxes()
         }
@@ -3280,6 +3409,7 @@ export function useViewer() {
       
       const maxAnisotropy = renderer.capabilities.getMaxAnisotropy()
       const appStore = await import('../store/useAppStore')
+      assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
       const textureAnisotropy = appStore.useAppStore.getState().textureAnisotropy
       const customAnisotropy = textureAnisotropy >= 0 ? textureAnisotropy : undefined
       fixTextureFiltering(model.scene, maxAnisotropy, renderer, customAnisotropy)
@@ -3497,6 +3627,7 @@ export function useViewer() {
 
     // After material/HDR setup — Pagani auto-load uses loadFromUrl; interior pass was missing here
     await applyInteriorEnhancementsToModel(model.scene, scene, viewer)
+    assertViewerLoadCurrent(loadHandle, viewer, sharedViewer, model)
     refreshHdrShadowPlaneAfterModelLoad(scene, viewer)
     }
     
@@ -3866,6 +3997,7 @@ export function useViewer() {
     
     if (viewer.updateShadowCameraBounds && !isGaussianSplatUrl) {
       setTimeout(() => {
+        if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
         let shadowFixedCount = 0
         let shadowCastingCount = 0
         let shadowReceivingCount = 0
@@ -3938,12 +4070,21 @@ export function useViewer() {
     
     // Force a render update to ensure textures are properly applied
     setTimeout(() => {
+      if (!isViewerLoadCurrent(loadHandle, viewer, sharedViewer)) return
       if (viewer && viewer.renderer) {
         viewer.renderer.render(viewer.scene, viewer.camera)
       }
     }, 100)
     
     return model
+    } catch (error) {
+      if (error instanceof ViewerLoadAbortedError) {
+        discardStaleLoadedModel(loadedModel)
+      }
+      throw error
+    } finally {
+      endViewerLoad(loadHandle)
+    }
   }, [])
 
   const reset = useCallback(() => {
