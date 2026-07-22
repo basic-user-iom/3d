@@ -30,6 +30,7 @@ import { captureViewerScreenshot } from './utils/screenshotCapture'
 import {
   captureFrameMotionState,
   createFrameMotionState,
+  hasActiveAnimationMixers,
   hasFrameMotion,
   hasOrbitControlsDamping,
   needsContinuousSceneUpdates,
@@ -83,7 +84,10 @@ import {
   computeLightDirection,
   disableShadowsDeep
 } from './utils/lightGizmos'
-import { updateShadowCameraBounds, updateAllShadowCameraBounds } from './utils/shadowManager'
+import {
+  updateAllShadowCameraBounds,
+  shouldPeriodicallyUpdateShadowBounds
+} from './utils/shadowManager'
 import {
   detectLightingConflicts,
   resolveDirectionalCastShadow,
@@ -1574,251 +1578,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     let currentSelectedLightGizmo: THREE.Object3D | null = null
     let environmentMap: THREE.DataTexture | null = null
     
-    // Helper function to update shadow camera bounds based on scene objects
-    // This ensures shadows are sharp by focusing the shadow map on actual scene objects
-    // IMPROVED: Better bounds calculation for close objects and visible area
-    const updateShadowCameraBounds = (light: THREE.DirectionalLight, scene: THREE.Scene, camera?: THREE.Camera) => {
-      if (!light.shadow) return
-      
-      // Calculate bounding box of all objects that cast shadows AND receive shadows
-      // This ensures shadows are properly rendered on both casting and receiving objects
-      const box = new THREE.Box3()
-      let hasObjects = false
-      
-      // Also calculate bounds of visible objects (near camera) for better precision
-      const visibleBox = new THREE.Box3()
-      let hasVisibleObjects = false
-      const cameraPosition = camera?.position || new THREE.Vector3(0, 0, 0)
-      const maxVisibleDistance = 500 // Focus on objects within 500 units of camera
-      
-      scene.traverse((obj) => {
-        // Skip helpers, gizmos, and system objects
-        if (obj.userData.isShadowPlane || 
-            obj.userData.isGridHelper ||
-            obj.userData.isAxesHelper ||
-            obj.userData.isLightGizmo ||
-            obj.userData.isLightHelper ||
-            obj.userData.isGroundedSkybox ||
-            obj.userData.isDynamicSky ||
-            obj.userData.isSun ||
-            obj.userData.isMoon) {
-          return
-        }
-        
-        // CRITICAL: Only include objects that CAST shadows for shadow camera bounds calculation
-        // Objects that only receive shadows (like shadow plane, GroundedSkybox) should NOT affect bounds
-        // This ensures shadow camera focuses on objects that actually block light
-        // Shadow receiving objects are handled separately - they don't need to be in the shadow camera bounds
-        
-        let objBox: THREE.Box3 | null = null
-        
-        // Check if this is a mesh that casts shadows
-        if (obj instanceof THREE.Mesh && obj.castShadow) {
-          objBox = new THREE.Box3().setFromObject(obj)
-        } else if (obj instanceof THREE.Group || obj instanceof THREE.Object3D) {
-          // For groups (like pivot wrappers or model groups), check if any child meshes cast shadows
-          // This ensures models wrapped in groups are included in shadow calculations
-          let groupHasShadowCastingMeshes = false
-          const groupBox = new THREE.Box3()
-          
-          obj.traverse((child) => {
-            if (child instanceof THREE.Mesh && child.castShadow) {
-              const childBox = new THREE.Box3().setFromObject(child)
-              if (!childBox.isEmpty()) {
-                if (!groupHasShadowCastingMeshes) {
-                  groupBox.copy(childBox)
-                  groupHasShadowCastingMeshes = true
-                } else {
-                  groupBox.union(childBox)
-                }
-              }
-            }
-          })
-          
-          if (groupHasShadowCastingMeshes && !groupBox.isEmpty()) {
-            objBox = groupBox
-          }
-        }
-        
-        if (objBox && !objBox.isEmpty()) {
-          // Add to full bounding box
-          if (!hasObjects) {
-            box.copy(objBox)
-            hasObjects = true
-          } else {
-            box.union(objBox)
-          }
-          
-          // Also track visible objects (near camera) for tighter bounds
-          const objCenter = objBox.getCenter(new THREE.Vector3())
-          const distanceToCamera = cameraPosition.distanceTo(objCenter)
-          if (distanceToCamera < maxVisibleDistance) {
-            if (!hasVisibleObjects) {
-              visibleBox.copy(objBox)
-              hasVisibleObjects = true
-            } else {
-              visibleBox.union(objBox)
-            }
-          }
-        }
-      })
-      
-      // Prefer visible objects for tighter bounds (better shadow quality on close objects)
-      // Fall back to all objects if no visible objects found
-      const targetBox = hasVisibleObjects ? visibleBox : box
-      const useVisibleBounds = hasVisibleObjects && hasObjects
-      
-      if (hasObjects && !targetBox.isEmpty()) {
-        const size = targetBox.getSize(new THREE.Vector3())
-        const center = targetBox.getCenter(new THREE.Vector3())
-        const maxDim = Math.max(size.x, size.y, size.z)
-        const minDim = Math.min(size.x, size.y, size.z)
-        
-        // IMPROVED: Calculate shadow camera bounds with better precision
-        // For visible objects (close to camera), use tighter bounds (2x size instead of 5x)
-        // This gives better shadow resolution for close objects
-        // For distant objects, use slightly larger bounds (4x) for coverage
-        // IMPROVED: Cap the bounds multiplier for very large objects to prevent excessive shadow camera coverage
-        // Large models (like cars) can have bounding boxes of 100+ units, which would create 500+ unit shadow cameras
-        // Cap at reasonable maximum to maintain shadow quality
-        const baseMultiplier = useVisibleBounds ? 2.5 : 4.0
-        // Reduce multiplier for very large objects to keep shadow camera coverage reasonable
-        const sizeFactor = maxDim > 50 ? Math.max(0.5, 1.0 - (maxDim - 50) / 200) : 1.0 // Scale down for objects > 50 units
-        const boundsMultiplier = baseMultiplier * sizeFactor
-        const shadowSize = Math.max(maxDim * boundsMultiplier, minDim * 1.5, 50) // Minimum 50 units
-        
-        // Add padding based on object size to ensure shadows aren't clipped
-        // Larger objects need more padding, but cap padding to prevent excessive coverage
-        const padding = Math.min(Math.max(maxDim * 0.1, 10), 50) // 10% of size, min 10, max 50 units
-        const finalShadowSize = shadowSize + padding
-        
-        // IMPROVED: Cap final shadow size to prevent excessive coverage, but allow larger scenes
-        // For very large scenes (like Streets GL with map coordinates), we need larger shadow cameras
-        // Use adaptive max size based on scene size: larger scenes get larger shadow cameras
-        // This ensures shadows aren't cut off in large coordinate systems
-        const adaptiveMaxSize = maxDim > 1000 ? Math.min(maxDim * 1.5, 10000) : 2000
-        const maxShadowSize = Math.max(adaptiveMaxSize, 2000) // Minimum 2000, but scale up for large scenes
-        const clampedShadowSize = Math.min(finalShadowSize, maxShadowSize)
-        
-        light.shadow.camera.left = -clampedShadowSize
-        light.shadow.camera.right = clampedShadowSize
-        light.shadow.camera.top = clampedShadowSize
-        light.shadow.camera.bottom = -clampedShadowSize
+    // Shadow camera bounds: use shadowManager.updateAllShadowCameraBounds (PERF-2).
 
-        // CRITICAL: Use a very small near plane to capture interior surfaces and internal parts
-        // 0.001 allows the shadow camera to see very close surfaces (like inside vents, openings, cavities)
-        // This is essential for shadows to appear on internal parts of complex models like cars
-        // For very small objects, use even smaller near plane
-        const nearPlane = minDim < 1.0 ? 0.0005 : 0.001 // Reduced from 0.01 to 0.001 for better internal surface capture
-        light.shadow.camera.near = nearPlane
-        
-        // Ensure far plane is large enough to include the entire scene
-        // Calculate based on the depth of the bounding box plus margin
-        // For close objects, use tighter far plane for better precision
-        const depthSize = size.y > size.z ? size.y : size.z
-        // Add extra margin for shadow projection (shadows can extend far from objects)
-        const shadowProjectionMargin = maxDim * 2 // Shadows can extend 2x the object size
-        const farPlane = useVisibleBounds 
-          ? Math.max(depthSize * 3 + shadowProjectionMargin, maxDim * 6, 2000) // Increased for shadow projection
-          : Math.max(depthSize * 5 + shadowProjectionMargin, maxDim * 10, 5000) // Much larger for full scene coverage
-        
-        light.shadow.camera.far = farPlane
-        
-        // CRITICAL: For directional lights, shadow camera position is independent of light position
-        // The light position is arbitrary for directional lights (they're infinite)
-        // Position the shadow camera at the center of the scene, offset along the light direction
-        // This ensures shadows cover the entire scene, not just near the light position
-        let lightDirection: THREE.Vector3
-        if ((light as any) instanceof THREE.DirectionalLight || (light as any) instanceof THREE.SpotLight) {
-          const computedDir = computeLightDirection(light)
-          lightDirection = computedDir ? computedDir.clone() : new THREE.Vector3(0, -1, 0)
-        } else {
-          // For other light types, use default down direction
-          lightDirection = new THREE.Vector3(0, -1, 0)
-        }
-        // Position shadow camera at center, but offset back along light direction to cover entire scene
-        // Offset distance should cover half the scene depth to ensure full coverage
-        const offsetDistance = Math.max(maxDim * 2, 500) // Offset by 2x max dimension or 500 units
-        const shadowCameraPosition = center.clone().add(lightDirection.clone().multiplyScalar(-offsetDistance))
-        light.shadow.camera.position.copy(shadowCameraPosition)
-        
-        // Look at the center of the bounding box (in direction of light)
-        // This ensures the shadow camera sees the entire scene from the light's perspective
-        light.shadow.camera.lookAt(center)
-        light.shadow.camera.updateProjectionMatrix()
-        
-        // IMPROVED: Use adaptive or manual shadow bias based on user preference
-        const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
-        
-        if (useAdaptiveShadowSettings) {
-          // Calculate adaptive shadow bias based on shadow map resolution and object size
-          // Smaller objects and higher resolution shadow maps need smaller bias
-          const shadowMapSize = light.shadow.mapSize.width
-          const biasScale = shadowMapSize / 8192 // Normalize to 8192 base
-          // Bias should be inversely proportional to shadow map size and object size
-          // Smaller objects need smaller bias to prevent shadow acne
-          // CRITICAL: Don't make bias too negative - this can cause shadows to leak through opaque objects
-          // Use a conservative bias that prevents shadow acne without causing shadow bleeding
-          // IMPROVED: Use slightly less negative bias for better self-shadowing on internal parts
-          // Less negative bias helps shadows appear on close surfaces (like inside vents/openings)
-          const adaptiveBias = -0.0001 * (minDim / maxDim) * biasScale
-          // Clamp bias to reasonable range - ensure it's not too negative to prevent shadow bleeding
-          // Minimum bias of -0.0005 prevents shadows from leaking through opaque objects
-          // Maximum bias of -0.00005 allows better self-shadowing on internal parts
-          light.shadow.bias = THREE.MathUtils.clamp(adaptiveBias, -0.0005, -0.00005)
-          
-          // IMPROVED: Add normal bias for better shadow quality on close objects
-          // Normal bias helps reduce shadow acne on surfaces with sharp angles
-          // Use adaptive normal bias based on object size
-          const normalBiasScale = minDim < 1.0 ? 0.02 : 0.01 // Higher for smaller objects
-          light.shadow.normalBias = normalBiasScale * (minDim / maxDim)
-        } else {
-          // Use manual override values from store
-          light.shadow.bias = useAppStore.getState().shadowBiasOverride
-          light.shadow.normalBias = useAppStore.getState().shadowNormalBiasOverride
-        }
-        
-        // Force shadow map update
-        light.shadow.needsUpdate = true
-      } else {
-        // Fallback to very large bounds if no objects found (for infinite coverage)
-        // Increase bounds to prevent shadow cuts when no objects are found
-        light.shadow.camera.left = -3000
-        light.shadow.camera.right = 3000
-        light.shadow.camera.top = 3000
-        light.shadow.camera.bottom = -3000
-        light.shadow.camera.near = 0.001 // Use very small near plane to capture internal surfaces (vents, openings, etc.)
-        light.shadow.camera.far = 10000 // Increased far plane for better coverage
-        // Position shadow camera at a reasonable location (offset from origin along light direction)
-        let lightDirection: THREE.Vector3
-        if ((light as any) instanceof THREE.DirectionalLight || (light as any) instanceof THREE.SpotLight) {
-          const computedDir = computeLightDirection(light)
-          lightDirection = computedDir ? computedDir.clone() : new THREE.Vector3(0, -1, 0)
-        } else {
-          // For other light types, use default down direction
-          lightDirection = new THREE.Vector3(0, -1, 0)
-        }
-        const fallbackPosition = lightDirection.clone().multiplyScalar(-1000)
-        light.shadow.camera.position.copy(fallbackPosition)
-        light.shadow.camera.lookAt(0, 0, 0)
-        light.shadow.camera.updateProjectionMatrix()
-        
-        // Use adaptive or manual shadow bias based on user preference
-        const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
-        if (useAdaptiveShadowSettings) {
-          // CRITICAL: Use conservative bias to prevent shadows leaking through opaque objects
-          // IMPROVED: Use slightly less negative bias for better self-shadowing on internal parts
-          // Less negative bias helps shadows appear on close surfaces (like inside vents/openings)
-          light.shadow.bias = -0.00015 // Reduced from -0.0002 for better internal surface shadows
-          light.shadow.normalBias = 0.005 // Reduced from 0.01 for better self-shadowing on close surfaces
-        } else {
-          light.shadow.bias = useAppStore.getState().shadowBiasOverride
-          light.shadow.normalBias = useAppStore.getState().shadowNormalBiasOverride
-        }
-        light.shadow.needsUpdate = true
-      }
-    }
-    
     // Initialize RectAreaLightUniformsLib for physical area lights (only once)
     RectAreaLightUniformsLib.init()
     
@@ -4473,11 +4234,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // - FPS limiting and VSync support for performance control
     // - Proper cleanup on component unmount
     
-    // Track last shadow update time to avoid updating too frequently
-    // BEST PRACTICE: Throttle shadow map updates to prevent excessive GPU work
-    // Shadow maps are expensive to regenerate - updating every frame is unnecessary
+    // PERF-2: throttle shadow-bounds recomputes only while content is moving
     let lastShadowUpdateTime = 0
-    const shadowUpdateInterval = 1000 // Update shadows every 1 second during animation
+    const shadowUpdateInterval = 1000 // During active animation / transform drag only
     
     // VSync and FPS limiting
     let lastFrameTime = 0
@@ -4759,10 +4518,16 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
 
       // Streets GL only - SunMoonSystem removed
       
-      // Periodically update shadow camera bounds during animation
-      // This ensures shadows work when objects are moved via any means
+      // PERF-2: only recompute shadow bounds periodically while content is moving
+      // (active mixers / transform drag). Static scenes skip traversal and forced redraws.
       const now = Date.now()
-      if (now - lastShadowUpdateTime > shadowUpdateInterval) {
+      if (
+        shouldPeriodicallyUpdateShadowBounds({
+          hasActiveAnimations: hasActiveAnimationMixers(viewerRef.current),
+          isTransformDragging: isTransforming
+        }) &&
+        now - lastShadowUpdateTime > shadowUpdateInterval
+      ) {
         lastShadowUpdateTime = now
         updateAllShadowCameraBoundsLocal()
       }
@@ -5851,20 +5616,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     }
   }, [selectedObject])
 
-  // IMPROVED: Effect to periodically update shadow camera bounds to accommodate object movement
-  // This ensures shadows work even when objects are moved far away
-  // Update more frequently (250ms instead of 500ms) for better quality on close objects
+  // PERF-2: recompute shadow bounds on scene revision (model add/remove/transform sync),
+  // not on an unconditional 250ms timer that forces redraws in static scenes.
+  const sceneRevision = useAppStore((state) => state.sceneRevision)
   useEffect(() => {
-    if (!viewerRef.current) return
-    
-    const intervalId = setInterval(() => {
-      if (viewerRef.current?.updateShadowCameraBounds) {
-        viewerRef.current.updateShadowCameraBounds()
-      }
-    }, 250) // IMPROVED: Update every 250ms for better responsiveness
-    
-    return () => clearInterval(intervalId)
-  }, [])
+    if (!viewerRef.current?.updateShadowCameraBounds) return
+    viewerRef.current.updateShadowCameraBounds()
+  }, [sceneRevision])
 
   // Effect to update ambient light
   const ambientIntensity = useAppStore((state) => state.ambientIntensity)

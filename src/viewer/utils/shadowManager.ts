@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { useAppStore } from '../../store/useAppStore'
 import {
-  expandBoundsWithShadowCatcher,
   shadowPlaneYForHdrMode,
   groundProjectionShadowParamsFromStore,
   resolveGroundProjectionActive
@@ -13,10 +12,8 @@ import {
   applyPhysicalDirectionalShadowDefaults,
   applyPhysicalOmnidirectionalShadowDefaults,
   applyPhysicalSpotShadowDefaults,
-  computeOmnidirectionalShadowFar,
   computePointLightShadowFar,
   computeSpotLightShadowFar,
-  applyPointLightShadowIntensity,
   computeTightShadowFrustum,
   PHYSICAL_DIRECTIONAL_SHADOW_RADIUS,
   PHYSICAL_OMNI_SHADOW_FAR_INITIAL
@@ -30,6 +27,49 @@ export interface ShadowManagerConfig {
   renderer: THREE.WebGLRenderer
   parent: THREE.Object3D
 }
+
+/** Scratch objects reused across bounds collection / application (PERF-2). */
+const _meshBox = new THREE.Box3()
+const _collectBox = new THREE.Box3()
+const _workingBox = new THREE.Box3()
+const _size = new THREE.Vector3()
+const _center = new THREE.Vector3()
+const _lightDir = new THREE.Vector3()
+const _shadowCamPos = new THREE.Vector3()
+const _expandPoint = new THREE.Vector3()
+
+const BOUNDS_EPS = 1e-4
+
+interface AppliedShadowBoundsState {
+  hasObjects: boolean
+  minX: number
+  minY: number
+  minZ: number
+  maxX: number
+  maxY: number
+  maxZ: number
+  mapSize: number
+  adaptive: boolean
+  biasOverride: number
+  normalBiasOverride: number
+  groundProjection: boolean
+  gpRadius: number
+  gpHeight: number
+  gpPositionY: number
+  hdrEnabled: boolean
+  shadowsEnabled: boolean
+  lightPosX: number
+  lightPosY: number
+  lightPosZ: number
+  targetX: number
+  targetY: number
+  targetZ: number
+  dirX: number
+  dirY: number
+  dirZ: number
+}
+
+const _appliedShadowBounds = new WeakMap<THREE.Light, AppliedShadowBoundsState>()
 
 function shouldSkipShadowBoundsObject(obj: THREE.Object3D): boolean {
   return !!(
@@ -49,61 +89,55 @@ function meshContributesToShadowBounds(mesh: THREE.Mesh): boolean {
   return !!(mesh.castShadow || mesh.userData.isImportedModel || mesh.userData.isModel)
 }
 
+function expandMeshWorldBounds(mesh: THREE.Mesh, target: THREE.Box3): boolean {
+  const geom = mesh.geometry
+  if (geom) {
+    if (!geom.boundingBox) {
+      geom.computeBoundingBox()
+    }
+    if (geom.boundingBox && !geom.boundingBox.isEmpty()) {
+      target.copy(geom.boundingBox).applyMatrix4(mesh.matrixWorld)
+      return !target.isEmpty()
+    }
+  }
+  target.setFromObject(mesh)
+  return !target.isEmpty()
+}
+
 /**
  * Bounding box of imported / shadow-casting scene content (excludes helpers and HDR sky).
+ * Single scene traversal — no nested retraversal of descendant trees (PERF-2).
  */
-export function collectSceneShadowBounds(scene: THREE.Scene): THREE.Box3 | null {
-  const box = new THREE.Box3()
+export function collectSceneShadowBounds(
+  scene: THREE.Scene,
+  target: THREE.Box3 = new THREE.Box3()
+): THREE.Box3 | null {
   let hasObjects = false
+  target.makeEmpty()
+
+  scene.updateMatrixWorld(true)
 
   scene.traverse((obj) => {
     if (shouldSkipShadowBoundsObject(obj)) return
+    if (!(obj instanceof THREE.Mesh)) return
+    if (!meshContributesToShadowBounds(obj)) return
 
-    let objBox: THREE.Box3 | null = null
+    if (!expandMeshWorldBounds(obj, _meshBox)) return
 
-    if (obj instanceof THREE.Mesh) {
-      if (meshContributesToShadowBounds(obj)) {
-        objBox = new THREE.Box3().setFromObject(obj)
-      }
-    } else if (obj instanceof THREE.Group || obj instanceof THREE.Object3D) {
-      let groupHasMeshes = false
-      const groupBox = new THREE.Box3()
-
-      obj.traverse((child) => {
-        if (child instanceof THREE.Mesh && meshContributesToShadowBounds(child)) {
-          const childBox = new THREE.Box3().setFromObject(child)
-          if (!childBox.isEmpty()) {
-            if (!groupHasMeshes) {
-              groupBox.copy(childBox)
-              groupHasMeshes = true
-            } else {
-              groupBox.union(childBox)
-            }
-          }
-        }
-      })
-
-      if (groupHasMeshes && !groupBox.isEmpty()) {
-        objBox = groupBox
-      }
-    }
-
-    if (objBox && !objBox.isEmpty()) {
-      if (!hasObjects) {
-        box.copy(objBox)
-        hasObjects = true
-      } else {
-        box.union(objBox)
-      }
+    if (!hasObjects) {
+      target.copy(_meshBox)
+      hasObjects = true
+    } else {
+      target.union(_meshBox)
     }
   })
 
-  return hasObjects ? box : null
+  return hasObjects ? target : null
 }
 
 /** Center of shadow-relevant scene content, or null when the scene has no model. */
 export function getSceneShadowBoundsCenter(scene: THREE.Scene): THREE.Vector3 | null {
-  const box = collectSceneShadowBounds(scene)
+  const box = collectSceneShadowBounds(scene, _collectBox)
   return box ? box.getCenter(new THREE.Vector3()) : null
 }
 
@@ -251,122 +285,182 @@ export class ShadowManager {
   }
 }
 
+function nearlyEqual(a: number, b: number, eps = BOUNDS_EPS): boolean {
+  return Math.abs(a - b) <= eps
+}
+
+function buildInputSignature(
+  light: THREE.Light,
+  hasObjects: boolean,
+  box: THREE.Box3 | null,
+  store: ReturnType<typeof useAppStore.getState>,
+  groundProjectionActive: boolean,
+  gpRadius: number,
+  gpHeight: number,
+  gpPositionY: number
+): AppliedShadowBoundsState {
+  const dir = computeLightDirection(light as THREE.DirectionalLight | THREE.SpotLight)
+  if (dir) {
+    _lightDir.copy(dir)
+  } else {
+    _lightDir.set(0, -1, 0)
+  }
+
+  let targetX = 0
+  let targetY = 0
+  let targetZ = 0
+  if (light instanceof THREE.SpotLight || light instanceof THREE.DirectionalLight) {
+    targetX = light.target.position.x
+    targetY = light.target.position.y
+    targetZ = light.target.position.z
+  }
+
+  return {
+    hasObjects,
+    minX: box ? box.min.x : 0,
+    minY: box ? box.min.y : 0,
+    minZ: box ? box.min.z : 0,
+    maxX: box ? box.max.x : 0,
+    maxY: box ? box.max.y : 0,
+    maxZ: box ? box.max.z : 0,
+    mapSize: store.shadowMapSize,
+    adaptive: store.useAdaptiveShadowSettings,
+    biasOverride: store.shadowBiasOverride,
+    normalBiasOverride: store.shadowNormalBiasOverride,
+    groundProjection: groundProjectionActive,
+    gpRadius,
+    gpHeight,
+    gpPositionY,
+    hdrEnabled: store.hdrEnabled,
+    shadowsEnabled: store.shadowsEnabled,
+    lightPosX: light.position.x,
+    lightPosY: light.position.y,
+    lightPosZ: light.position.z,
+    targetX,
+    targetY,
+    targetZ,
+    dirX: _lightDir.x,
+    dirY: _lightDir.y,
+    dirZ: _lightDir.z
+  }
+}
+
+function appliedStateMatches(
+  prev: AppliedShadowBoundsState | undefined,
+  next: AppliedShadowBoundsState
+): boolean {
+  if (!prev) return false
+  if (prev.hasObjects !== next.hasObjects) return false
+  if (prev.mapSize !== next.mapSize) return false
+  if (prev.adaptive !== next.adaptive) return false
+  if (prev.groundProjection !== next.groundProjection) return false
+  if (prev.hdrEnabled !== next.hdrEnabled) return false
+  if (prev.shadowsEnabled !== next.shadowsEnabled) return false
+  if (!nearlyEqual(prev.gpRadius, next.gpRadius)) return false
+  if (!nearlyEqual(prev.gpHeight, next.gpHeight)) return false
+  if (!nearlyEqual(prev.gpPositionY, next.gpPositionY)) return false
+  if (!nearlyEqual(prev.biasOverride, next.biasOverride)) return false
+  if (!nearlyEqual(prev.normalBiasOverride, next.normalBiasOverride)) return false
+  if (!nearlyEqual(prev.minX, next.minX)) return false
+  if (!nearlyEqual(prev.minY, next.minY)) return false
+  if (!nearlyEqual(prev.minZ, next.minZ)) return false
+  if (!nearlyEqual(prev.maxX, next.maxX)) return false
+  if (!nearlyEqual(prev.maxY, next.maxY)) return false
+  if (!nearlyEqual(prev.maxZ, next.maxZ)) return false
+  if (!nearlyEqual(prev.lightPosX, next.lightPosX)) return false
+  if (!nearlyEqual(prev.lightPosY, next.lightPosY)) return false
+  if (!nearlyEqual(prev.lightPosZ, next.lightPosZ)) return false
+  if (!nearlyEqual(prev.targetX, next.targetX)) return false
+  if (!nearlyEqual(prev.targetY, next.targetY)) return false
+  if (!nearlyEqual(prev.targetZ, next.targetZ)) return false
+  if (!nearlyEqual(prev.dirX, next.dirX)) return false
+  if (!nearlyEqual(prev.dirY, next.dirY)) return false
+  if (!nearlyEqual(prev.dirZ, next.dirZ)) return false
+  return true
+}
+
 /**
- * Updates shadow camera bounds for a directional light based on scene objects
- * This ensures shadows are sharp by focusing the shadow map on actual scene objects
+ * Apply precomputed scene bounds to one light's shadow camera.
+ * Sets `shadow.needsUpdate` only when bounds or shadow configuration changed.
+ * @returns true when shadow configuration was applied / needsUpdate was set
  */
-export function updateShadowCameraBounds(
+export function applyShadowCameraBounds(
   light: THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight,
+  sceneBounds: THREE.Box3 | null,
   scene: THREE.Scene,
-  camera?: THREE.Camera
-): void {
-  if (!light.shadow) return
+  _camera?: THREE.Camera,
+  options?: { groundProjectionActive?: boolean }
+): boolean {
+  if (!light.shadow) return false
 
-  // Calculate bounding box of all objects that cast shadows AND receive shadows
-  const box = new THREE.Box3()
-  let hasObjects = false
+  const store = useAppStore.getState()
+  const useAdaptiveShadowSettings = store.useAdaptiveShadowSettings
 
-  // Also calculate bounds of visible objects (near camera) for better precision
-  const visibleBox = new THREE.Box3()
-  let hasVisibleObjects = false
-  const cameraPosition = camera?.position || new THREE.Vector3(0, 0, 0)
-  const maxVisibleDistance = 500 // Focus on objects within 500 units of camera
-
-  scene.traverse((obj) => {
-    // Skip helpers, gizmos, and system objects
-    if (shouldSkipShadowBoundsObject(obj)) {
-      return
+  // Skip scene GP traversal when HDR/shadows are off — catcher expand cannot apply.
+  let groundProjectionActive = options?.groundProjectionActive
+  if (groundProjectionActive === undefined) {
+    if (store.hdrEnabled && store.shadowsEnabled) {
+      groundProjectionActive = resolveGroundProjectionActive(
+        store.hdrGroundProjectionEnabled,
+        scene
+      )
+    } else {
+      groundProjectionActive = false
     }
+  }
 
-    // CRITICAL: Include ALL imported model objects (including interior) for shadow camera bounds
-    // This ensures shadow camera covers entire model, not just objects that currently cast shadows
-    // Interior objects might not cast shadows yet, but they should be included in bounds calculation
-    // to ensure shadow camera can see them when they do cast shadows
-    let objBox: THREE.Box3 | null = null
+  const gp = groundProjectionActive
+    ? groundProjectionShadowParamsFromStore(store)
+    : null
 
-    // Check if this is a mesh that casts shadows OR is an imported model (for bounds calculation)
-    if (obj instanceof THREE.Mesh) {
-      // CRITICAL: Include ALL imported model meshes in bounds calculation (not just shadow-casting ones)
-      // This ensures shadow camera covers entire model including interior parts
-      // Interior objects need to be in shadow camera frustum even if they don't cast shadows yet
-      if (obj.castShadow || obj.userData.isImportedModel || obj.userData.isModel) {
-        objBox = new THREE.Box3().setFromObject(obj)
-      }
-    } else if (obj instanceof THREE.Group || obj instanceof THREE.Object3D) {
-      // For groups (like pivot wrappers or model groups), check if any child meshes exist
-      // CRITICAL: Include groups that contain imported models (for interior shadow coverage)
-      let groupHasMeshes = false
-      const groupBox = new THREE.Box3()
+  const baseBox = sceneBounds && !sceneBounds.isEmpty() ? sceneBounds : null
+  const hasObjects = !!baseBox
 
-      obj.traverse((child) => {
-        if (child instanceof THREE.Mesh && meshContributesToShadowBounds(child)) {
-          const childBox = new THREE.Box3().setFromObject(child)
-          if (!childBox.isEmpty()) {
-            if (!groupHasMeshes) {
-              groupBox.copy(childBox)
-              groupHasMeshes = true
-            } else {
-              groupBox.union(childBox)
-            }
-          }
-        }
-      })
-
-      if (groupHasMeshes && !groupBox.isEmpty()) {
-        objBox = groupBox
-      }
-    }
-
-    if (objBox && !objBox.isEmpty()) {
-      // Add to full bounding box
-      if (!hasObjects) {
-        box.copy(objBox)
-        hasObjects = true
-      } else {
-        box.union(objBox)
-      }
-
-      // Also track visible objects (near camera) for tighter bounds
-      const objCenter = objBox.getCenter(new THREE.Vector3())
-      const distanceToCamera = cameraPosition.distanceTo(objCenter)
-      if (distanceToCamera < maxVisibleDistance) {
-        if (!hasVisibleObjects) {
-          visibleBox.copy(objBox)
-          hasVisibleObjects = true
-        } else {
-          visibleBox.union(objBox)
-        }
-      }
-    }
-  })
-
-  // CRITICAL: For interior shadows, we need to use ALL objects, not just visible ones
-  // Visible bounds might be too tight and miss interior parts
-  // Use full bounding box to ensure all parts of the model are covered
-  const targetBox = hasObjects ? box : visibleBox
-  const useVisibleBounds = false // Always use full bounds for interior shadows
-
-  if (hasObjects && !targetBox.isEmpty()) {
-    const store = useAppStore.getState()
-    const groundProjectionActive = resolveGroundProjectionActive(
-      store.hdrGroundProjectionEnabled,
-      scene
-    )
-    if (store.hdrEnabled && store.shadowsEnabled && groundProjectionActive) {
-      const gp = groundProjectionShadowParamsFromStore(store)
+  let workingBox: THREE.Box3 | null = null
+  if (baseBox) {
+    workingBox = _workingBox.copy(baseBox)
+    if (store.hdrEnabled && store.shadowsEnabled && groundProjectionActive && gp) {
       const catcherY = shadowPlaneYForHdrMode(true, gp)
       const halfExtent = Math.max(gp.radius, 25)
-      targetBox.copy(expandBoundsWithShadowCatcher(targetBox, catcherY, halfExtent))
+      // Expand in-place (avoid expandBoundsWithShadowCatcher clone allocation).
+      workingBox.expandByPoint(_expandPoint.set(-halfExtent, catcherY, -halfExtent))
+      workingBox.expandByPoint(_expandPoint.set(halfExtent, catcherY, halfExtent))
     }
+  }
 
-    const size = targetBox.getSize(new THREE.Vector3())
-    const center = targetBox.getCenter(new THREE.Vector3())
+  const signature = buildInputSignature(
+    light,
+    hasObjects,
+    workingBox,
+    store,
+    !!groundProjectionActive,
+    gp?.radius ?? 0,
+    gp?.height ?? 0,
+    gp?.positionY ?? 0
+  )
+
+  if (appliedStateMatches(_appliedShadowBounds.get(light), signature)) {
+    return false
+  }
+
+  const mapSize = store.shadowMapSize
+  if (
+    light.shadow.mapSize.width !== mapSize ||
+    light.shadow.mapSize.height !== mapSize
+  ) {
+    light.shadow.mapSize.width = mapSize
+    light.shadow.mapSize.height = mapSize
+  }
+
+  if (hasObjects && workingBox && !workingBox.isEmpty()) {
+    const size = workingBox.getSize(_size)
+    const center = workingBox.getCenter(_center)
     const maxDim = Math.max(size.x, size.y, size.z)
     const minDim = Math.min(size.x, size.y, size.z)
     const depthSize = size.y > size.z ? size.y : size.z
+    const useVisibleBounds = false
     const frustum = computeTightShadowFrustum(maxDim, minDim, depthSize, useVisibleBounds)
 
-    // Configure shadow camera for directional lights
     if (light instanceof THREE.DirectionalLight) {
       light.shadow.camera.left = -frustum.orthoHalfExtent
       light.shadow.camera.right = frustum.orthoHalfExtent
@@ -378,22 +472,24 @@ export function updateShadowCameraBounds(
         currentNear <= frustum.near ? currentNear : frustum.near
 
       light.shadow.camera.far = frustum.far
-      if (groundProjectionActive) {
-        const gp = groundProjectionShadowParamsFromStore(store)
+      if (groundProjectionActive && gp) {
         light.shadow.camera.far = Math.max(
           light.shadow.camera.far,
           Math.max(gp.radius * 3, 5000)
         )
       }
 
-      let lightDirection: THREE.Vector3
       const computedDir = computeLightDirection(light)
-      lightDirection = computedDir ? computedDir.clone() : new THREE.Vector3(0, -1, 0)
+      if (computedDir) {
+        _lightDir.copy(computedDir)
+      } else {
+        _lightDir.set(0, -1, 0)
+      }
 
-      const shadowCameraPosition = center
-        .clone()
-        .add(lightDirection.clone().multiplyScalar(-frustum.offsetDistance))
-      light.shadow.camera.position.copy(shadowCameraPosition)
+      _shadowCamPos
+        .copy(center)
+        .addScaledVector(_lightDir, -frustum.offsetDistance)
+      light.shadow.camera.position.copy(_shadowCamPos)
       light.shadow.camera.lookAt(center)
       light.shadow.camera.updateProjectionMatrix()
     } else if (light instanceof THREE.SpotLight) {
@@ -407,7 +503,7 @@ export function updateShadowCameraBounds(
       const farPlane = computeSpotLightShadowFar(
         light.position,
         light.target.position,
-        targetBox
+        workingBox
       )
       if (light.shadow.camera instanceof THREE.PerspectiveCamera) {
         light.shadow.camera.near = Math.max(
@@ -418,16 +514,13 @@ export function updateShadowCameraBounds(
         light.shadow.camera.updateProjectionMatrix()
       }
     } else if (light instanceof THREE.PointLight) {
-      const farPlane = computePointLightShadowFar(light.position, targetBox)
+      const farPlane = computePointLightShadowFar(light.position, workingBox)
 
       if (light.shadow.camera instanceof THREE.PerspectiveCamera) {
         light.shadow.camera.far = farPlane
         light.shadow.camera.updateProjectionMatrix()
       }
     }
-
-    // Use adaptive or manual shadow bias based on user preference
-    const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
 
     if (useAdaptiveShadowSettings) {
       if (light instanceof THREE.DirectionalLight) {
@@ -439,13 +532,9 @@ export function updateShadowCameraBounds(
         applyPhysicalSpotShadowDefaults(light)
       }
     } else {
-      // Use manual override values from store
-      light.shadow.bias = useAppStore.getState().shadowBiasOverride
-      light.shadow.normalBias = useAppStore.getState().shadowNormalBiasOverride
+      light.shadow.bias = store.shadowBiasOverride
+      light.shadow.normalBias = store.shadowNormalBiasOverride
     }
-
-    // Force shadow map update
-    light.shadow.needsUpdate = true
   } else {
     // Fallback to very large bounds if no objects found
     if (light instanceof THREE.DirectionalLight) {
@@ -453,14 +542,17 @@ export function updateShadowCameraBounds(
       light.shadow.camera.right = 3000
       light.shadow.camera.top = 3000
       light.shadow.camera.bottom = -3000
-      light.shadow.camera.near = 0.001 // CRITICAL: Use small near plane for interior shadows (car interiors need this)
+      light.shadow.camera.near = 0.001
       light.shadow.camera.far = 10000
 
-      let lightDirection: THREE.Vector3
       const computedDir = computeLightDirection(light)
-      lightDirection = computedDir ? computedDir.clone() : new THREE.Vector3(0, -1, 0)
-      const fallbackPosition = lightDirection.clone().multiplyScalar(-1000)
-      light.shadow.camera.position.copy(fallbackPosition)
+      if (computedDir) {
+        _lightDir.copy(computedDir)
+      } else {
+        _lightDir.set(0, -1, 0)
+      }
+      _shadowCamPos.copy(_lightDir).multiplyScalar(-1000)
+      light.shadow.camera.position.copy(_shadowCamPos)
       light.shadow.camera.lookAt(0, 0, 0)
       light.shadow.camera.updateProjectionMatrix()
     } else if (light instanceof THREE.SpotLight || light instanceof THREE.PointLight) {
@@ -470,8 +562,6 @@ export function updateShadowCameraBounds(
       }
     }
 
-    // Use adaptive or manual shadow bias
-    const useAdaptiveShadowSettings = useAppStore.getState().useAdaptiveShadowSettings
     if (useAdaptiveShadowSettings) {
       if (light instanceof THREE.DirectionalLight) {
         applyPhysicalDirectionalShadowDefaults(light)
@@ -481,35 +571,62 @@ export function updateShadowCameraBounds(
         applyPhysicalSpotShadowDefaults(light)
       }
     } else {
-      light.shadow.bias = useAppStore.getState().shadowBiasOverride
-      light.shadow.normalBias = useAppStore.getState().shadowNormalBiasOverride
+      light.shadow.bias = store.shadowBiasOverride
+      light.shadow.normalBias = store.shadowNormalBiasOverride
     }
-    light.shadow.needsUpdate = true
   }
+
+  light.shadow.needsUpdate = true
+  _appliedShadowBounds.set(light, signature)
+  return true
 }
 
 /**
- * Updates shadow camera bounds for all lights in a map
+ * Updates shadow camera bounds for a directional / spot / point light based on scene objects.
+ * This ensures shadows are sharp by focusing the shadow map on actual scene objects.
+ */
+export function updateShadowCameraBounds(
+  light: THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight,
+  scene: THREE.Scene,
+  camera?: THREE.Camera
+): void {
+  if (!light.shadow) return
+  const box = collectSceneShadowBounds(scene, _collectBox)
+  const store = useAppStore.getState()
+  const groundProjectionActive =
+    store.hdrEnabled && store.shadowsEnabled
+      ? resolveGroundProjectionActive(store.hdrGroundProjectionEnabled, scene)
+      : false
+  applyShadowCameraBounds(light, box, scene, camera, { groundProjectionActive })
+}
+
+/**
+ * Updates shadow camera bounds for all lights in a map.
+ * Computes aggregate scene bounds once, then applies to each light (PERF-2).
  */
 export function updateAllShadowCameraBounds(
   lights: Map<string, THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight>,
   scene: THREE.Scene,
   camera?: THREE.Camera
 ): void {
-  const shadowMapSize = useAppStore.getState().shadowMapSize
+  const box = collectSceneShadowBounds(scene, _collectBox)
+  const store = useAppStore.getState()
+  const groundProjectionActive =
+    store.hdrEnabled && store.shadowsEnabled
+      ? resolveGroundProjectionActive(store.hdrGroundProjectionEnabled, scene)
+      : false
+
   lights.forEach((light) => {
     if (light.shadow && light.castShadow) {
-      // Update shadow map size if it changed
-      if (
-        light.shadow.mapSize.width !== shadowMapSize ||
-        light.shadow.mapSize.height !== shadowMapSize
-      ) {
-        light.shadow.mapSize.width = shadowMapSize
-        light.shadow.mapSize.height = shadowMapSize
-        light.shadow.needsUpdate = true
-      }
-      updateShadowCameraBounds(light, scene, camera)
+      applyShadowCameraBounds(light, box, scene, camera, { groundProjectionActive })
     }
   })
 }
 
+/** Whether a static scene should skip periodic shadow-bounds work (PERF-2). */
+export function shouldPeriodicallyUpdateShadowBounds(options: {
+  hasActiveAnimations?: boolean
+  isTransformDragging?: boolean
+}): boolean {
+  return !!(options.hasActiveAnimations || options.isTransformDragging)
+}
