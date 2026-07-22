@@ -14,6 +14,11 @@ import {
 } from './loaders/splatOverlayLifecycle'
 import type { SuspendedSplatOverlay } from './loaders/splatLoader'
 import { disposeObject3DSubtree } from './utils/disposeObject3D'
+import {
+  detachAnimationMixersInSubtree,
+  reattachAnimationMixersInSubtree,
+  type AnimationHost
+} from './utils/modelAnimations'
 
 /** Max undo entries retained; oldest delete backings are disposed when trimmed. */
 export const MAX_UNDO_STACK = 50
@@ -131,7 +136,8 @@ export interface RestoreDeleteBackingResult {
 export function applySoftDeleteBacking(
   backing: DeleteUndoBacking | undefined,
   streetsGLBridge: StreetsGLBridge | null | undefined,
-  splatRoot?: THREE.Object3D | null
+  splatRoot?: THREE.Object3D | null,
+  animationHost?: AnimationHost | null
 ): SoftDeleteBackingResult {
   if (!backing || backing.softDeleted) {
     return {}
@@ -139,6 +145,8 @@ export function applySoftDeleteBacking(
 
   const splatTarget = splatRoot || backing.modelRoot || backing.cachedScene
   if (splatTarget) {
+    // LIFE-4: stop mixer updates while the object is soft-deleted (undo can reattach).
+    detachAnimationMixersInSubtree(animationHost, splatTarget)
     backing.suspendedSplats = suspendSplatOverlaysInSubtree(splatTarget)
   }
 
@@ -173,7 +181,8 @@ export function applySoftDeleteBacking(
  */
 export function restoreDeleteBacking(
   backing: DeleteUndoBacking | undefined,
-  streetsGLBridge: StreetsGLBridge | null | undefined
+  streetsGLBridge: StreetsGLBridge | null | undefined,
+  animationHost?: AnimationHost | null
 ): RestoreDeleteBackingResult {
   if (!backing || !backing.softDeleted) {
     return {}
@@ -195,6 +204,10 @@ export function restoreDeleteBacking(
   backing.suspendedSplats = undefined
 
   const modelForSync = backing.modelRoot || backing.cachedScene
+  if (modelForSync) {
+    // LIFE-4: resume mixers that were detached on soft-delete.
+    reattachAnimationMixersInSubtree(animationHost, modelForSync)
+  }
   if (streetsGLBridge && modelForSync) {
     // Dynamic import avoids tightening the useAppStore ↔ useViewer cycle at module init.
     void import('./useViewer')

@@ -16,7 +16,11 @@ import {
   descriptorFromImportedModel,
   findSceneObjectByProjectId
 } from './objectRegistry'
-import { attachModelAnimations } from './utils/modelAnimations'
+import {
+  attachModelAnimations,
+  disposeAnimationMixersInSubtree,
+  type AnimationHost
+} from './utils/modelAnimations'
 import { buildScenePickBVH } from '../utils/lodBVHManager'
 import { refreshHdrGroundShadowState, resolveGroundProjectionActive } from './utils/hdrGroundShadowCatcher'
 import { wakeViewerRender } from './utils/wakeViewerRender'
@@ -1160,7 +1164,11 @@ export function disposeTexturesFromMaterial(material: THREE.Material): void {
   })
 }
 
-function removePreviousModel(scene: THREE.Scene, replaceExisting: boolean = true) {
+function removePreviousModel(
+  scene: THREE.Scene,
+  replaceExisting: boolean = true,
+  animationHost?: AnimationHost | null
+) {
   if (!replaceExisting) {
     return
   }
@@ -1177,7 +1185,8 @@ function removePreviousModel(scene: THREE.Scene, replaceExisting: boolean = true
     }
   })
   objectsToRemove.forEach((obj) => {
-
+    // LIFE-4: detach mixers before subtree removal so they are not retained/updated.
+    disposeAnimationMixersInSubtree(animationHost, obj)
     scene.remove(obj)
     // Tear down any Gaussian splat iframe overlay before disposing the subtree,
     // otherwise the full-screen overlay stays on top of the viewport forever.
@@ -3204,7 +3213,7 @@ export function useViewer() {
     // Remove previous USER-IMPORTED models to prevent duplicates
     // BUT keep auto-loaded models (like the car) - they have isAutoLoaded flag
     // LIFE-1: auto-loads default to replaceExisting=false so they cannot wipe project models
-    removePreviousModel(scene, replaceExisting)
+    removePreviousModel(scene, replaceExisting, viewer)
     
     // If the loaded model contains Revit room data (from DXF), push it into app state
     const storeForRooms = useAppStore.getState()
@@ -4090,7 +4099,7 @@ export function useViewer() {
   const reset = useCallback(() => {
     if (sharedViewer) {
       const { scene } = sharedViewer
-      removePreviousModel(scene, true)
+      removePreviousModel(scene, true, sharedViewer)
       sharedViewer.resetCamera()
     }
   }, [])

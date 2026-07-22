@@ -18,6 +18,7 @@ import { usePanelStacking } from '../hooks/usePanelStacking'
 import { convertToInstancedMesh, convertAllDuplicatesToInstances, groupObjectsByGeometry } from '../utils/objectInstancing'
 import { streetsGLToLatLon } from '../utils/mapCoordinates'
 import { disposeSplatOverlay } from '../viewer/loaders/disposeSplatOverlay'
+import { disposeAnimationMixersInSubtree } from '../viewer/utils/modelAnimations'
 import { removeCachedImportedModelScene } from '../viewer/importedModelCache'
 import {
   applySoftDeleteBacking,
@@ -961,6 +962,8 @@ export default function ObjectsPanel() {
 
       // Remove all objects
       objectsToRemove.forEach(obj => {
+        // LIFE-4: hard clear disposes mixers (undo stack still holds detached copies).
+        disposeAnimationMixersInSubtree(viewer, obj)
         viewer.scene.remove(obj)
         // Tear down any Gaussian splat iframe overlay so it does not stay on
         // top of the viewport after the splat root is removed.
@@ -1068,7 +1071,8 @@ export default function ObjectsPanel() {
     const soft = applySoftDeleteBacking(
       backing,
       streetsGLBridge,
-      deleteWholeModel ? modelRoot : node.object
+      deleteWholeModel ? modelRoot : node.object,
+      viewer
     )
     if (soft.removeProjectObjectId) {
       removeProjectObject(soft.removeProjectObjectId)

@@ -25,7 +25,7 @@ import { StandaloneWaterSystem } from './effects/StandaloneWaterSystem'
 import { AtmosphericPerspective } from './effects/AtmosphericPerspective'
 import { DynamicSky } from './effects/DynamicSky'
 import { PostProcessingSystem, PostProcessingConfig } from './postprocessing/PostProcessingSystem'
-import { updateAnimationMixers } from './utils/modelAnimations'
+import { disposeAllAnimationMixers, updateAnimationMixers } from './utils/modelAnimations'
 import { captureViewerScreenshot } from './utils/screenshotCapture'
 import {
   captureFrameMotionState,
@@ -5217,6 +5217,15 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         scene.environment = null
       }
       
+      // LIFE-4: stop and uncache all model animation mixers before scene teardown
+      if (viewerRef.current) {
+        try {
+          disposeAllAnimationMixers(viewerRef.current)
+        } catch (e) {
+          console.debug('Warning: Could not dispose animation mixers:', e)
+        }
+      }
+
       // Dispose of scene objects
       if (scene) {
         scene.traverse((object) => {

@@ -1766,7 +1766,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       
       if (lastAction.type === 'delete' && lastAction.parent) {
         lastAction.parent.add(lastAction.object)
-        const restored = restoreDeleteBacking(lastAction.backing, state.streetsGLBridge)
+        const restored = restoreDeleteBacking(
+          lastAction.backing,
+          state.streetsGLBridge,
+          getSharedViewer()
+        )
         nextProjectObjects = applyProjectObjectUndoPatch(state.projectObjects, restored)
         nextSelectedObject = lastAction.object
         // Redo action: delete again
@@ -1979,7 +1983,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         const soft = applySoftDeleteBacking(
           lastAction.backing,
           state.streetsGLBridge,
-          lastAction.object
+          lastAction.object,
+          getSharedViewer()
         )
         nextProjectObjects = applyProjectObjectUndoPatch(state.projectObjects, soft)
         if (state.selectedObject === lastAction.object) {

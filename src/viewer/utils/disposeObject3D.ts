@@ -1,5 +1,9 @@
 import * as THREE from 'three'
 import { disposeSplatOverlay } from '../loaders/disposeSplatOverlay'
+import {
+  disposeAnimationMixersInSubtree,
+  type AnimationHost
+} from './modelAnimations'
 
 const TEXTURE_PROPERTIES = [
   'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap',
@@ -71,8 +75,13 @@ function disposeMeshResources(mesh: THREE.Mesh): void {
 
 /**
  * Dispose GPU resources held by an object subtree (geometries, materials, textures).
+ * LIFE-4: also stops/uncaches any AnimationMixers on the subtree before teardown.
  */
-export function disposeObject3DSubtree(root: THREE.Object3D): void {
+export function disposeObject3DSubtree(
+  root: THREE.Object3D,
+  animationHost?: AnimationHost | null
+): void {
+  disposeAnimationMixersInSubtree(animationHost, root)
   disposeSplatOverlay(root)
   root.traverse((child) => {
     if (child instanceof THREE.Mesh) {
