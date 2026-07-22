@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react'
 import { useAppStore, type TodoStatus } from '../store/useAppStore'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './TodoPanel.css'
 
@@ -48,17 +49,17 @@ export default function TodoPanel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="todo-panel-header" onMouseDown={handleMouseDown}>
-        <div>
-          <h3>Feature TODOs</h3>
-          <p>
-            {stats.completed}/{stats.total} completed • {stats.inProgress} in progress • {stats.pending} pending
-          </p>
-        </div>
-        <button className="todo-close-button" onClick={toggleTodoPanel} title="Close TODO panel">
-          ×
-        </button>
-      </div>
+      <FloatingPanelHeader
+        title="TODOs"
+        icon="✅"
+        onMouseDown={handleMouseDown}
+        onClose={toggleTodoPanel}
+        closeTitle="Close TODO panel"
+      >
+        <p className="floating-panel-header-meta" style={{ margin: '6px 0 0', fontSize: '11px', color: 'rgba(255,255,255,0.55)' }}>
+          {stats.completed}/{stats.total} done · {stats.inProgress} active · {stats.pending} pending
+        </p>
+      </FloatingPanelHeader>
 
       <div className="todo-panel-content">
         {todoItems.map((item) => (

@@ -8,6 +8,7 @@ import { exportPanorama } from '../utils/panoramaExport'
 import CameraControlsPanel from './CameraControlsPanel'
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { captureViewerScreenshot } from '../viewer/utils/screenshotCapture'
 import { exportPathTracerFromCameraView } from '../utils/pathTracerExport'
@@ -1235,35 +1236,15 @@ export default function CameraViewsPanel() {
       className={`camera-views-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      {/* Header - Twinmotion style */}
-      <div className="panel-header" onMouseDown={handleMouseDown}>
-        <div className="header-top">
-          <h2>📹 Camera Views</h2>
-          <div className="header-buttons">
-            <button 
-              onClick={(e) => {
-                e.stopPropagation()
-                setIsMinimized(!isMinimized)
-              }} 
-              className="minimize-button" 
-              title={isMinimized ? "Maximize panel" : "Minimize panel"}
-              data-no-drag
-            >
-              {isMinimized ? '□' : '−'}
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                toggleCameraViewsPanel()
-              }}
-              className="close-button"
-              title="Close panel (V)"
-              data-no-drag
-            >
-              ×
-            </button>
-          </div>
-        </div>
+      <FloatingPanelHeader
+        title="Camera Views"
+        icon="📹"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleCameraViewsPanel}
+        closeTitle="Close panel (V)"
+      >
         <div className="shortcuts-hint">
           <div className="shortcut-group">
             <span className="shortcut-key">V</span>
@@ -1278,7 +1259,7 @@ export default function CameraViewsPanel() {
             <span className="shortcut-label">Go to view</span>
           </div>
         </div>
-      </div>
+      </FloatingPanelHeader>
       
       {!isMinimized && (
       <div className="panel-content">

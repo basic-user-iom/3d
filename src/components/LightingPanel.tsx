@@ -3,6 +3,7 @@ import { useAppStore, type LightType } from '../store/useAppStore'
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import NumberInput from './NumberInput'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { useViewer } from '../viewer/useViewer'
 import * as THREE from 'three'
@@ -392,19 +393,14 @@ export default function LightingPanel() {
       className={`lighting-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="lighting-panel-header" onMouseDown={handleMouseDown}>
-        <h3>💡 Lighting & Environment</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button onClick={toggleLightingPanel} className="close-button">×</button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Lighting & Env"
+        icon="💡"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleLightingPanel}
+      />
       
       {!isMinimized && (
       <div className="lighting-panel-content">

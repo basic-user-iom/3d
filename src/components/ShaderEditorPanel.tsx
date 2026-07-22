@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { useAppStore } from '../store/useAppStore'
 import { createCineShaderStage } from '../viewer/effects/CineShaderStage'
@@ -433,22 +434,13 @@ export default function ShaderEditorPanel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="shader-editor-header" onMouseDown={handleMouseDown}>
-        <div className="shader-editor-header-left">
-          <h3>Shader Effects</h3>
-          <span className="shader-editor-subtitle">Real-time shader controls</span>
-        </div>
-        <div className="shader-editor-header-right">
-          <button
-            className="shader-editor-close-button"
-            onClick={toggleShaderEditorPanel}
-            title="Close shader editor"
-            data-no-drag
-          >
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Shader Effects"
+        icon="✨"
+        onMouseDown={handleMouseDown}
+        onClose={toggleShaderEditorPanel}
+        closeTitle="Close shader editor"
+      />
 
       <div className="shader-editor-content">
         <div className="shader-editor-left">

@@ -10,6 +10,7 @@ import { randomUVModifierRegistry, RandomUVConfig } from '../viewer/materials/Ra
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import { convertSceneBasicMaterials, MaterialConversionStats } from '../utils/materialConverter'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { configureAllTransparentMaterials } from '../utils/transparentMaterialHelper'
 import { MaterialSwatch } from './MaterialSwatch'
@@ -2363,19 +2364,14 @@ export default function MaterialPanel() {
       className={`material-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="material-panel-header" onMouseDown={handleMouseDown}>
-        <h3>🎨 Material Editor</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button onClick={toggleMaterialPanel} className="close-button">×</button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Material Editor"
+        icon="🎨"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleMaterialPanel}
+      />
       
       {!isMinimized && (
       <div className="material-panel-content">

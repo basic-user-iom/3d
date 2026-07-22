@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { enhanceWithReplicate, enhanceWithFallback, type EnhancementMode } from '../utils/aiEnhancement'
 import { getReplicateConfigured } from '../utils/replicateClient'
@@ -234,27 +235,14 @@ export default function AIEnhancementPanel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="ai-enhancement-panel-header" onMouseDown={handleMouseDown}>
-        <h3>🤖 AI Image Enhancement</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? 'Maximize panel' : 'Minimize panel'}
-            data-no-drag
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button
-            className="close-button"
-            onClick={toggleAIEnhancementPanel}
-            title="Close panel"
-            data-no-drag
-          >
-          ×
-        </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="AI Enhance"
+        icon="🤖"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleAIEnhancementPanel}
+      />
 
       {!isMinimized && (
       <div className="ai-enhancement-panel-content">

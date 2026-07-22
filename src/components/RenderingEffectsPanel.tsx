@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 
 type EffectType = 'fog' | 'fire' | 'particles' | 'atmospheric' | 'lensFlare' | 'bloom' | 'motionBlur'
@@ -182,21 +183,14 @@ export default function RenderingEffectsPanel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="rendering-effects-panel-header" onMouseDown={handleMouseDown}>
-        <h3>Rendering Effects</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? 'Maximize panel' : 'Minimize panel'}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={toggleRenderingEffectsPanel} title="Close panel">
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Effects"
+        icon="✨"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleRenderingEffectsPanel}
+      />
 
       {!isMinimized && (
         <div className="rendering-effects-panel-content">

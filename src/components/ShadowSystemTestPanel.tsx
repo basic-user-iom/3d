@@ -3,6 +3,7 @@ import { useViewer } from '../viewer/useViewer'
 import { useAppStore } from '../store/useAppStore'
 import { runShadowSystemTests, formatTestResults, compareWithTestDemo, ShadowTestSuite } from '../utils/shadowSystemTests'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './ShadowSystemTestPanel.css'
 
@@ -109,21 +110,14 @@ export default function ShadowSystemTestPanel() {
         className={`shadow-test-panel${dragging ? ' dragging' : ''}`}
         style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
       >
-        <div className="shadow-test-header" onMouseDown={handleMouseDown}>
-          <h3>🎯 Shadow System Tests</h3>
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <button 
-              onClick={() => setIsMinimized(!isMinimized)} 
-              className="minimize-button" 
-              title={isMinimized ? "Maximize panel" : "Minimize panel"}
-            >
-              {isMinimized ? '□' : '−'}
-            </button>
-            <button className="close-button" onClick={toggleShadowSystemTestPanel}>
-              ×
-            </button>
-          </div>
-        </div>
+        <FloatingPanelHeader
+          title="Shadow Tests"
+          icon="🌑"
+          onMouseDown={handleMouseDown}
+          isMinimized={isMinimized}
+          onMinimize={() => setIsMinimized(!isMinimized)}
+          onClose={toggleShadowSystemTestPanel}
+        />
         {!isMinimized && (
           <div className="shadow-test-content">
             <p>Waiting for viewer to initialize...</p>
@@ -139,21 +133,14 @@ export default function ShadowSystemTestPanel() {
       className={`shadow-test-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="shadow-test-header" onMouseDown={handleMouseDown}>
-        <h3>🎯 Shadow System Tests</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={toggleShadowSystemTestPanel}>
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Shadow Tests"
+        icon="🌑"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleShadowSystemTestPanel}
+      />
 
       {!isMinimized && (
         <div className="shadow-test-content">

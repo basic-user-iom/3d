@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { loadTexture } from '../viewer/loaders/textureLoader'
 import { positionModelOnGround } from '../viewer/useViewer'
@@ -274,21 +275,14 @@ export default function PrimitivesPanel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="primitives-panel-header" onMouseDown={handleMouseDown}>
-        <h3>Primitive Objects</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? 'Maximize panel' : 'Minimize panel'}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-        <button className="close-button" onClick={togglePrimitivesPanel} title="Close panel">
-          ×
-        </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Primitives"
+        icon="🧊"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={togglePrimitivesPanel}
+      />
 
       {!isMinimized && (
       <div className="primitives-panel-content">

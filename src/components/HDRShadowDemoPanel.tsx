@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useViewer } from '../viewer/useViewer'
 import { useAppStore } from '../store/useAppStore'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { createHDRShadowDemo, testHDRShadows } from '../utils/hdrShadowDemo'
 import './HDRShadowDemoPanel.css'
@@ -141,21 +142,14 @@ export default function HDRShadowDemoPanel() {
         className={`hdr-shadow-demo-panel${dragging ? ' dragging' : ''}`}
         style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
       >
-        <div className="hdr-shadow-demo-header" onMouseDown={handleMouseDown}>
-          <h3>🎯 HDR Shadow Demo</h3>
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <button 
-              onClick={() => setIsMinimized(!isMinimized)} 
-              className="minimize-button" 
-              title={isMinimized ? "Maximize panel" : "Minimize panel"}
-            >
-              {isMinimized ? '□' : '−'}
-            </button>
-            <button className="close-button" onClick={toggleHDRShadowDemoPanel}>
-              ×
-            </button>
-          </div>
-        </div>
+        <FloatingPanelHeader
+          title="HDR Shadows"
+          icon="🌑"
+          onMouseDown={handleMouseDown}
+          isMinimized={isMinimized}
+          onMinimize={() => setIsMinimized(!isMinimized)}
+          onClose={toggleHDRShadowDemoPanel}
+        />
         {!isMinimized && (
           <div className="hdr-shadow-demo-content">
             <p>Waiting for viewer to initialize...</p>
@@ -171,21 +165,14 @@ export default function HDRShadowDemoPanel() {
       className={`hdr-shadow-demo-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="hdr-shadow-demo-header" onMouseDown={handleMouseDown}>
-        <h3>🎯 HDR Shadow Demo</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={toggleHDRShadowDemoPanel}>
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="HDR Shadows"
+        icon="🌑"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleHDRShadowDemoPanel}
+      />
 
       {!isMinimized && (
         <div className="hdr-shadow-demo-content">

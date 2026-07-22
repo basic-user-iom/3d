@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import type { StreetsGLBuildingRef } from '../utils/streetsGLBridge'
 import './OSMGroundV2Panel.css'
@@ -370,21 +371,14 @@ export default function OSMGroundV2Panel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="osm-ground-v2-panel-header" onMouseDown={handleMouseDown}>
-        <h3>OSM 3D</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            className="minimize-button" 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={toggleOSMGroundV2Panel} title="Close panel">
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="OSM 3D"
+        icon="🗺️"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleOSMGroundV2Panel}
+      />
 
       {!isMinimized && (
       <div className="osm-ground-v2-panel-content">

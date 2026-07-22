@@ -4,6 +4,7 @@ import { useAppStore } from '../store/useAppStore'
 import { getSharedViewer } from '../viewer/useViewer'
 import { applyPointCloudRenderMode } from '../viewer/pointCloud/pointCloudRendering'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './PointCloudPanel.css'
 
@@ -71,19 +72,14 @@ export default function PointCloudPanel() {
         cursor: dragging ? 'grabbing' : 'default'
       }}
     >
-      <div className="panel-header" onMouseDown={handleMouseDown}>
-        <h3>🟣 Point Cloud</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? 'Maximize panel' : 'Minimize panel'}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={togglePointCloudPanel}>×</button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Point Cloud"
+        icon="🟣"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={togglePointCloudPanel}
+      />
 
       {!isMinimized && (
         <div className="panel-content">

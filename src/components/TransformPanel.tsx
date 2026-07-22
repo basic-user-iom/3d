@@ -7,6 +7,7 @@ import NumberInput from './NumberInput'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { createTransformIconDataUrl } from '../utils/createTransformIcon'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import './TransformPanel.css'
 
 // Cache the transform icon data URL
@@ -35,8 +36,6 @@ export default function TransformPanel() {
     toggleTransformPanel,
     showBoundingBoxes,
     toggleBoundingBoxes,
-    xButtonColor,
-    xButtonSize,
     renderMode,
     streetsGLIframeOverlay,
     sceneRevision
@@ -328,43 +327,15 @@ export default function TransformPanel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="transform-panel-header" onMouseDown={handleMouseDown}>
-        <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <img 
-            src={transformIconDataUrl} 
-            alt="Transform" 
-            style={{ 
-              width: '20px', 
-              height: '20px', 
-              display: 'block',
-              flexShrink: 0
-            }} 
-          />
-          <span>Transform</span>
-        </h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button 
-            onClick={handleClose}
-            className="close-button"
-            title="Close transform panel"
-            style={{
-              color: xButtonColor,
-              fontSize: `${xButtonSize}px`,
-              width: `${xButtonSize + 8}px`,
-              height: `${xButtonSize + 8}px`
-            }}
-          >
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Transform"
+        icon={<img src={transformIconDataUrl} alt="" />}
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={handleClose}
+        closeTitle="Close transform panel"
+      />
 
       {!isMinimized && (
       <>

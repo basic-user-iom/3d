@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { PathTracerDemo, PathTracerDemoConfig, PathTracerDemoCallbacks } from '../viewer/pathTracer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { useAppStore } from '../store/useAppStore'
 import './PathTracerDemoPanel.css'
@@ -1038,10 +1039,12 @@ export default function PathTracerDemoPanel({ viewer, onClose }: PathTracerDemoP
         maxHeight: maxHeight !== undefined ? `${maxHeight}px` : undefined,
       }}
     >
-      <div className="path-tracer-demo-header" onMouseDown={handleMouseDown}>
-        <h3>Path Tracer</h3>
-        {onClose && <button className="close-button" onClick={onClose}>×</button>}
-      </div>
+      <FloatingPanelHeader
+        title="Path Tracer"
+        icon="🔆"
+        onMouseDown={handleMouseDown}
+        onClose={onClose}
+      />
       
       <div className="path-tracer-demo-content">
         {error && (

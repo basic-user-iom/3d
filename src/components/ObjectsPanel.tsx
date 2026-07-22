@@ -14,6 +14,7 @@ import {
   getIframeVisible
 } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { convertToInstancedMesh, convertAllDuplicatesToInstances, groupObjectsByGeometry } from '../utils/objectInstancing'
 import { streetsGLToLatLon } from '../utils/mapCoordinates'
@@ -1900,21 +1901,14 @@ Scale: X: ${scale.x.toFixed(2)}, Y: ${scale.y.toFixed(2)}, Z: ${scale.z.toFixed(
       className={`objects-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="objects-panel-header" onMouseDown={handleMouseDown}>
-        <h3>📦 Scene Hierarchy</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={toggleObjectsPanel}>
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Scene Hierarchy"
+        icon="📦"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleObjectsPanel}
+      />
 
       {!isMinimized && (
       <div className="objects-panel-content">

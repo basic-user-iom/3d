@@ -9,6 +9,7 @@ import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { smoothEdges, storeOriginalGeometry } from '../utils/edgeSmoothing'
 import { trackSliderInteraction } from '../utils/sliderTracker'
@@ -152,21 +153,14 @@ export default function EdgeEnhancementPanel() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="edge-enhancement-panel-header" onMouseDown={handleMouseDown}>
-        <h3>🔷 Edge Enhancement</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={toggleEdgeEnhancementPanel} title="Close panel">
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Edge Enhance"
+        icon="🔷"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleEdgeEnhancementPanel}
+      />
 
       {!isMinimized && (
         <div className="edge-enhancement-panel-content">

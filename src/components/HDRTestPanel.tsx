@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { useViewer } from '../viewer/useViewer'
 import { useAppStore } from '../store/useAppStore'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import * as THREE from 'three'
 import './HDRTestPanel.css'
@@ -634,21 +635,14 @@ export default function HDRTestPanel() {
       className={`hdr-test-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="hdr-test-header" onMouseDown={handleMouseDown}>
-        <h3>🌍 HDR Test Panel</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={() => useAppStore.setState({ showHDRTestPanel: false })}>
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="HDR Test"
+        icon="🌍"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={() => useAppStore.setState({ showHDRTestPanel: false })}
+      />
 
       {!isMinimized && (
         <div className="hdr-test-content">

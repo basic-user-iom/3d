@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { extractTexturesFromModelFile, loadTextureImages, type ExtractedTextureInfo } from '../utils/extractTexturesFromModel'
 import './TextureManagementPanel.css'
@@ -705,26 +706,20 @@ export default function TextureManagementPanel() {
       className={`texture-management-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="texture-management-panel-header" onMouseDown={handleMouseDown}>
-        <h3>🖼️ Texture Management</h3>
+      <FloatingPanelHeader
+        title="Textures"
+        icon="🖼️"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleTextureManagementPanel}
+      >
         {pendingModelFile && (
-          <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
-            Reviewing textures from: <strong>{pendingModelFile.name}</strong>
+          <div className="floating-panel-header-meta" style={{ fontSize: '11px', color: '#888', marginTop: '6px' }}>
+            Reviewing: <strong>{pendingModelFile.name}</strong>
           </div>
         )}
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={toggleTextureManagementPanel}>
-            ×
-          </button>
-        </div>
-      </div>
+      </FloatingPanelHeader>
 
       {!isMinimized && (
         <div className="texture-management-panel-content">

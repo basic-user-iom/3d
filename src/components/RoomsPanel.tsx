@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './RoomsPanel.css'
 
@@ -164,31 +165,16 @@ export default function RoomsPanel() {
         maxHeight
       }}
     >
-      <div className="rooms-panel-header" onMouseDown={handleMouseDown}>
-        <h3>Revit Rooms</h3>
-        <div className="rooms-panel-header-buttons">
-          <button
-            className="minimize-button"
-            onClick={(e) => {
-              e.stopPropagation()
-              setIsMinimized((prev) => !prev)
-            }}
-            aria-label={isMinimized ? 'Expand rooms panel' : 'Minimize rooms panel'}
-          >
-            {isMinimized ? '▢' : '—'}
-          </button>
-          <button
-            className="close-button"
-            onClick={(e) => {
-              e.stopPropagation()
-              toggleRoomsPanel()
-            }}
-            aria-label="Close rooms panel"
-          >
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Revit Rooms"
+        icon="🚪"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized((prev) => !prev)}
+        onClose={toggleRoomsPanel}
+        closeTitle="Close rooms panel"
+        minimizeTitle={isMinimized ? 'Expand rooms panel' : 'Minimize rooms panel'}
+      />
 
       {!isMinimized && (
         <div className="rooms-panel-content">

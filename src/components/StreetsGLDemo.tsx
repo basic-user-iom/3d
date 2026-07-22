@@ -9,6 +9,7 @@ import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { StreetsGLBridge, StreetsGLObject } from '../utils/streetsGLBridge'
 import { latLonToStreetsGL, streetsGLToLatLon, latLonToWebMercator } from '../utils/mapCoordinates'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import './StreetsGLDemo.css'
 
 type PrimitiveType = 'box' | 'sphere' | 'cylinder' | 'cone' | 'plane'
@@ -1030,16 +1031,12 @@ export default function StreetsGLDemo() {
 
   return (
     <div className="streets-gl-demo">
-      <div className="streets-gl-demo-header">
-        <h3>🗺️ Streets GL Demo</h3>
-        <button 
-          onClick={() => setIsVisible(false)}
-          className="close-button"
-          title="Close demo"
-        >
-          ×
-        </button>
-      </div>
+      <FloatingPanelHeader
+        title="Streets GL Demo"
+        icon="🗺️"
+        onClose={() => setIsVisible(false)}
+        closeTitle="Close demo"
+      />
 
       <div className="streets-gl-demo-content">
         <div className="demo-status">

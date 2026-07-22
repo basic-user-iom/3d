@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, type RefObject } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { searchPlaces, type GooglePlace, PLACE_TYPES, type PlaceType } from '../utils/googlePlaces'
 import { parseCoordinatePair, parseDMSCoordinate } from '../utils/coordinateUtils'
@@ -222,21 +223,14 @@ export default function PlacesPanel() {
       className={`places-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="places-panel-header" onMouseDown={handleMouseDown}>
-        <h3>📍 Places</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button className="close-button" onClick={togglePlacesPanel}>
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Places"
+        icon="📍"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={togglePlacesPanel}
+      />
 
       {!isMinimized && (
         <div className="places-panel-content">

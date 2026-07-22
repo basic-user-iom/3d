@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore'
 import { loadLUTFromFile } from '../viewer/postprocessing/LUTLoader'
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './RenderingQualityPanel.css'
 
@@ -134,9 +135,7 @@ export default function RenderingQualityPanel() {
     setColorGradingHue,
     setColorGradingSaturation,
     setColorGradingVibrance,
-    setColorGradingGamma,
-    xButtonColor,
-    xButtonSize
+    setColorGradingGamma
   } = useAppStore()
 
   const handleLUTFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -223,30 +222,14 @@ export default function RenderingQualityPanel() {
       className={`rendering-quality-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="rendering-quality-panel-header" onMouseDown={handleMouseDown}>
-        <h3>⚙️ Rendering Quality</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button 
-            className="close-button" 
-            onClick={toggleRenderingQualityPanel}
-            style={{
-              color: xButtonColor,
-              fontSize: `${xButtonSize}px`,
-              width: `${xButtonSize + 8}px`,
-              height: `${xButtonSize + 8}px`
-            }}
-          >
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Render Quality"
+        icon="⚙️"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleRenderingQualityPanel}
+      />
 
       {!isMinimized && (
       <div className="rendering-quality-panel-content">

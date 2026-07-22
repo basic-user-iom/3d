@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { RevitSyncManager, type RevitModelUpdate } from '../utils/revitSyncManager'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './RevitConnectionPanel.css'
 
@@ -254,16 +255,13 @@ export default function RevitConnectionPanel() {
       className={`revit-connection-panel ${dragging ? 'dragging' : ''}`}
       style={{ top, left, maxHeight }}
     >
-      <div className="revit-connection-panel-header" onMouseDown={handleMouseDown}>
-        <h3>Revit Live Link</h3>
-        <button
-          className="close-button"
-          onClick={toggleRevitConnectionPanel}
-          aria-label="Close Revit connection panel"
-        >
-          ×
-        </button>
-      </div>
+      <FloatingPanelHeader
+        title="Revit Link"
+        icon="🔗"
+        onMouseDown={handleMouseDown}
+        onClose={toggleRevitConnectionPanel}
+        closeTitle="Close Revit connection panel"
+      />
 
       <div className="revit-connection-panel-content">
         {/* Server Availability Check */}

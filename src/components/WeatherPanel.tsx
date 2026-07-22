@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { trackSliderInteraction } from '../utils/sliderTracker'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import {
   detectWeatherPreset,
@@ -155,25 +156,14 @@ export default function WeatherPanel() {
         cursor: dragging ? 'grabbing' : 'default'
       }}
     >
-      <div className="weather-panel-header" onMouseDown={handleMouseDown}>
-        <h3>🌤️ Weather & Sun</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? 'Maximize panel' : 'Minimize panel'}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button
-            onClick={toggleWeatherPanel}
-            className="close-button"
-            title="Close panel"
-          >
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Weather & Sun"
+        icon="🌤️"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleWeatherPanel}
+      />
       
       {!isMinimized && (
         <div className="weather-panel-content">

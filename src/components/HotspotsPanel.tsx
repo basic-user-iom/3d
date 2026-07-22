@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS, resolveHotspotIconForMarker, getHotspotIconKey, createHotspotIconTextureForType, syncHotspotMarkerAppearance, extractYouTubeId, applyYouTubeIframeEmbedFlags, pauseInWorldYouTubeIframes, resumeInWorldYouTubeIframes } from '../utils/hotspotUtils'
 import {
@@ -3610,9 +3611,14 @@ export default function HotspotsPanel() {
         right: 'auto' // Ensure left positioning is used, not right
       }}
     >
-      <div className="hotspots-panel-header" onMouseDown={handleMouseDown}>
-        <h3>Hotspots</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+      <FloatingPanelHeader
+        title="Hotspots"
+        icon="🎯"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleHotspotsPanel}
+        actions={
           <button
             onClick={() => {
               setPlaceHotspotMode(!placeHotspotMode)
@@ -3631,30 +3637,10 @@ export default function HotspotsPanel() {
               transition: 'all 0.2s'
             }}
           >
-            🎯 {placeHotspotMode ? 'Placing...' : 'Place Hotspot'}
+            {placeHotspotMode ? 'Placing...' : 'Place'}
           </button>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? 'Maximize panel' : 'Minimize panel'}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-        <button 
-          className="close-button" 
-          onClick={toggleHotspotsPanel} 
-          title="Close panel"
-          style={{
-            color: xButtonColor,
-            fontSize: `${xButtonSize}px`,
-            width: `${xButtonSize + 8}px`,
-            height: `${xButtonSize + 8}px`
-          }}
-        >
-          ×
-        </button>
-        </div>
-      </div>
+        }
+      />
 
       {!isMinimized && (
       <div className="hotspots-panel-content">

@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { downloadWebExport, previewWebExport, WebExportOptions } from '../utils/webExport'
 import { useAppStore } from '../store/useAppStore'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './WebExportPanel.css'
 
@@ -98,21 +99,14 @@ export default function WebExportPanel() {
       className={`web-export-panel${dragging ? ' dragging' : ''}`}
       style={{ top: `${panelTop}px`, left: `${panelLeft}px`, maxHeight: `${maxHeight}px` }}
     >
-      <div className="web-export-panel-header" onMouseDown={handleMouseDown}>
-        <h3>🌐 Export for Web</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button 
-            onClick={() => setIsMinimized(!isMinimized)} 
-            className="minimize-button" 
-            title={isMinimized ? "Maximize panel" : "Minimize panel"}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-          <button onClick={toggleWebExportPanel} className="close-button">
-            ×
-          </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Web Export"
+        icon="🌐"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={toggleWebExportPanel}
+      />
       
       {!isMinimized && (
         <div className="web-export-panel-content">

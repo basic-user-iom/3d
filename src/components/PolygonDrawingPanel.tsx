@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
 import { useViewer } from '../viewer/useViewer'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './PolygonDrawingPanel.css'
 
@@ -919,21 +920,14 @@ export default function PolygonDrawingPanel() {
         width: `${panelWidth}px`
       }}
     >
-      <div className="polygon-drawing-panel-header" onMouseDown={handleMouseDown}>
-        <h3>Polygon Drawing</h3>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="minimize-button"
-            title={isMinimized ? 'Maximize panel' : 'Minimize panel'}
-          >
-            {isMinimized ? '□' : '−'}
-          </button>
-        <button className="close-button" onClick={togglePolygonDrawingPanel} title="Close panel">
-          ×
-        </button>
-        </div>
-      </div>
+      <FloatingPanelHeader
+        title="Polygon Drawing"
+        icon="✏️"
+        onMouseDown={handleMouseDown}
+        isMinimized={isMinimized}
+        onMinimize={() => setIsMinimized(!isMinimized)}
+        onClose={togglePolygonDrawingPanel}
+      />
 
       {!isMinimized && (
       <div className="polygon-drawing-panel-content">

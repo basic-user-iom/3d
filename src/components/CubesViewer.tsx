@@ -4,6 +4,7 @@ import { useViewer, syncModelToStreetsGL } from '../viewer/useViewer'
 import { useAppStore } from '../store/useAppStore'
 import { softenEdges } from '../utils/edgeSoftening'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
+import FloatingPanelHeader from './FloatingPanelHeader'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import './CubesViewer.css'
 
@@ -287,17 +288,17 @@ export default function CubesViewer() {
         maxHeight: `${maxHeight}px`
       }}
     >
-      <div className="cubes-viewer-header" onMouseDown={handleMouseDown}>
-        <h3>Cubes Viewer</h3>
-        <div className="cubes-header-right">
-          <div className="cubes-info">
+      <FloatingPanelHeader
+        title="Cubes Viewer"
+        icon="⬜"
+        onMouseDown={handleMouseDown}
+        onClose={toggleCubesViewer}
+        actions={
+          <div className="cubes-info" data-no-drag>
             {cubesRef.current.length} cubes
           </div>
-          <button className="close-button" onClick={toggleCubesViewer} title="Close panel" data-no-drag>
-            ×
-          </button>
-        </div>
-      </div>
+        }
+      />
       
       <div className="cubes-viewer-content">
         {renderMode === 'city' && (
