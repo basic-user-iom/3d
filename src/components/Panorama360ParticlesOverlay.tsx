@@ -218,7 +218,7 @@ export default function Panorama360ParticlesOverlay({
         } catch {
           // ignore
         }
-        safeDispose(mesh, 'particleMesh')
+        safeDispose(mesh as { dispose?: () => void }, 'particleMesh')
       }
 
       safeDispose(smokeGeom, 'smokeGeometry')

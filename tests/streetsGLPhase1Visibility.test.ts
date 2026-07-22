@@ -192,7 +192,8 @@ describe('Phase 1: visibility audit + iframe presence', () => {
 
     syncProjectObjectTransformToStreetsGL(mesh)
     expect(updateObject).toHaveBeenCalled()
-    const payload = updateObject.mock.calls[0][1] as Record<string, unknown>
+    const firstCall = updateObject.mock.calls[0] as unknown as [string, Record<string, unknown>]
+    const payload = firstCall[1]
     expect(payload).not.toHaveProperty('visible')
     expect(payload).toHaveProperty('position')
   })

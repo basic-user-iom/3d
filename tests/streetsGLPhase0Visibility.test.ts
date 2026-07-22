@@ -94,7 +94,8 @@ describe('Phase 0: mesh-only iframe visibility + pose-only transform sync', () =
     syncProjectObjectTransformToStreetsGL(mesh)
 
     expect(updateObject).toHaveBeenCalled()
-    const payload = updateObject.mock.calls[0][1] as Record<string, unknown>
+    const firstCall = updateObject.mock.calls[0] as unknown as [string, Record<string, unknown>]
+    const payload = firstCall[1]
     expect(payload).toHaveProperty('position')
     expect(payload).toHaveProperty('rotation')
     expect(payload).toHaveProperty('scale')
@@ -247,7 +248,9 @@ describe('Phase 0: mesh-only iframe visibility + pose-only transform sync', () =
     mesh.position.set(5, 1.5, 0)
     syncProjectObjectTransformToStreetsGL(mesh)
 
-    const payloads = updateObject.mock.calls.map((c) => c[1] as Record<string, unknown>)
+    const payloads = updateObject.mock.calls.map(
+      (c) => (c as unknown as [string, Record<string, unknown>])[1]
+    )
     expect(payloads.length).toBeGreaterThan(0)
     for (const p of payloads) {
       expect(p).not.toHaveProperty('visible')

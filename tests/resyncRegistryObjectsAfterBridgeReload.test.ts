@@ -180,7 +180,8 @@ describe('resyncRegistryObjectsAfterBridgeReload', () => {
     expect(addObject).toHaveBeenCalledTimes(2)
     // Visibility must be forced true for iframe-renderable hidden roots
     for (const call of addObject.mock.calls) {
-      expect(call[0].visible).toBe(true)
+      const arg = (call as unknown as [{ visible?: boolean }])[0]
+      expect(arg?.visible).toBe(true)
     }
 
     ensureSpy.mockRestore()

@@ -168,7 +168,8 @@ export default function Panorama360SpoutOverlay({
       if (!controls) return
       const s = settingsRef.current
       const editing = s.editTransform === true
-      controls.visible = editing
+      // TransformControls typing omits Object3D fields in this three.js version.
+      ;(controls as unknown as THREE.Object3D).visible = editing
       controls.enabled = editing
       const mode = s.gizmoMode === 'translate' || s.gizmoMode === 'scale' ? s.gizmoMode : 'rotate'
       controls.setMode(mode)
@@ -357,7 +358,8 @@ export default function Panorama360SpoutOverlay({
       controls = new TransformControls(camera, renderer.domElement)
       controls.setSize(0.85)
       controls.attach(spoutRoot)
-      controls.visible = false
+      // TransformControls typing omits Object3D fields in this three.js version.
+      ;(controls as unknown as THREE.Object3D).visible = false
       controls.enabled = false
       scene.add(controls.getHelper())
 

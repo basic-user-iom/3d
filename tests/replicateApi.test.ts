@@ -63,7 +63,7 @@ describe('replicateApi request validation', () => {
       body: { version: 'v', input: { image: huge } }
     })
     expect(oversized.ok).toBe(false)
-    if (!oversized.ok) {
+    if (oversized.ok === false) {
       expect(oversized.status).toBe(413)
     }
   })
