@@ -334,7 +334,7 @@ export default defineConfig(({ mode }) => {
             return 'splat-vendor'
           }
 
-          if (id.includes('/web-ifc/') || id.includes('/web-ifc-three/')) {
+          if (id.includes('/web-ifc/')) {
             return 'ifc-vendor'
           }
 

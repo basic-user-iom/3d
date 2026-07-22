@@ -65,7 +65,6 @@
     "three-mesh-bvh": "^0.9.2",
     "three-stdlib": "^2.36.1",
     "web-ifc": "^0.0.74",
-    "web-ifc-three": "^0.0.126",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
