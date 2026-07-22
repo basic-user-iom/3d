@@ -2885,128 +2885,32 @@ const restoreSceneObject = async (
               }
             }
             
-            // CRITICAL: Set up URL modifier for .bin files and textures if needed
-            const allFileMaps = new Map<string, File>()
-            const allBlobUrls = new Map<string, string>()
-            
+            // DATA-3: pass .bin / texture Files into loadModel so a per-load
+            // LoadingManager owns URL mapping + Blob URL lifetime (no global manager).
+            const dependencyFiles = new Map<string, File>()
             if (binFileMap && binFileMap.size > 0) {
               for (const [binFileName, binFile] of binFileMap.entries()) {
-                allFileMaps.set(binFileName, binFile)
-                const blobUrl = URL.createObjectURL(binFile)
-                allBlobUrls.set(binFileName, blobUrl)
-                console.log(`[ProjectPersistence] Created blob URL for .bin file: ${binFileName}`)
+                dependencyFiles.set(binFileName, binFile)
+                console.log(`[ProjectPersistence] Queued .bin dependency for scoped load: ${binFileName}`)
               }
             }
-            
             if (textureFileMap && textureFileMap.size > 0) {
-              // Create blob URLs for all texture paths (both original path and filename)
-              const processedFiles = new Set<File>()
               for (const [texturePath, textureFile] of textureFileMap.entries()) {
-                // Only create blob URL once per file (multiple paths may point to same file)
-                if (!processedFiles.has(textureFile)) {
-                  const blobUrl = URL.createObjectURL(textureFile)
-                  processedFiles.add(textureFile)
-                  // Store blob URL with the path as key
-                  allBlobUrls.set(texturePath, blobUrl)
-                  console.log(`[ProjectPersistence] Created blob URL for texture file: ${texturePath}`)
-                } else {
-                  // File already processed, reuse existing blob URL
-                  const existingBlobUrl = Array.from(allBlobUrls.entries()).find(([path, url]) => {
-                    const existingFile = allFileMaps.get(path)
-                    return existingFile === textureFile
-                  })?.[1]
-                  if (existingBlobUrl) {
-                    allBlobUrls.set(texturePath, existingBlobUrl)
-                  }
-                }
-                allFileMaps.set(texturePath, textureFile)
+                dependencyFiles.set(texturePath, textureFile)
               }
+              console.log(`[ProjectPersistence] Queued ${textureFileMap.size} texture path(s) for scoped load`)
             }
-            
-            if (allFileMaps.size > 0) {
-              // Set up URL modifier to intercept .bin and texture file requests
-              // Use sophisticated path matching similar to GLTFLoader
-              THREE.DefaultLoadingManager.setURLModifier((url) => {
-                // Normalize the URL: remove blob prefixes, normalize slashes
-                let cleanUrl = url.replace(/^blob:[^/]+/, '').replace(/^[/\\]+/, '').replace(/^\.\//, '')
-                cleanUrl = cleanUrl.replace(/\\/g, '/')
-                
-                // Remove leading slash if present
-                if (cleanUrl.startsWith('/')) {
-                  cleanUrl = cleanUrl.substring(1)
-                }
-                
-                const urlLower = cleanUrl.toLowerCase()
-                const fileName = cleanUrl.split('/').pop() || cleanUrl
-                const fileNameLower = fileName.toLowerCase()
-                
-                // Strategy 1: Exact path match (case-insensitive)
-                for (const [storedPath, file] of allFileMaps.entries()) {
-                  const storedPathLower = storedPath.toLowerCase()
-                  if (storedPathLower === urlLower || storedPathLower === cleanUrl.toLowerCase()) {
-                    const blobUrl = allBlobUrls.get(storedPath)
-                    if (blobUrl) {
-                      console.log(`[ProjectPersistence] Redirecting file request (exact match): ${url} -> ${blobUrl}`)
-                      return blobUrl
-                    }
-                  }
-                }
-                
-                // Strategy 2: Filename-only match (handles "images/texture.jpg" vs "texture.jpg")
-                for (const [storedPath, file] of allFileMaps.entries()) {
-                  const storedFileName = storedPath.split('/').pop()?.toLowerCase()
-                  if (storedFileName && storedFileName === fileNameLower) {
-                    const blobUrl = allBlobUrls.get(storedPath)
-                    if (blobUrl) {
-                      console.log(`[ProjectPersistence] Redirecting file request (filename match): ${url} -> ${blobUrl}`)
-                      return blobUrl
-                    }
-                  }
-                }
-                
-                // Strategy 3: Path suffix match (handles "folder/images/texture.jpg" vs "images/texture.jpg")
-                for (const [storedPath, file] of allFileMaps.entries()) {
-                  const storedPathLower = storedPath.toLowerCase()
-                  if (storedPathLower.endsWith('/' + urlLower) || urlLower.endsWith('/' + storedPathLower)) {
-                    const blobUrl = allBlobUrls.get(storedPath)
-                    if (blobUrl) {
-                      console.log(`[ProjectPersistence] Redirecting file request (suffix match): ${url} -> ${blobUrl}`)
-                      return blobUrl
-                    }
-                  }
-                }
-                
-                // Strategy 4: Partial match (any part of path contains the filename)
-                for (const [storedPath, file] of allFileMaps.entries()) {
-                  const storedPathLower = storedPath.toLowerCase()
-                  if (storedPathLower.includes(fileNameLower) || urlLower.includes(storedPath.split('/').pop()?.toLowerCase() || '')) {
-                    const blobUrl = allBlobUrls.get(storedPath)
-                    if (blobUrl) {
-                      console.log(`[ProjectPersistence] Redirecting file request (partial match): ${url} -> ${blobUrl}`)
-                      return blobUrl
-                    }
-                  }
-                }
-                
-                // No match found, return original URL
-                return url
-              })
-            }
-            
+
             // Try to load the model with timeout
-            const loadPromise = loadModel({ file: modelFile })
+            const loadPromise = loadModel({
+              file: modelFile,
+              textureFiles: dependencyFiles.size > 0 ? dependencyFiles : undefined
+            })
             const timeoutPromise = new Promise<never>((_, reject) => {
               setTimeout(() => reject(new Error('Model loading timeout (30s)')), 30000)
             })
             
             const loadedModel = await Promise.race([loadPromise, timeoutPromise])
-            
-            // Clean up URL modifier after loading (but keep blob URLs valid for async texture loading)
-            if (binFileMap && binFileMap.size > 0) {
-              // Don't clear the URL modifier immediately - textures might still be loading
-              // It will be cleared when the next model loads or page unloads
-              console.log(`[ProjectPersistence] URL modifier set up for ${binFileMap.size} .bin file(s)`)
-            }
             
             if (loadedModel && loadedModel.scene) {
               obj = loadedModel.scene

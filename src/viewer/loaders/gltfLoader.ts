@@ -4,27 +4,10 @@ import * as THREE from 'three'
 import { GLTFLoader, DRACOLoader, KTX2Loader } from 'three-stdlib'
 import { LoadedModel } from '../useViewer'
 import { detectMissingTextures, storeMissingTextures } from './missingTextureDetection'
-import { registerBlobUrl, revokeBlobUrl } from './blobUrlRegistry'
+import { createScopedLoadingSession, type ScopedLoadingSession } from './scopedLoadingSession'
 
 let dracoLoader: DRACOLoader | null = null
 let ktx2Loader: KTX2Loader | null = null
-let activeGltfBlobUrls = new Map<File, string>()
-
-function revokeGltfBlobUrls(): void {
-  for (const url of activeGltfBlobUrls.values()) {
-    revokeBlobUrl(url)
-  }
-  activeGltfBlobUrls.clear()
-}
-
-function getOrCreateGltfBlobUrl(file: File): string {
-  if (!activeGltfBlobUrls.has(file)) {
-    const url = URL.createObjectURL(file)
-    activeGltfBlobUrls.set(file, url)
-    registerBlobUrl(url)
-  }
-  return activeGltfBlobUrls.get(file)!
-}
 
 /**
  * Process GPU instancing from GLTF files (EXT_mesh_gpu_instancing)
@@ -386,9 +369,16 @@ export async function loadGLTF(
   baseUrl?: string,
   onProgress?: (progress: number) => void,
   textureFiles?: Map<string, File>,
-  mergedTextures?: Map<string, string> // Map<textureNameToMerge, canonicalTextureName>
+  mergedTextures?: Map<string, string>, // Map<textureNameToMerge, canonicalTextureName>
+  loadingSession?: ScopedLoadingSession
 ): Promise<LoadedModel> {
-  const loader = new GLTFLoader()
+  // DATA-3: dedicated LoadingManager per load (or shared session from ZIP / project restore)
+  const ownsSession = !loadingSession
+  const session = loadingSession ?? createScopedLoadingSession()
+  let succeeded = false
+
+  try {
+  const loader = new GLTFLoader(session.manager)
 
   // Configure DRACO loader
   const draco = await initDRACO()
@@ -402,15 +392,9 @@ export async function loadGLTF(
     loader.setKTX2Loader(ktx2)
   }
 
-  // Set up texture loading manager
-  // Track if we set a URL modifier so we can clear it after loading
-  let urlModifierSet = false
-  
+  // Scope dependency Blob URLs + URL modifier to this load's manager only
   if (textureFiles && textureFiles.size > 0 || mergedTextures && mergedTextures.size > 0) {
-    revokeGltfBlobUrls()
-    urlModifierSet = true
-    
-    THREE.DefaultLoadingManager.setURLModifier((url) => {
+    session.setURLModifier((url) => {
     // Store original URL for missing texture detection
     const originalUrl = url
     
@@ -489,7 +473,7 @@ export async function loadGLTF(
             for (const [path, file] of textureFiles.entries()) {
               const pathFileName = path.split(/[/\\]/).pop()?.toLowerCase()
               if (pathFileName === canonicalLower || path.toLowerCase().includes(canonicalLower)) {
-                return getOrCreateGltfBlobUrl(file)
+                return session.getOrCreateBlobUrl(file)
               }
             }
           }
@@ -529,12 +513,12 @@ export async function loadGLTF(
         
         // Exact match
         if (normalizedPath === targetNormalized) {
-          return getOrCreateGltfBlobUrl(file)
+          return session.getOrCreateBlobUrl(file)
         }
         
         // Match if path ends with target (handles "FolderName/images/file.jpg" vs "images/file.jpg")
         if (normalizedPath.endsWith('/' + targetNormalized) || normalizedPath === targetNormalized) {
-          return getOrCreateGltfBlobUrl(file)
+          return session.getOrCreateBlobUrl(file)
         }
         
         // Match if target ends with path component (handles "images/file.jpg" in "folder/images/file.jpg")
@@ -542,7 +526,7 @@ export async function loadGLTF(
         if (pathParts.length > 0 && targetNormalized.includes(pathParts[pathParts.length - 1])) {
           const lastPart = pathParts[pathParts.length - 1]
           if (targetNormalized.endsWith(lastPart) || targetNormalized.includes('/' + lastPart)) {
-            return getOrCreateGltfBlobUrl(file)
+            return session.getOrCreateBlobUrl(file)
           }
         }
       }
@@ -551,7 +535,7 @@ export async function loadGLTF(
       for (const [path, file] of textureFiles.entries()) {
         const pathFileName = path.split(/[/\\]/).pop()?.toLowerCase()
         if (pathFileName && pathFileName === fileNameLower) {
-          return getOrCreateGltfBlobUrl(file)
+          return session.getOrCreateBlobUrl(file)
         }
       }
       
@@ -562,7 +546,7 @@ export async function loadGLTF(
         
         // Check if stored path ends with target path
         if (normalizedPath.endsWith('/' + targetNormalized) || normalizedPath.endsWith(targetNormalized)) {
-          return getOrCreateGltfBlobUrl(file)
+          return session.getOrCreateBlobUrl(file)
         }
         
         // Check if target path is contained in stored path (with proper boundaries)
@@ -572,7 +556,7 @@ export async function loadGLTF(
           const afterMatch = index + searchPath.length
           // Match is at the end, or followed by end of string or a slash
           if (afterMatch === normalizedPath.length || normalizedPath[afterMatch] === '/') {
-            return getOrCreateGltfBlobUrl(file)
+            return session.getOrCreateBlobUrl(file)
           }
         }
       }
@@ -596,17 +580,7 @@ export async function loadGLTF(
     })
   }
 
-  // Track failed texture loads
-  const failedTextureUrls = new Set<string>()
-  const originalOnError = THREE.DefaultLoadingManager.onError
-  THREE.DefaultLoadingManager.onError = (url: string) => {
-    failedTextureUrls.add(url)
-    if (originalOnError) {
-      originalOnError(url)
-    }
-  }
-
-  return new Promise((resolve, reject) => {
+  const result = await new Promise<LoadedModel>((resolve, reject) => {
     const onLoad = (gltf: any) => {
       const scene = gltf.scene
       // Industry-standard: Mark imported models with exclusion flags to prevent sky/environmental effects from modifying them
@@ -786,21 +760,12 @@ export async function loadGLTF(
       //   console.warn('⚠️ Could not load texture deduplication module:', error)
       // })
       
-      // CRITICAL: Clear URL modifier after loading to prevent affecting other models
-      if (urlModifierSet) {
-        THREE.DefaultLoadingManager.setURLModifier(null)
-        console.log('[GLTFLoader] ✅ Cleared URL modifier after model load to prevent affecting other models')
-      }
-      
-      // Restore original error handler
-      THREE.DefaultLoadingManager.onError = originalOnError
-      
       // Check for missing textures using shared utility
       let missingTextures = detectMissingTextures(scene, textureFiles)
       
-      // Update missing texture paths from failed texture URLs
-      if (failedTextureUrls.size > 0) {
-        failedTextureUrls.forEach(failedUrl => {
+      // Update missing texture paths from failed texture URLs (scoped manager)
+      if (session.failedUrls.size > 0) {
+        session.failedUrls.forEach(failedUrl => {
           // Try to find matching missing texture and update its path
           const missingTex = missingTextures.find(t => {
             const texPathLower = t.path.toLowerCase()
@@ -831,15 +796,6 @@ export async function loadGLTF(
     }
 
     const onError = (error: ErrorEvent) => {
-      // CRITICAL: Clear URL modifier even on error to prevent affecting other models
-      if (urlModifierSet) {
-        THREE.DefaultLoadingManager.setURLModifier(null)
-        console.log('[GLTFLoader] ✅ Cleared URL modifier after load error to prevent affecting other models')
-      }
-      
-      // Restore original error handler
-      THREE.DefaultLoadingManager.onError = originalOnError
-      
       reject(new Error(`Failed to load GLTF: ${error.message}`))
     }
 
@@ -894,5 +850,15 @@ export async function loadGLTF(
       }
     }
   })
+
+  succeeded = true
+  return result
+  } finally {
+    // DATA-3: always clear scoped manager hooks; revoke Blob URLs only on failure.
+    // Successful loads keep Blob URLs via blobUrlRegistry for texture lifetime.
+    if (ownsSession) {
+      session.dispose({ revokeBlobs: !succeeded })
+    }
+  }
 }
 
