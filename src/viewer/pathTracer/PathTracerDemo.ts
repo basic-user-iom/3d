@@ -20,6 +20,10 @@ import {
   shouldSuppressPathTracerTransformInteraction,
   type PathTracerMovementSnapshot
 } from './pathTracerMovementRestore'
+import {
+  bindPathTracerControlsChange,
+  disposePathTracerOwnedResources
+} from './pathTracerLifecycle'
 // Note: MaskedHDRTexture utility is available but not used (rolled back to original HDR with ground)
 // import { createBlackMaskedHDRTexture } from './utils/MaskedHDRTexture'
 
@@ -113,6 +117,10 @@ export class PathTracerDemo {
     helperType: 'grid' | 'axes' | 'lightHelper' | 'lightGizmo' | 'transformControls' | 'otherHelper'
   }> = []
   private _prePathTracerMovement: PathTracerMovementSnapshot | null = null
+  /** Unbind OrbitControls `change` listener installed for camera updates (LIFE-2). */
+  private unbindControlsChange: (() => void) | null = null
+  /** Idempotent dispose guard — true after teardown completes. */
+  private _disposed = false
   // Helper for debugging layout/sizing issues
   private getElementSizeInfo(el: HTMLElement | null) {
     if (!el) return null
@@ -1145,8 +1153,10 @@ export class PathTracerDemo {
     // BEST PRACTICE: Update camera only when it actually changes (not every frame)
     // Path tracers accumulate samples over time - camera updates reset accumulation
     // This event-driven approach is more efficient than checking every frame
+    // Store a named unbind so dispose() can remove the listener (LIFE-2).
     if (this.controls && config.enableControls !== false) {
-      this.controls.addEventListener('change', () => {
+      this.unbindControlsChange = bindPathTracerControlsChange(this.controls, () => {
+        if (this._disposed) return
         this.pathTracer.updateCamera()
       })
     }
@@ -5091,6 +5101,7 @@ export class PathTracerDemo {
    * - Path tracers accumulate samples over time - frequent camera updates reduce quality
    */
   updateCamera(): void {
+    if (this._disposed) return
     this.pathTracer.updateCamera()
   }
 
@@ -5547,9 +5558,23 @@ export class PathTracerDemo {
   }
 
   /**
-   * Dispose resources
+   * Dispose resources (idempotent).
+   * Removes controls listeners and tears down owned path-tracer GPU resources (LIFE-2).
    */
   dispose(): void {
+    if (this._disposed) return
+    this._disposed = true
+
+    // Detach controls listener before stop/teardown so camera changes never hit a disposed tracer.
+    if (this.unbindControlsChange) {
+      try {
+        this.unbindControlsChange()
+      } catch (error) {
+        console.warn('[PathTracerDemo] Error removing controls change listener:', error)
+      }
+      this.unbindControlsChange = null
+    }
+
     this.stop(true)
     
     // Restore original material properties on ground planes if modified
@@ -5624,33 +5649,36 @@ export class PathTracerDemo {
         })
       }
     })
-    
-    // Dispose masked HDR texture if it exists
+
+    // Detach owned textures from the scene before disposing them.
+    if (this.scene.environment === this.gradientMap) {
+      this.scene.environment = null
+    }
+    if (this.scene.background === this.gradientMap) {
+      this.scene.background = null
+    }
     if (this.maskedHDRTexture) {
-      // Only dispose if it's not the original texture (which is managed by HDRSystem)
-      // Check if it's a masked texture by comparing with gradientMap (they should never be equal)
-      const isManagedTexture = this.maskedHDRTexture === this.gradientMap
-      if (!isManagedTexture) {
-        try {
-          this.maskedHDRTexture.dispose()
-        } catch (error) {
-          console.warn('[PathTracerDemo] Error disposing masked HDR texture:', error)
-        }
+      if (this.scene.environment === this.maskedHDRTexture) {
+        this.scene.environment = null
       }
-      this.maskedHDRTexture = null
-    }
-    
-    // Dispose color texture if it exists
-    if (this.colorTexture) {
-      try {
-        this.colorTexture.dispose()
-        this.colorTexture = null
-      } catch (error) {
-        console.warn('[PathTracerDemo] Error disposing color texture:', error)
+      if (this.scene.background === this.maskedHDRTexture) {
+        this.scene.background = null
       }
     }
-    
-    // Note: WebGLPathTracer doesn't have a dispose method, but we clean up our resources
+
+    const maskedHDRIsManaged =
+      !!this.maskedHDRTexture && this.maskedHDRTexture === this.gradientMap
+
+    disposePathTracerOwnedResources({
+      pathTracer: this.pathTracer,
+      gradientMap: this.gradientMap,
+      maskedHDRTexture: this.maskedHDRTexture,
+      colorTexture: this.colorTexture,
+      maskedHDRIsManaged
+    })
+
+    this.maskedHDRTexture = null
+    this.colorTexture = null
     this.gradientMap = null as any
   }
 
