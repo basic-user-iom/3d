@@ -52,7 +52,6 @@
     "dompurify": "^3.4.12",
     "dxf-parser": "^1.1.2",
     "electron-updater": "^6.8.9",
-    "gltf-pipeline": "^4.3.0",
     "jszip": "^3.10.1",
     "ktx2-encoder": "^0.5.1",
     "meshoptimizer": "^0.25.0",
@@ -83,8 +82,8 @@
     "@typescript-eslint/parser": "^6.14.0",
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
-    "electron": "^31.7.5",
-    "electron-builder": "^25.1.8",
+    "electron": "^41.10.3",
+    "electron-builder": "^26.15.0",
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
@@ -96,6 +95,9 @@
     "vitest": "^4.0.10",
     "vitest-mock-extended": "^3.1.0",
     "wait-on": "^8.0.5"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.0"
   },
   "build": {
     "appId": "com.3dviewer.app",

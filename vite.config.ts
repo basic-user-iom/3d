@@ -348,7 +348,6 @@ export default defineConfig(({ mode }) => {
           }
 
           if (
-            id.includes('/gltf-pipeline/') ||
             id.includes('/meshoptimizer/') ||
             id.includes('/dxf-parser/') ||
             id.includes('/ktx2-encoder/')
