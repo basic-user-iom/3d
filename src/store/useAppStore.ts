@@ -26,6 +26,15 @@ import {
   renderModeForStreetsGLOverlay,
   saveStreetsGLSessionPrefs
 } from '../utils/streetsGLSessionPersistence'
+import {
+  MAX_UNDO_STACK,
+  applyProjectObjectUndoPatch,
+  applySoftDeleteBacking,
+  disposeAbandonedDeleteActions,
+  reapplyDeletePivotDetach,
+  restoreDeleteBacking,
+  type DeleteUndoBacking
+} from '../viewer/deleteUndoBacking'
 
 const streetsGLSessionPrefs = loadStreetsGLSessionPrefs()
 
@@ -84,7 +93,13 @@ export interface ProjectObject {
 }
 
 export type UndoAction =
-  | { type: 'delete', object: THREE.Object3D, parent: THREE.Object3D | THREE.Scene | null }
+  | {
+      type: 'delete'
+      object: THREE.Object3D
+      parent: THREE.Object3D | THREE.Scene | null
+      /** Registry/file/cache/splat ownership captured so undo can restore a usable object. */
+      backing?: DeleteUndoBacking
+    }
   | { type: 'material-change', mesh: THREE.Mesh, previousMaterial: THREE.Material | THREE.Material[], newMaterial: THREE.Material | null }
   | { type: 'material-color-change', material: THREE.Material, property: 'color', previousValue: THREE.Color, newValue: THREE.Color }
   | { type: 'transform-change', object: THREE.Object3D, previousTransform: { position: THREE.Vector3, rotation: THREE.Euler, scale: THREE.Vector3 }, newTransform: { position: THREE.Vector3, rotation: THREE.Euler, scale: THREE.Vector3 } }
@@ -1747,9 +1762,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       let nextSelectedObject = state.selectedObject
       let updatedDirectionalLights: DirectionalLightConfig[] | null = null
       let updatedSelectedLightId = state.selectedLightId
+      let nextProjectObjects = state.projectObjects
       
       if (lastAction.type === 'delete' && lastAction.parent) {
         lastAction.parent.add(lastAction.object)
+        const restored = restoreDeleteBacking(lastAction.backing, state.streetsGLBridge)
+        nextProjectObjects = applyProjectObjectUndoPatch(state.projectObjects, restored)
         nextSelectedObject = lastAction.object
         // Redo action: delete again
         redoAction = { ...lastAction }
@@ -1938,7 +1956,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         sceneRevision: state.sceneRevision + 1,
         selectedObject: nextSelectedObject,
         directionalLights: nextDirectionalLights,
-        selectedLightId: updatedSelectedLightId
+        selectedLightId: updatedSelectedLightId,
+        projectObjects: nextProjectObjects
       }
     })
   },
@@ -1952,9 +1971,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       let nextSelectedObject = state.selectedObject
       let updatedDirectionalLights: DirectionalLightConfig[] | null = null
       let updatedSelectedLightId = state.selectedLightId
+      let nextProjectObjects = state.projectObjects
       
       if (lastAction.type === 'delete' && lastAction.parent) {
+        reapplyDeletePivotDetach(lastAction.backing)
         lastAction.parent.remove(lastAction.object)
+        const soft = applySoftDeleteBacking(
+          lastAction.backing,
+          state.streetsGLBridge,
+          lastAction.object
+        )
+        nextProjectObjects = applyProjectObjectUndoPatch(state.projectObjects, soft)
         if (state.selectedObject === lastAction.object) {
           nextSelectedObject = null
         }
@@ -2145,18 +2172,31 @@ export const useAppStore = create<AppState>((set, get) => ({
         sceneRevision: state.sceneRevision + 1,
         selectedObject: nextSelectedObject,
         directionalLights: nextDirectionalLights,
-        selectedLightId: updatedSelectedLightId
+        selectedLightId: updatedSelectedLightId,
+        projectObjects: nextProjectObjects
       }
     })
   },
   addToUndoStack: (action) => {
-    set((state) => ({
-      undoStack: [...state.undoStack, action],
-      redoStack: [], // Clear redo stack when new action is performed
-      canUndo: true,
-      canRedo: false,
-      sceneRevision: state.sceneRevision + 1
-    }))
+    set((state) => {
+      // Dropping redo abandons any delete that is still detached.
+      disposeAbandonedDeleteActions(state.redoStack)
+
+      let nextUndoStack = [...state.undoStack, action]
+      if (nextUndoStack.length > MAX_UNDO_STACK) {
+        const trimmed = nextUndoStack.slice(0, nextUndoStack.length - MAX_UNDO_STACK)
+        disposeAbandonedDeleteActions(trimmed)
+        nextUndoStack = nextUndoStack.slice(-MAX_UNDO_STACK)
+      }
+
+      return {
+        undoStack: nextUndoStack,
+        redoStack: [], // Clear redo stack when new action is performed
+        canUndo: true,
+        canRedo: false,
+        sceneRevision: state.sceneRevision + 1
+      }
+    })
   },
   setAmbientIntensity: (intensity) => set({ ambientIntensity: intensity }),
       setShadowsEnabled: (enabled) => set({ shadowsEnabled: enabled }),

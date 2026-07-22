@@ -13,13 +13,16 @@ import {
   ensureStreetsGLIframeVisibilityChannel,
   getIframeVisible
 } from '../viewer/useViewer'
-import { fileRegistry } from '../utils/projectPersistence'
 import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { convertToInstancedMesh, convertAllDuplicatesToInstances, groupObjectsByGeometry } from '../utils/objectInstancing'
 import { streetsGLToLatLon } from '../utils/mapCoordinates'
 import { disposeSplatOverlay } from '../viewer/loaders/disposeSplatOverlay'
-import { removeCachedImportedModelScene, getCachedImportedModelScene } from '../viewer/importedModelCache'
+import { removeCachedImportedModelScene } from '../viewer/importedModelCache'
+import {
+  applySoftDeleteBacking,
+  captureDeleteUndoBacking
+} from '../viewer/deleteUndoBacking'
 import { isObjectsPanelSystemLight } from '../utils/objectsPanelSystemLights'
 import './ObjectsPanel.css'
 
@@ -1032,6 +1035,14 @@ export default function ObjectsPanel() {
       ? ((modelRoot.userData as any).projectObjectId as string | undefined)
       : projectObjectId
 
+    // Capture registry/file/cache/splat ownership before scene detach so undo can restore it.
+    const backing = captureDeleteUndoBacking({
+      objectToRemove,
+      modelRoot,
+      deleteWholeModel,
+      registryId
+    })
+
     if (deleteWholeModel) {
       detachPivotWrapperReference(modelRoot)
     }
@@ -1041,22 +1052,27 @@ export default function ObjectsPanel() {
     addToUndoStack({
       type: 'delete',
       object: objectToRemove,
-      parent: parent || null
+      parent: parent || null,
+      backing
     })
 
-    // Remove from scene (but DON'T dispose so we can undo)
+    // Remove from scene (but DON'T dispose GPU resources so we can undo)
     if (parent) {
       parent.remove(objectToRemove)
     } else if (objectToRemove.parent === null && viewer.scene.children.includes(objectToRemove)) {
       viewer.scene.remove(objectToRemove)
     }
 
-    // A Gaussian splat keeps a full-screen iframe overlay mounted in the viewer
-    // DOM. Removing the splat root from the scene does not remove that overlay,
-    // which would otherwise stay on top of the viewport and hide everything
-    // else. Tear it down on delete (the lightweight root group can still be
-    // restored via undo).
-    disposeSplatOverlay(deleteWholeModel ? modelRoot : node.object)
+    // Soft-delete backing state: suspend splat overlays (no URL revoke), drop live
+    // registry/cache/bridge entries while the undo command retains ownership.
+    const soft = applySoftDeleteBacking(
+      backing,
+      streetsGLBridge,
+      deleteWholeModel ? modelRoot : node.object
+    )
+    if (soft.removeProjectObjectId) {
+      removeProjectObject(soft.removeProjectObjectId)
+    }
 
     // If this was selected, deselect it (whole-model delete clears any sub-selection)
     if (
@@ -1066,23 +1082,6 @@ export default function ObjectsPanel() {
         (deleteWholeModel && isObjectInModelSubtree(selectedObject, modelRoot)))
     ) {
       setSelectedObject(null)
-    }
-
-    // Keep the registry + Streets GL in sync when deleting a project object.
-    if (registryId) {
-      removeProjectObject(registryId)
-      // Preserve GPU resources for undo; cache entry is dropped without disposal.
-      removeCachedImportedModelScene(registryId, false)
-      const streetsGLId = getStreetsGLObjectId(modelRoot)
-      if (streetsGLBridge && streetsGLId) {
-        streetsGLBridge.removeObject(streetsGLId).catch((err) => {
-          console.warn('[ObjectsPanel] Streets GL remove failed:', streetsGLId, err)
-        })
-      }
-      const fileName = (modelRoot.userData as any).fileName as string | undefined
-      if (fileName) {
-        fileRegistry.unregisterModelFile(fileName)
-      }
     }
 
     // Rebuild tree
