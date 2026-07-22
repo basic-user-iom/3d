@@ -2257,7 +2257,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newLight = { ...normalizedLight, id }
     set((state) => ({
       directionalLights: [...state.directionalLights, newLight],
-      selectedLightId: id
+      selectedLightId: id,
+      // PERF-3: structural light changes refresh Objects Panel without polling.
+      sceneRevision: state.sceneRevision + 1
     }))
     
     if (options?.pushToUndoStack !== false) {
@@ -2287,7 +2289,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const normalizedLights = ensureSunLight(lights)
       return {
         directionalLights: normalizedLights,
-        selectedLightId: normalizedLights[0]?.id || null
+        selectedLightId: normalizedLights[0]?.id || null,
+        // PERF-3: structural light changes refresh Objects Panel without polling.
+        sceneRevision: state.sceneRevision + 1
       }
     })
     

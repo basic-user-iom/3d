@@ -19,12 +19,13 @@ import { convertToInstancedMesh, convertAllDuplicatesToInstances, groupObjectsBy
 import { streetsGLToLatLon } from '../utils/mapCoordinates'
 import { disposeSplatOverlay } from '../viewer/loaders/disposeSplatOverlay'
 import { disposeAnimationMixersInSubtree } from '../viewer/utils/modelAnimations'
-import { removeCachedImportedModelScene } from '../viewer/importedModelCache'
+import { getCachedImportedModelScene, removeCachedImportedModelScene } from '../viewer/importedModelCache'
 import {
   applySoftDeleteBacking,
   captureDeleteUndoBacking
 } from '../viewer/deleteUndoBacking'
 import { isObjectsPanelSystemLight } from '../utils/objectsPanelSystemLights'
+import { computeSubtreeStatsMap } from '../utils/objectsPanelTreeStats'
 import './ObjectsPanel.css'
 
 interface SceneNode {
@@ -115,72 +116,6 @@ export default function ObjectsPanel() {
       panelId: 'objects'
     }
   )
-
-  // Calculate mesh statistics (triangles, size)
-  const calculateMeshStats = useCallback((obj: THREE.Object3D): { triangles: number, size: number } => {
-    let totalTriangles = 0
-    let totalSize = 0
-    
-    if (obj instanceof THREE.Mesh && obj.geometry) {
-      const geom = obj.geometry
-      
-      // Calculate triangles
-      if (geom.index) {
-        totalTriangles = geom.index.count / 3
-      } else if (geom.attributes.position) {
-        totalTriangles = geom.attributes.position.count / 3
-      }
-      
-      // Calculate memory size (rough estimate)
-      // Position: 3 floats * 4 bytes = 12 bytes per vertex
-      // Normal: 3 floats * 4 bytes = 12 bytes per vertex
-      // UV: 2 floats * 4 bytes = 8 bytes per vertex
-      // Index: 1 uint * 4 bytes = 4 bytes per index
-      let vertexSize = 0
-      if (geom.attributes.position) {
-        vertexSize += geom.attributes.position.count * 3 * 4 // position
-      }
-      if (geom.attributes.normal) {
-        vertexSize += geom.attributes.normal.count * 3 * 4 // normal
-      }
-      if (geom.attributes.uv) {
-        vertexSize += geom.attributes.uv.count * 2 * 4 // uv
-      }
-      if (geom.index) {
-        totalSize += geom.index.count * 4 // indices
-      }
-      totalSize += vertexSize
-      
-      // Add material textures size (rough estimate)
-      if (obj.material) {
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
-        mats.forEach(mat => {
-          const textureProps = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']
-          textureProps.forEach(prop => {
-            const tex = (mat as any)[prop] as THREE.Texture | undefined
-            if (tex && tex.image) {
-              const img = tex.image
-              const width = (img as any).width || (img as any).naturalWidth || 0
-              const height = (img as any).height || (img as any).naturalHeight || 0
-              if (width > 0 && height > 0) {
-                // Estimate: 4 bytes per pixel (RGBA)
-                totalSize += width * height * 4
-              }
-            }
-          })
-        })
-      }
-    }
-    
-    // Traverse children
-    obj.children.forEach(child => {
-      const childStats = calculateMeshStats(child)
-      totalTriangles += childStats.triangles
-      totalSize += childStats.size
-    })
-    
-    return { triangles: totalTriangles, size: totalSize }
-  }, [])
 
   // Build the object tree from the store-owned registry. This is the source of truth
   // when no Three.js scene is live (city mode), so the tree is non-empty and add/remove
@@ -287,6 +222,10 @@ export default function ObjectsPanel() {
     // No live Three.js scene (city mode): derive the tree from the registry so objects
     // remain visible and manageable. This replaces the old `return []` dead-end.
     if (!viewer?.scene) return buildRegistryTree()
+
+    // PERF-3: one bottom-up stats pass for the whole scene (O(n)), then O(1) lookup
+    // per panel node. Avoids the old per-node recursive re-aggregation (O(n²)).
+    const subtreeStats = computeSubtreeStatsMap(viewer.scene)
 
     const nodes: SceneNode[] = []
     const traverse = (obj: THREE.Object3D, parentNodes: SceneNode[]) => {
@@ -426,9 +365,10 @@ export default function ObjectsPanel() {
         }
       }
       
-      // Calculate mesh statistics
-      const stats = calculateMeshStats(obj)
-      
+      const stats = subtreeStats.get(obj.id)
+      const triangles = stats?.triangles ?? 0
+      const size = stats?.size ?? 0
+
       const node: SceneNode = {
         object: obj,
         name,
@@ -439,8 +379,8 @@ export default function ObjectsPanel() {
             ? getIframeVisible(obj)
             : obj.visible,
         children: [],
-        triangles: stats.triangles > 0 ? Math.floor(stats.triangles) : undefined,
-        size: stats.size > 0 ? stats.size : undefined,
+        triangles: triangles > 0 ? Math.floor(triangles) : undefined,
+        size: size > 0 ? size : undefined,
         useCount: 1 // Default use count
       }
       parentNodes.push(node)
@@ -477,116 +417,12 @@ export default function ObjectsPanel() {
     return nodes
   }, [viewer, buildRegistryTree])
 
-  // Update tree when scene changes
+  // PERF-3: rebuild only from explicit scene/registry revisions — no interval polling.
+  // Model load/register, projectObject mutations, light add/remove, and undo paths
+  // bump sceneRevision (or change projectObjects) so an idle open panel stays quiet.
   useEffect(() => {
-    if (!viewer?.scene) return
-
-    const updateTree = () => {
-      const tree = buildSceneTree()
-      // Only update if tree actually changed to prevent unnecessary re-renders
-      setSceneTree(prevTree => {
-        // Quick check: compare lengths first
-        if (prevTree.length !== tree.length) {
-          return tree
-        }
-        // Deep comparison: check if structure changed
-        const hasChanged = JSON.stringify(prevTree.map(n => ({ id: n.object.id, visible: n.visible }))) !== 
-                          JSON.stringify(tree.map(n => ({ id: n.object.id, visible: n.visible })))
-        return hasChanged ? tree : prevTree
-      })
-    }
-
-    updateTree()
-
-    // Update more frequently to catch model loading and visibility changes
-    // Also listen for scene changes
-    const interval = setInterval(updateTree, 500) // Reduced from 1000ms to 500ms for faster updates
-    
-    // Track pending timeouts for cleanup
-    const pendingTimeouts: ReturnType<typeof setTimeout>[] = []
-    // Track if we already have a pending timeout for the empty tree condition
-    // Use a ref to avoid race conditions between timeout callback and cleanup
-    const pendingEmptyTreeTimeoutRef = { current: null as ReturnType<typeof setTimeout> | null }
-    
-    // Force update when scene children change (model loaded/unloaded)
-    const checkSceneChanges = () => {
-      if (viewer?.scene) {
-        const currentChildCount = viewer.scene.children.length
-        const previousCount = (checkSceneChanges as any).lastChildCount || 0
-        if (currentChildCount !== previousCount) {
-          (checkSceneChanges as any).lastChildCount = currentChildCount
-          updateTree()
-        }
-        
-        // Also check for objects with model flags that might have been added
-        let hasModels = false
-        viewer.scene.traverse((obj) => {
-          if (obj.userData.isModel === true || obj.userData.isImportedModel === true) {
-            hasModels = true
-          }
-        })
-        
-        // If we have models but tree is empty, force update
-        // Only schedule a new timeout if one isn't already pending
-        if (hasModels) {
-          const currentTree = buildSceneTree()
-          if (currentTree.length === 0) {
-            // Only add a new timeout if we don't already have one pending
-            if (!pendingEmptyTreeTimeoutRef.current) {
-              // Force a fresh rebuild - track timeout for cleanup
-              const timeoutId = setTimeout(() => {
-                // Check if this timeout is still the current one (not cleared)
-                if (pendingEmptyTreeTimeoutRef.current === timeoutId) {
-                  updateTree()
-                  // Clear the reference when timeout completes
-                  pendingEmptyTreeTimeoutRef.current = null
-                  // Remove from array (filter out completed timeout)
-                  const index = pendingTimeouts.indexOf(timeoutId)
-                  if (index > -1) {
-                    pendingTimeouts.splice(index, 1)
-                  }
-                }
-              }, 100)
-              pendingTimeouts.push(timeoutId)
-              pendingEmptyTreeTimeoutRef.current = timeoutId
-            }
-          } else {
-            // Tree is no longer empty - clear pending timeout if exists
-            if (pendingEmptyTreeTimeoutRef.current) {
-              clearTimeout(pendingEmptyTreeTimeoutRef.current)
-              const index = pendingTimeouts.indexOf(pendingEmptyTreeTimeoutRef.current)
-              if (index > -1) {
-                pendingTimeouts.splice(index, 1)
-              }
-              pendingEmptyTreeTimeoutRef.current = null
-            }
-          }
-        }
-      }
-    }
-    
-    const sceneCheckInterval = setInterval(checkSceneChanges, 200) // Check every 200ms for scene changes
-    
-    return () => {
-      clearInterval(interval)
-      clearInterval(sceneCheckInterval)
-      // Cleanup any pending timeouts
-      pendingTimeouts.forEach(timeoutId => clearTimeout(timeoutId))
-      pendingTimeouts.length = 0
-      // Clear the empty tree timeout reference (using ref to avoid race condition)
-      if (pendingEmptyTreeTimeoutRef.current) {
-        clearTimeout(pendingEmptyTreeTimeoutRef.current)
-        pendingEmptyTreeTimeoutRef.current = null
-      }
-    }
-  }, [viewer]) // buildSceneTree is stable and only changes when viewer changes, so we don't need it in deps
-
-  useEffect(() => {
-    // Build on any registry/scene revision change. Note: no longer gated on `viewer`,
-    // so the tree is populated from the registry in city mode (where viewer is null).
     if (!showObjectsPanel) return
-    const tree = buildSceneTree()
-    setSceneTree(tree)
+    setSceneTree(buildSceneTree())
   }, [sceneRevision, viewer, showObjectsPanel, buildSceneTree, projectObjects])
 
   // Sync selectedObjects with selectedObject when selectedObject changes from outside
