@@ -6,9 +6,24 @@ import http from 'http'
 import { spawn, type ChildProcess } from 'child_process'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
+import { cleanDistForBuild, DIST_PRESERVE_NAMES } from './scripts/cleanDistForBuild'
 
 const __viteConfigDir = path.dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
+
+/**
+ * BUILD-4: Wipe stale hashed chunks/maps under dist/ before each production build,
+ * while keeping electron-builder output and local files-upload content.
+ */
+function cleanDistPreservePlugin() {
+  return {
+    name: 'clean-dist-preserve',
+    buildStart() {
+      cleanDistForBuild(path.resolve(__viteConfigDir, 'dist'), DIST_PRESERVE_NAMES)
+    }
+  }
+}
+
 const {
   loadReplicateEnvFile,
   hasReplicateApiToken,
@@ -301,8 +316,11 @@ export default defineConfig(({ mode }) => {
   base: './',
   build: {
     outDir: 'dist',
-    emptyOutDir: false, // Don't empty dist folder to preserve desktop-build
-    sourcemap: true,
+    // BUILD-4: Vite's emptyOutDir would also wipe desktop-build; cleanDistPreservePlugin
+    // clears stale hashed assets while preserving desktop-build + files-upload.
+    emptyOutDir: false,
+    // Do not emit .map files into dist/ (keeps packaged output lean and deterministic).
+    sourcemap: false,
     rollupOptions: {
       output: {
         // Ensure consistent asset paths
@@ -369,6 +387,7 @@ export default defineConfig(({ mode }) => {
     }
   },
   plugins: [
+    cleanDistPreservePlugin(),
     react(),
     webIfcWasmPlugin(),
     replicateApiProxyPlugin(),
