@@ -6,6 +6,11 @@ import { useFloatingPanel } from '../hooks/useFloatingPanel'
 import { usePanelStacking } from '../hooks/usePanelStacking'
 import { createHotspotMarker, HOTSPOT_ICON_TYPES, POPULAR_EMOJIS, resolveHotspotIconForMarker, getHotspotIconKey, createHotspotIconTextureForType, syncHotspotMarkerAppearance, extractYouTubeId, applyYouTubeIframeEmbedFlags, pauseInWorldYouTubeIframes, resumeInWorldYouTubeIframes } from '../utils/hotspotUtils'
 import {
+  indexHotspotsById,
+  syncHotspotConnectorLines,
+  updateHotspotConnectorLineGeometry
+} from '../utils/hotspotConnectorLines'
+import {
   createHotspotLabelObject,
   updateHotspotLabelTexture,
   applyFrozenOrientation,
@@ -1224,21 +1229,12 @@ export default function HotspotsPanel() {
           // Update connecting line if it exists (only update, don't create here - creation happens in main effect)
           const line = linesMap.get(hotspot.id)
           if (line && hotspot.targetEndpointPosition) {
-            // Only update if we have a valid endpoint position (surface point)
-            const endpointPosition = new THREE.Vector3(
-              hotspot.targetEndpointPosition.x,
-              hotspot.targetEndpointPosition.y,
-              hotspot.targetEndpointPosition.z
+            // Skip buffer upload when endpoints are unchanged
+            updateHotspotConnectorLineGeometry(
+              line,
+              hotspot.targetEndpointPosition,
+              { x: position.x, y: position.y, z: position.z }
             )
-            
-            const geometry = line.geometry as THREE.BufferGeometry
-            const positions = geometry.attributes.position
-            if (positions) {
-              // Line connects from surface (endpoint) to marker at top
-              positions.setXYZ(0, endpointPosition.x, endpointPosition.y, endpointPosition.z)
-              positions.setXYZ(1, position.x, position.y, position.z)
-              positions.needsUpdate = true
-            }
           }
         }
         
@@ -2091,14 +2087,12 @@ export default function HotspotsPanel() {
             // Update existing line (whether from map or scene)
             const line = linesMap.get(hotspot.id)
             if (line) {
-              const geometry = line.geometry as THREE.BufferGeometry
-              const positions = geometry.attributes.position
-              if (positions) {
-                // Line connects from endpoint (car surface) to marker at top
-                positions.setXYZ(0, endpointPosition.x, endpointPosition.y, endpointPosition.z)
-                positions.setXYZ(1, position.x, position.y, position.z)
-                positions.needsUpdate = true
-              }
+              // Skip buffer upload when endpoints are unchanged
+              updateHotspotConnectorLineGeometry(
+                line,
+                endpointPosition,
+                { x: position.x, y: position.y, z: position.z }
+              )
               
               // Keep depth testing on so WebGL panels can occlude the line.
               // CSS3D YouTube panels are composited above the canvas (z-index 40).
@@ -2997,45 +2991,12 @@ export default function HotspotsPanel() {
     return found
   }, [])
 
-  // Update lines when objects move (animation loop)
+  // Sync connector geometry only when hotspot/line data changes (PERF-4).
+  // Stored endpoint/marker positions are world-space; no permanent RAF or O(H²) finds.
   useEffect(() => {
     if (!viewer?.scene || hotspotLines.size === 0) return
-
-    let animationFrameId: number
-    const updateLines = () => {
-      hotspotLines.forEach((line, hotspotId) => {
-        const hotspot = hotspots.find(h => h.id === hotspotId)
-        // Only update if we have a valid endpoint position (surface point)
-        // This prevents lines from pointing to wrong locations (like object center at bottom)
-        if (hotspot && hotspot.targetObjectId && hotspot.targetEndpointPosition) {
-          // Use the stored surface endpoint position (not object center)
-          const endpointPosition = new THREE.Vector3(
-            hotspot.targetEndpointPosition.x,
-            hotspot.targetEndpointPosition.y,
-            hotspot.targetEndpointPosition.z
-          )
-            
-            const geometry = line.geometry as THREE.BufferGeometry
-            const positions = geometry.attributes.position
-            if (positions) {
-            // Line connects from car surface (endpoint) to marker at top
-            positions.setXYZ(0, endpointPosition.x, endpointPosition.y, endpointPosition.z)
-            positions.setXYZ(1, hotspot.position.x, hotspot.position.y, hotspot.position.z)
-              positions.needsUpdate = true
-          }
-        }
-      })
-      animationFrameId = requestAnimationFrame(updateLines)
-    }
-    
-    animationFrameId = requestAnimationFrame(updateLines)
-    
-    return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId)
-      }
-    }
-  }, [viewer?.scene, hotspotLines, hotspots, findObjectById])
+    syncHotspotConnectorLines(hotspotLines, indexHotspotsById(hotspots))
+  }, [viewer?.scene, hotspotLines, hotspots])
 
   const cancelEdit = useCallback(() => {
     setEditingHotspotId(null)
