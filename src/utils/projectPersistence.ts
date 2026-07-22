@@ -20,10 +20,15 @@ import {
 } from '../viewer/streetsGLRegistryPersistence'
 import {
   applySavedHierarchyInPlace,
+  applySavedMaterialsInPlace,
   ensureInstanceId,
-  matchSavedChildToLiveChild,
   shouldReuseImportedInstanceByFileName
 } from './projectInstanceRestore'
+import {
+  collectProjectOwnedSceneRoots,
+  commitSceneObjectSwap,
+  discardStagedSceneRoots
+} from './projectAtomicLoad'
 
 /**
  * Global File Registry - Tracks original File objects for project save/load
@@ -1091,6 +1096,13 @@ const serializeSceneObjects = async (
   
   console.log(`[ProjectPersistence] ✅ Serialized ${objects.length} scene object(s) with ${textureSerializationCount} textures`)
   return objects
+}
+
+/** Test helper: serialize top-level scene objects without requiring a full viewer snapshot. */
+export async function serializeSceneObjectsForTests(
+  scene: THREE.Scene
+): Promise<SavedSceneObject[]> {
+  return serializeSceneObjects(scene)
 }
 
 export async function createProjectSnapshot(onProgress?: (progress: number, message: string) => void): Promise<SavedProject> {
@@ -2673,41 +2685,14 @@ const restoreMaterial = (saved: SavedMaterial): THREE.Material => {
   return material
 }
 
-/**
- * DATA-1: Apply saved materials onto matching nodes in an already-loaded hierarchy.
- * Does not create placeholder meshes/groups.
- */
+/** DATA-1: Apply saved materials onto matching nodes in an already-loaded hierarchy. */
 const applySavedMaterialsToHierarchy = (
   liveRoot: THREE.Object3D,
   savedChildren: SavedSceneObject[] | undefined
 ): void => {
-  if (!savedChildren || savedChildren.length === 0) return
-
-  const usedLiveIndexes = new Set<number>()
-  for (let i = 0; i < savedChildren.length; i++) {
-    const savedChild = savedChildren[i]
-    const liveChild = matchSavedChildToLiveChild(
-      liveRoot.children,
-      savedChild,
-      i,
-      usedLiveIndexes
-    )
-    if (!liveChild) continue
-
-    if (
-      liveChild instanceof THREE.Mesh &&
-      savedChild.materials &&
-      savedChild.materials.length > 0
-    ) {
-      if (savedChild.materials.length === 1) {
-        liveChild.material = restoreMaterial(savedChild.materials[0])
-      } else {
-        liveChild.material = savedChild.materials.map((m) => restoreMaterial(m))
-      }
-    }
-
-    applySavedMaterialsToHierarchy(liveChild, savedChild.children)
-  }
+  applySavedMaterialsInPlace(liveRoot, savedChildren as any, (saved) =>
+    restoreMaterial(saved as SavedMaterial)
+  )
 }
 
 // Restore a scene object recursively
@@ -2765,9 +2750,7 @@ const restoreSceneObject = async (
           `[ProjectPersistence] Reusing already-restored instance "${saved.instanceId || saved.id}" for "${saved.fileName}"`
         )
         obj.visible = true
-        if (!obj.parent && !scene.children.includes(obj)) {
-          scene.add(obj)
-        }
+        // DATA-2: Do not attach to the live scene here — restoreSceneObjects commits atomically.
       } else {
         // Need to load a fresh instance of this asset
         console.log(`[ProjectPersistence] Loading instance for "${saved.fileName}" (instanceId: ${saved.instanceId || saved.id || 'none'})`)
@@ -3536,112 +3519,107 @@ const restoreSceneObjects = async (
 ): Promise<Array<{ fileName: string; savedObject: SavedSceneObject }>> => {
   // Track missing files that need to be loaded
   const missingFiles: Array<{ fileName: string; savedObject: SavedSceneObject }> = []
-  // Clear existing user-created objects (but keep lights, helpers, etc.)
-  // CRITICAL: Also clear auto-loaded models to prevent conflicts during restoration
-  // IMPORTANT: Clear ALL models before restoration - we'll restore them from the snapshot
-  const objectsToRemove: THREE.Object3D[] = []
-  const fileNamesToRestore = new Set(savedObjects
-    .filter(obj => obj.type === 'imported' && obj.fileName)
-    .map(obj => obj.fileName!))
-  
-  scene.traverse((obj) => {
-    if (
-      (obj.userData.isModel || obj.userData.isImportedModel || obj.userData.isPolygon || obj.userData.isAutoLoaded) &&
-      !(obj instanceof THREE.Light) &&
-      !(obj instanceof THREE.Camera) &&
-      obj.type !== 'GridHelper' &&
-      obj.type !== 'AxesHelper' &&
-      obj.type !== 'TransformControls' &&
-      !obj.userData.isStartingObjectsGroup &&
-      !obj.userData.isNativeObjectsGroup
-    ) {
-      // Always remove - we'll restore from snapshot
-      // Even if fileName matches, we want to restore from snapshot to ensure correct state
-      objectsToRemove.push(obj)
-    }
-  })
-  
-  if (objectsToRemove.length > 0) {
-    console.log(`[ProjectPersistence] Clearing ${objectsToRemove.length} existing model(s) before restoration`)
-    console.log(`[ProjectPersistence]   Will restore ${fileNamesToRestore.size} model(s) from snapshot:`, Array.from(fileNamesToRestore).join(', '))
-  objectsToRemove.forEach(obj => {
-    if (obj.parent) {
-      obj.parent.remove(obj)
-    } else {
-      scene.remove(obj)
-    }
-  })
+
+  // DATA-2: Keep the live scene intact until the new roots are fully staged.
+  const previousRoots = collectProjectOwnedSceneRoots(scene)
+  const fileNamesToRestore = new Set(
+    savedObjects.filter((obj) => obj.type === 'imported' && obj.fileName).map((obj) => obj.fileName!)
+  )
+  if (previousRoots.length > 0) {
+    console.log(
+      `[ProjectPersistence] Staging restore with ${previousRoots.length} existing model(s) kept until success`
+    )
+    console.log(
+      `[ProjectPersistence]   Will restore ${fileNamesToRestore.size} model(s) from snapshot:`,
+      Array.from(fileNamesToRestore).join(', ')
+    )
   }
 
-  // Restore saved objects
+  const stagedRoots: THREE.Object3D[] = []
   let restoredCount = 0
   let failedCount = 0
   const failedObjects: Array<{ name: string; fileName?: string; error?: string }> = []
-  
+
   console.log(`[ProjectPersistence] Starting restoration of ${savedObjects.length} object(s)...`)
-  
-  for (let i = 0; i < savedObjects.length; i++) {
-    const saved = savedObjects[i]
-    try {
-      if (i % 10 === 0 && i > 0) {
-        console.log(`[ProjectPersistence] Progress: ${i}/${savedObjects.length} objects processed...`)
-      }
-      
-      const obj = await restoreSceneObject(saved, scene, viewer, missingFiles)
-      if (obj) {
-      // Only add to scene if it's not already in the scene (existing objects are already there)
-        if (!obj.parent && !scene.children.includes(obj)) {
-      scene.add(obj)
-          restoredCount++
-          
-          // CRITICAL: Verify the object was actually added
-          if (scene.children.includes(obj)) {
-            console.log(`[ProjectPersistence] ✅ Added restored object to scene: ${saved.name || saved.fileName || 'unnamed'}`)
-            console.log(`[ProjectPersistence] Object is now in scene (total children: ${scene.children.length})`)
-            
-            // For models, ensure they're visible and have content
-            if (obj.userData.isModel || obj.userData.isImportedModel) {
-              obj.visible = true
-              let meshCount = 0
-              obj.traverse((child) => {
-                if (child instanceof THREE.Mesh) {
-                  meshCount++
-                  child.visible = true
-                }
-              })
-              console.log(`[ProjectPersistence] Model visibility: object.visible=${obj.visible}, contains ${meshCount} mesh(es)`)
-            }
-          } else {
-            console.error(`[ProjectPersistence] ❌ Failed to add object to scene: ${saved.name || saved.fileName || 'unnamed'}`)
-            failedCount++
-          }
-        } else if (obj.parent) {
-          restoredCount++
-          console.log(`[ProjectPersistence] ✅ Object already has parent (part of group): ${saved.name || saved.fileName || 'unnamed'}`)
-        } else if (scene.children.includes(obj)) {
-          restoredCount++
-          console.log(`[ProjectPersistence] ✅ Object already in scene: ${saved.name || saved.fileName || 'unnamed'}`)
+
+  try {
+    for (let i = 0; i < savedObjects.length; i++) {
+      const saved = savedObjects[i]
+      try {
+        if (i % 10 === 0 && i > 0) {
+          console.log(`[ProjectPersistence] Progress: ${i}/${savedObjects.length} objects processed...`)
         }
-      } else {
+
+        const obj = await restoreSceneObject(saved, scene, viewer, missingFiles)
+        if (obj) {
+          // Stage only top-level roots; nested children are parented under their restored root.
+          const isTopLevel =
+            !obj.parent || obj.parent === scene || previousRoots.includes(obj)
+          if (isTopLevel && !stagedRoots.includes(obj)) {
+            stagedRoots.push(obj)
+          }
+
+          if (obj.userData.isModel || obj.userData.isImportedModel) {
+            obj.visible = true
+            let meshCount = 0
+            obj.traverse((child) => {
+              if (child instanceof THREE.Mesh) {
+                meshCount++
+                child.visible = true
+              }
+            })
+            console.log(
+              `[ProjectPersistence] Staged model "${saved.name || saved.fileName || 'unnamed'}" (${meshCount} mesh(es))`
+            )
+          }
+
+          restoredCount++
+        } else {
+          failedCount++
+          const errorMsg = `Failed to restore object: ${saved.name || saved.fileName || 'unnamed'}`
+          console.warn(`[ProjectPersistence] ⚠️ ${errorMsg}`)
+          failedObjects.push({
+            name: saved.name || 'unnamed',
+            fileName: saved.fileName,
+            error: 'restoreSceneObject returned null'
+          })
+        }
+      } catch (error) {
         failedCount++
-        const errorMsg = `Failed to restore object: ${saved.name || saved.fileName || 'unnamed'}`
-        console.warn(`[ProjectPersistence] ⚠️ ${errorMsg}`)
-        failedObjects.push({ 
-          name: saved.name || 'unnamed', 
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        console.error(
+          `[ProjectPersistence] ❌ Error restoring object "${saved.name || saved.fileName || 'unnamed'}":`,
+          error
+        )
+        failedObjects.push({
+          name: saved.name || 'unnamed',
           fileName: saved.fileName,
-          error: 'restoreSceneObject returned null'
+          error: errorMsg
         })
       }
-    } catch (error) {
-      failedCount++
-      const errorMsg = error instanceof Error ? error.message : String(error)
-      console.error(`[ProjectPersistence] ❌ Error restoring object "${saved.name || saved.fileName || 'unnamed'}":`, error)
-      failedObjects.push({ 
-        name: saved.name || 'unnamed', 
-        fileName: saved.fileName,
-        error: errorMsg
-      })
     }
+
+    // DATA-2: If nothing could be restored, keep the previous scene usable.
+    if (savedObjects.length > 0 && restoredCount === 0) {
+      discardStagedSceneRoots(scene, stagedRoots)
+      throw new Error(
+        'Project scene restore failed: no objects could be restored; previous scene preserved'
+      )
+    }
+
+    // Atomic commit: only now remove previous roots / attach staged ones.
+    commitSceneObjectSwap(scene, previousRoots, stagedRoots)
+    console.log(
+      `[ProjectPersistence] ✅ Atomic scene swap committed (${stagedRoots.length} root(s), removed ${previousRoots.filter((r) => !stagedRoots.includes(r)).length})`
+    )
+  } catch (error) {
+    // Hard failure before commit — discard staged orphans and keep the previous scene.
+    discardStagedSceneRoots(scene, stagedRoots)
+    console.error(
+      `[ProjectPersistence] ❌ Scene restore aborted; previous scene preserved:`,
+      error
+    )
+    throw error
   }
   
   // Log failed objects details
@@ -3865,6 +3843,7 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
   // Set flag to prevent auto-loading during project restoration
   isProjectLoading = true
 
+  try {
   const setMenuLayout = useAppStore.getState().setMenuLayout
   const saveMenuLayout = useAppStore.getState().saveMenuLayoutToStorage
 
@@ -4121,7 +4100,8 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
           stack: restoreError instanceof Error ? restoreError.stack : undefined,
           sceneObjectsCount: snapshot.sceneObjects.length
         })
-        // Continue anyway - some objects might have been restored
+        // DATA-2: Do not continue with a half-applied project when scene restore aborts.
+        throw restoreError
       }
       
       // Automatically prompt for missing files
@@ -4189,9 +4169,6 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
     }
     console.log(`[ProjectPersistence] ========================================`)
     
-    // Clear flag when project restoration is complete
-    isProjectLoading = false
-    
     // After project restoration, if Pagani model is not in the scene and auto-load is enabled,
     // auto-load it (but only if it wasn't in the snapshot)
     const hasPagani = Array.from(viewer.scene.children).some(obj => 
@@ -4249,6 +4226,9 @@ export async function applyProjectSnapshot(snapshot: SavedProject): Promise<void
         }, 500)
       }
     }
+  }
+  } finally {
+    isProjectLoading = false
   }
 }
 
@@ -4466,6 +4446,17 @@ export async function loadProjectFromFile(file: File): Promise<void> {
     throw new Error('Invalid project file. Please select a JSON project exported from the viewer.')
       }
   }
+
+    // DATA-2: Validate before mutating the live scene/store.
+    const validation = validateProjectSnapshot(parsed)
+    if (!validation.valid) {
+      throw new Error(
+        `Invalid project snapshot: ${validation.errors.join('; ') || 'validation failed'}`
+      )
+    }
+    if (validation.warnings.length > 0) {
+      console.warn(`[ProjectPersistence] Snapshot warnings:`, validation.warnings)
+    }
 
     console.log(`[ProjectPersistence] Applying project snapshot...`)
   await applyProjectSnapshot(parsed)

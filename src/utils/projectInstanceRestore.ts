@@ -1,4 +1,4 @@
-import type * as THREE from 'three'
+import * as THREE from 'three'
 
 /** Minimal saved-node shape used by DATA-1 hierarchy restore helpers. */
 export interface SavedHierarchyNode {
@@ -8,6 +8,21 @@ export interface SavedHierarchyNode {
   scale: { x: number; y: number; z: number }
   visible: boolean
   children?: SavedHierarchyNode[]
+}
+
+/** Color/PBR fields used by fixture round-trip tests (no textures). */
+export interface SavedMaterialFixture {
+  type: string
+  color?: string
+  roughness?: number
+  metalness?: number
+  opacity?: number
+  transparent?: boolean
+}
+
+export interface SavedHierarchyNodeWithMaterials extends SavedHierarchyNode {
+  materials?: SavedMaterialFixture[]
+  children?: SavedHierarchyNodeWithMaterials[]
 }
 
 /**
@@ -170,4 +185,78 @@ export function ensureInstanceId(
   }
   userData.instanceId = fallbackId
   return fallbackId
+}
+
+/** Minimal material restore for DATA-1 fixture tests (color/PBR only). */
+export function restoreMaterialFixture(saved: SavedMaterialFixture): THREE.Material {
+  const material = saved.type.includes('Basic')
+    ? new THREE.MeshBasicMaterial()
+    : new THREE.MeshStandardMaterial()
+
+  if (saved.color && 'color' in material && material.color instanceof THREE.Color) {
+    material.color.setHex(Number.parseInt(saved.color.replace('#', ''), 16))
+  }
+  if (saved.opacity !== undefined) material.opacity = saved.opacity
+  if (saved.transparent !== undefined) material.transparent = saved.transparent
+  if (material instanceof THREE.MeshStandardMaterial) {
+    if (saved.roughness !== undefined) material.roughness = saved.roughness
+    if (saved.metalness !== undefined) material.metalness = saved.metalness
+  }
+  material.needsUpdate = true
+  return material
+}
+
+/**
+ * Apply saved per-child materials onto an already-loaded hierarchy in place.
+ * Used by DATA-1 restore and fixture round-trip tests.
+ */
+export function applySavedMaterialsInPlace(
+  liveRoot: THREE.Object3D,
+  savedChildren: SavedHierarchyNodeWithMaterials[] | undefined,
+  restoreMaterial: (saved: SavedMaterialFixture) => THREE.Material = restoreMaterialFixture
+): void {
+  if (!savedChildren || savedChildren.length === 0) return
+
+  const usedLiveIndexes = new Set<number>()
+  for (let i = 0; i < savedChildren.length; i++) {
+    const savedChild = savedChildren[i]
+    const liveChild = matchSavedChildToLiveChild(
+      liveRoot.children,
+      savedChild,
+      i,
+      usedLiveIndexes
+    )
+    if (!liveChild) continue
+
+    if (
+      liveChild instanceof THREE.Mesh &&
+      savedChild.materials &&
+      savedChild.materials.length > 0
+    ) {
+      if (savedChild.materials.length === 1) {
+        liveChild.material = restoreMaterial(savedChild.materials[0])
+      } else {
+        liveChild.material = savedChild.materials.map((m) => restoreMaterial(m))
+      }
+    }
+
+    applySavedMaterialsInPlace(liveChild, savedChild.children, restoreMaterial)
+  }
+}
+
+/**
+ * Full DATA-1 in-place restore for one imported instance: root transform +
+ * hierarchy transforms/visibility + per-child materials.
+ */
+export function applySavedImportedInstanceInPlace(
+  liveRoot: THREE.Object3D,
+  saved: SavedHierarchyNodeWithMaterials & { instanceId?: string },
+  restoreMaterial: (saved: SavedMaterialFixture) => THREE.Material = restoreMaterialFixture
+): void {
+  applySavedTransformToObject(liveRoot, saved)
+  if (typeof saved.instanceId === 'string' && saved.instanceId.trim() !== '') {
+    liveRoot.userData.instanceId = saved.instanceId
+  }
+  applySavedHierarchyInPlace(liveRoot, saved.children)
+  applySavedMaterialsInPlace(liveRoot, saved.children, restoreMaterial)
 }
