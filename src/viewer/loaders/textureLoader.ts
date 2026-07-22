@@ -2,6 +2,11 @@ import * as THREE from 'three'
 import { KTX2Loader } from 'three-stdlib'
 import { loadHDR } from './hdrLoader'
 import JSZip from 'jszip'
+import {
+  ZIP_ARCHIVE_BOUNDS,
+  assertZipArchiveBounds,
+  getZipEntrySizes
+} from '../../utils/zipArchiveBounds'
 
 // Shared KTX2 loader instance
 let ktx2Loader: KTX2Loader | null = null
@@ -94,7 +99,12 @@ export async function loadTexture(
     try {
       // Try to read as ZIP archive (some old Substance archives were ZIP-based)
       const buffer = await file.arrayBuffer()
+      // DATA-5: bound Substance ZIP-like archives before scanning/extracting.
+      if (buffer.byteLength > ZIP_ARCHIVE_BOUNDS.maxCompressedBytes) {
+        throw new Error('SBAR/SBSAR archive exceeds size limits')
+      }
       const zip = await JSZip.loadAsync(buffer)
+      assertZipArchiveBounds(zip, buffer.byteLength)
       
       // Look for any image files inside the archive
       const imageExtensions = ['jpg', 'jpeg', 'png', 'tga', 'bmp', 'webp', 'tif', 'tiff', 'ktx2', 'basis']
@@ -106,6 +116,10 @@ export async function loadTexture(
         
         const entryExt = path.toLowerCase().split('.').pop()
         if (entryExt && imageExtensions.includes(entryExt)) {
+          const { uncompressedSize } = getZipEntrySizes(entry as Parameters<typeof getZipEntrySizes>[0])
+          if (uncompressedSize > ZIP_ARCHIVE_BOUNDS.maxEntryUncompressedBytes) {
+            continue
+          }
           const blob = await entry.async('blob')
           foundImage = { path, blob }
           console.log(`📦 Found embedded image in SBAR/SBSAR: ${path}`)

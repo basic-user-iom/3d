@@ -73,4 +73,18 @@ describe('projectAtomicLoad (DATA-2)', () => {
     expect(result.valid).toBe(false)
     expect(result.errors.length).toBeGreaterThan(0)
   })
+
+  test('validateProjectSnapshot rejects oversized embedded base64 totals (DATA-5)', () => {
+    const huge = 'A'.repeat(200 * 1024 * 1024) // ~150MB decoded
+    const snapshot = {
+      version: 6,
+      sceneObjects: [],
+      store: {
+        modelFiles: [{ fileName: 'huge.glb', fileData: huge }]
+      }
+    } as unknown as SavedProject
+    const result = validateProjectSnapshot(snapshot)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((e) => /Embedded model data exceeds limit/i.test(e))).toBe(true)
+  })
 })

@@ -9,6 +9,14 @@ import { load3MF } from './3mfLoader'
 import { loadCollada } from './colladaLoader'
 import { load3DS } from './3dsLoader'
 import { createScopedLoadingSession } from './scopedLoadingSession'
+import {
+  ZIP_ARCHIVE_BOUNDS,
+  assertZipArchiveBounds,
+  assertZipExtractSelectionBounds,
+  collectReferencedPathsFromModelText,
+  mapPool,
+  selectZipEntriesForExtraction
+} from '../../utils/zipArchiveBounds'
 
 function pickMainEntry(paths: string[]): string | null {
   const lower = paths.map((p) => p.toLowerCase())
@@ -18,6 +26,10 @@ function pickMainEntry(paths: string[]): string | null {
     if (idx !== -1) return paths[idx]
   }
   return null
+}
+
+async function readZipEntryText(entry: JSZip.JSZipObject): Promise<string> {
+  return entry.async('string')
 }
 
 export async function loadFromZip(
@@ -31,26 +43,60 @@ export async function loadFromZip(
   let succeeded = false
 
   try {
-    const zip = await JSZip.loadAsync(buffer)
-    const entries = Object.keys(zip.files).filter((p) => !zip.files[p].dir)
-    if (entries.length === 0) throw new Error('ZIP has no files')
+    // DATA-5: reject oversized archives before expanding entry contents.
+    if (buffer.byteLength > ZIP_ARCHIVE_BOUNDS.maxCompressedBytes) {
+      throw new Error(
+        `ZIP archive is too large (${(buffer.byteLength / (1024 * 1024)).toFixed(1)} MB; max ${Math.floor(ZIP_ARCHIVE_BOUNDS.maxCompressedBytes / (1024 * 1024))} MB)`
+      )
+    }
 
-    const mainPath = pickMainEntry(entries)
+    const zip = await JSZip.loadAsync(buffer)
+    const { entries } = assertZipArchiveBounds(zip, buffer.byteLength)
+
+    const entryPaths = entries.map((e) => e.name)
+    const mainPath = pickMainEntry(entryPaths)
     if (!mainPath) throw new Error('ZIP does not contain a supported 3D model file')
+
+    const mainFile = zip.files[mainPath]
+    const lower = mainPath.toLowerCase()
+
+    // Collect text-format dependency URIs before expanding the rest.
+    let referencedPaths: string[] = []
+    if (lower.endsWith('.gltf') || lower.endsWith('.obj') || lower.endsWith('.dae')) {
+      const mainText = await readZipEntryText(mainFile)
+      referencedPaths = collectReferencedPathsFromModelText(mainPath, mainText)
+      // OBJ may point at MTL which itself references textures — peek mtllib.
+      if (lower.endsWith('.obj')) {
+        for (const ref of [...referencedPaths]) {
+          if (!ref.toLowerCase().endsWith('.mtl')) continue
+          const mtlEntry =
+            zip.files[ref] ||
+            zip.files[mainPath.slice(0, mainPath.lastIndexOf('/') + 1) + ref]
+          if (mtlEntry && !mtlEntry.dir) {
+            const mtlText = await mtlEntry.async('string')
+            referencedPaths = referencedPaths.concat(
+              collectReferencedPathsFromModelText(ref, mtlText)
+            )
+          }
+        }
+      }
+    }
+
+    const toExtract = selectZipEntriesForExtraction(entries, mainPath, referencedPaths)
+    assertZipExtractSelectionBounds(toExtract)
 
     const urlMap = new Map<string, string>()
     const byName = new Map<string, string>()
 
-    const makeUrl = async (path: string) => {
-      const file = zip.files[path]
-      const blob = await file.async('blob')
+    await mapPool(toExtract, ZIP_ARCHIVE_BOUNDS.maxConcurrentExtracts, async (entry) => {
+      const blob = await entry.async('blob')
       const url = URL.createObjectURL(blob)
       session.registerBlobUrl(url)
-      urlMap.set(path.toLowerCase(), url)
-      byName.set(path.split('/').pop()!.toLowerCase(), url)
-    }
-
-    await Promise.all(entries.map((p) => makeUrl(p)))
+      const pathKey = entry.name.replace(/\\/g, '/').toLowerCase()
+      urlMap.set(pathKey, url)
+      const base = pathKey.split('/').pop()
+      if (base) byName.set(base, url)
+    })
 
     const caseInsensitiveMap = new Map<string, string>()
     for (const [path, url] of urlMap.entries()) {
@@ -78,10 +124,10 @@ export async function loadFromZip(
         clean = urlMatch[1]
       }
 
-      const lower = clean.toLowerCase()
+      const pathLower = clean.toLowerCase()
 
-      if (urlMap.has(lower)) {
-        return urlMap.get(lower)!
+      if (urlMap.has(pathLower)) {
+        return urlMap.get(pathLower)!
       }
 
       const withMainDir = (mainDir + clean).toLowerCase()
@@ -89,20 +135,20 @@ export async function loadFromZip(
         return urlMap.get(withMainDir)!
       }
 
-      if (caseInsensitiveMap.has(lower)) {
-        return caseInsensitiveMap.get(lower)!
+      if (caseInsensitiveMap.has(pathLower)) {
+        return caseInsensitiveMap.get(pathLower)!
       }
 
-      const baseName = lower.split('/').pop()!
+      const baseName = pathLower.split('/').pop()!
       if (baseName && byName.has(baseName)) {
         return byName.get(baseName)!
       }
 
       for (const [storedPath, blobUrl] of urlMap.entries()) {
-        if (storedPath === lower || storedPath.endsWith('/' + lower) || storedPath.endsWith(lower)) {
+        if (storedPath === pathLower || storedPath.endsWith('/' + pathLower) || storedPath.endsWith(pathLower)) {
           return blobUrl
         }
-        if (lower.endsWith('/' + storedPath) || lower === storedPath || lower.endsWith(storedPath)) {
+        if (pathLower.endsWith('/' + storedPath) || pathLower === storedPath || pathLower.endsWith(storedPath)) {
           return blobUrl
         }
         const storedBaseName = storedPath.split('/').pop()!
@@ -119,9 +165,7 @@ export async function loadFromZip(
       return url
     })
 
-    const mainFile = zip.files[mainPath]
     const mainBytes = await mainFile.async('arraybuffer')
-    const lower = mainPath.toLowerCase()
 
     let model: LoadedModel
     if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {

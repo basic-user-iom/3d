@@ -29,6 +29,11 @@ import {
   commitSceneObjectSwap,
   discardStagedSceneRoots
 } from './projectAtomicLoad'
+import {
+  JsonBoundsError,
+  PROJECT_JSON_BOUNDS,
+  parseJsonBounded
+} from './safeJsonParse'
 
 /**
  * Global File Registry - Tracks original File objects for project save/load
@@ -4263,6 +4268,8 @@ export function validateProjectSnapshot(snapshot: SavedProject): {
   // Validate model files
   let embeddedFiles = 0
   let urlReferences = 0
+  let totalEmbeddedDecodedBytes = 0
+  const maxEmbeddedDecodedBytes = PROJECT_JSON_BOUNDS.maxEmbeddedBase64Bytes
   
   if (snapshot.store?.modelFiles) {
     snapshot.store.modelFiles.forEach((file, i) => {
@@ -4276,6 +4283,9 @@ export function validateProjectSnapshot(snapshot: SavedProject): {
         const cleanBase64 = file.fileData.trim().replace(/\s/g, '')
         if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
           errors.push(`Model file ${file.fileName} has invalid base64 data`)
+        } else {
+          // DATA-5: bound total embedded payload size on load (mirrors save-time 100MB cap).
+          totalEmbeddedDecodedBytes += Math.floor(cleanBase64.length * 0.75)
         }
       }
       
@@ -4290,6 +4300,12 @@ export function validateProjectSnapshot(snapshot: SavedProject): {
         warnings.push(`Model file ${file.fileName} has no embedded data or URL`)
       }
     })
+
+    if (totalEmbeddedDecodedBytes > maxEmbeddedDecodedBytes) {
+      errors.push(
+        `Embedded model data exceeds limit (${(totalEmbeddedDecodedBytes / (1024 * 1024)).toFixed(1)} MB; max ${Math.floor(maxEmbeddedDecodedBytes / (1024 * 1024))} MB)`
+      )
+    }
   }
   
   // Validate scene objects
@@ -4321,7 +4337,13 @@ export function validateProjectSnapshot(snapshot: SavedProject): {
 export async function loadProjectFromFile(file: File): Promise<void> {
   console.log(`[ProjectPersistence] Loading project file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`)
   
-  // For large files, warn user
+  // DATA-5: hard-reject oversized project JSON before allocating the full string/parse tree.
+  if (file.size > PROJECT_JSON_BOUNDS.maxJsonBytes) {
+    throw new Error(
+      `Project file is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB; max ${Math.floor(PROJECT_JSON_BOUNDS.maxJsonBytes / (1024 * 1024))} MB)`
+    )
+  }
+
   const fileSizeMB = file.size / 1024 / 1024
   if (fileSizeMB > 50) {
     console.warn(`[ProjectPersistence] ⚠️ Large project file detected (${fileSizeMB.toFixed(2)} MB). Loading may take a while...`)
@@ -4333,18 +4355,17 @@ export async function loadProjectFromFile(file: File): Promise<void> {
     
   let parsed: SavedProject
   try {
-      // Use a timeout for JSON parsing to prevent hanging on corrupted files
-      parsed = await Promise.race([
-        Promise.resolve(JSON.parse(text) as SavedProject),
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('JSON parsing timeout (30s)')), 30000)
-        )
-      ])
+      // DATA-5: size/structure bounds + Worker parse when available (timeout can terminate).
+      parsed = await parseJsonBounded<SavedProject>(text)
       console.log(`[ProjectPersistence] JSON parsed successfully`)
   } catch (error) {
-      if (error instanceof SyntaxError) {
+      if (error instanceof JsonBoundsError) {
+        throw new Error(`Project file rejected: ${error.message}`)
+      } else if (error instanceof SyntaxError) {
         throw new Error(`Failed to parse project file (invalid JSON): ${error.message}`)
-      } else if (error instanceof Error && error.message.includes('timeout')) {
+      } else if (error instanceof Error && /Failed to parse JSON/i.test(error.message)) {
+        throw new Error(`Failed to parse project file (invalid JSON): ${error.message}`)
+      } else if (error instanceof Error && /timed out/i.test(error.message)) {
         throw new Error(`Project file is too large or corrupted. JSON parsing timed out.`)
       } else {
     throw new Error('Invalid project file. Please select a JSON project exported from the viewer.')
