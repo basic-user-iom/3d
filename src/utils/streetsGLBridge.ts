@@ -20,6 +20,7 @@ import {
   parseBridgeEnvelope,
   readCapabilityFromUrl,
   readOriginFromUrl,
+  STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS,
   STREETS_GL_BRIDGE_MAX_VERTICES,
   validateExternalObjectGeometry,
   validateSyncObjectsPayload
@@ -50,6 +51,16 @@ const STREETS_GL_EXPAND_VERTS_PER_TRI = 3
  * we never sample one atlas with another mesh's UVs (the striped/scrambled look).
  */
 export const STREETS_GL_MAX_MESH_PARTS = 48
+
+/**
+ * Max edge length (px) when serializing textures for Streets GL postMessage.
+ * Prefer near-original resolution with a firm cap — 512 looked muddy on buildings;
+ * 2048 stays under the SEC texture data-URL budget for typical JPEG albedo maps.
+ */
+export const STREETS_GL_MAX_TEXTURE_SIZE = 2048
+
+/** JPEG quality for opaque albedo maps sent across the bridge. */
+const STREETS_GL_TEXTURE_JPEG_QUALITY = 0.92
 
 export interface GeometryData {
   positions: number[] | Float32Array // [x, y, z, x, y, z, ...]
@@ -1480,7 +1491,9 @@ export class StreetsGLBridge {
           if (textureDataUrlCache.has(cacheKey)) {
             textureDataUrl = textureDataUrlCache.get(cacheKey)
           } else {
-            textureDataUrl = StreetsGLBridge.textureToDataURL(texture, 512, { forcePng })
+            textureDataUrl = StreetsGLBridge.textureToDataURL(texture, STREETS_GL_MAX_TEXTURE_SIZE, {
+              forcePng
+            })
             textureDataUrlCache.set(cacheKey, textureDataUrl)
           }
         }
@@ -1777,11 +1790,14 @@ export class StreetsGLBridge {
 
   /**
    * Convert a Three.js texture image to a data URL for postMessage transport.
-   * Resizes to maxSize to stay within structured-clone / postMessage limits.
+   * Caps the longest edge at maxSize (default 2k). Opaque maps use JPEG; PNG only when
+   * alpha is required (transparent materials / premultiplyAlpha) — do not treat Three's
+   * default RGBAFormat as "needs PNG", or every albedo gets crushed to fit the budget.
+   * If the encoded data URL exceeds the SEC char cap, retries at half size until it fits.
    */
   static textureToDataURL(
     texture: THREE.Texture,
-    maxSize = 512,
+    maxSize = STREETS_GL_MAX_TEXTURE_SIZE,
     options?: { forcePng?: boolean }
   ): string | undefined {
     const image = texture?.image as CanvasImageSource & {
@@ -1835,7 +1851,6 @@ export class StreetsGLBridge {
 
       if (!source || srcW <= 0 || srcH <= 0) return undefined
 
-      const scale = Math.min(1, maxSize / Math.max(srcW, srcH))
       const drawSource = (ctx: CanvasRenderingContext2D, targetW: number, targetH: number) => {
         ctx.clearRect(0, 0, targetW, targetH)
         // glTF/GLB textures use flipY=false in Three.js; canvas drawImage matches that convention.
@@ -1846,28 +1861,58 @@ export class StreetsGLBridge {
         ctx.drawImage(source as CanvasImageSource, 0, 0, targetW, targetH)
       }
 
+      // Prefer JPEG for opaque albedo. Three.js defaults to RGBAFormat even for opaque
+      // maps — using that alone as a PNG trigger forced aggressive 512px downscales.
       const usePng =
-        options?.forcePng === true ||
-        texture.format === THREE.RGBAFormat ||
-        (texture as any).premultiplyAlpha === true
+        options?.forcePng === true || (texture as { premultiplyAlpha?: boolean }).premultiplyAlpha === true
 
-      if (source !== canvas) {
-        canvas.width = Math.max(1, Math.round(srcW * scale))
-        canvas.height = Math.max(1, Math.round(srcH * scale))
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return undefined
-        drawSource(ctx, canvas.width, canvas.height)
-      } else if (scale < 1) {
-        const scaled = document.createElement('canvas')
-        scaled.width = Math.max(1, Math.round(srcW * scale))
-        scaled.height = Math.max(1, Math.round(srcH * scale))
-        const sctx = scaled.getContext('2d')
-        if (!sctx) return undefined
-        drawSource(sctx, scaled.width, scaled.height)
-        return scaled.toDataURL(usePng ? 'image/png' : 'image/jpeg', usePng ? undefined : 0.9)
+      const encodeAt = (edgeCap: number): string | undefined => {
+        const scale = Math.min(1, edgeCap / Math.max(srcW, srcH))
+        const outW = Math.max(1, Math.round(srcW * scale))
+        const outH = Math.max(1, Math.round(srcH * scale))
+        const mime = usePng ? 'image/png' : 'image/jpeg'
+        const quality = usePng ? undefined : STREETS_GL_TEXTURE_JPEG_QUALITY
+
+        if (source !== canvas) {
+          canvas.width = outW
+          canvas.height = outH
+          const ctx = canvas.getContext('2d')
+          if (!ctx) return undefined
+          drawSource(ctx, outW, outH)
+          return canvas.toDataURL(mime, quality)
+        }
+
+        if (scale < 1) {
+          const scaled = document.createElement('canvas')
+          scaled.width = outW
+          scaled.height = outH
+          const sctx = scaled.getContext('2d')
+          if (!sctx) return undefined
+          drawSource(sctx, outW, outH)
+          return scaled.toDataURL(mime, quality)
+        }
+
+        return canvas.toDataURL(mime, quality)
       }
 
-      return canvas.toDataURL(usePng ? 'image/png' : 'image/jpeg', usePng ? undefined : 0.9)
+      let edgeCap = Math.max(1, Math.min(maxSize, STREETS_GL_MAX_TEXTURE_SIZE))
+      let dataUrl = encodeAt(edgeCap)
+      // Stay under SEC-5 texture data-URL char budget (DoS / postMessage size).
+      while (
+        dataUrl &&
+        dataUrl.length > STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS &&
+        edgeCap > 256
+      ) {
+        edgeCap = Math.max(256, Math.floor(edgeCap / 2))
+        dataUrl = encodeAt(edgeCap)
+      }
+      if (dataUrl && dataUrl.length > STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS) {
+        console.warn(
+          `[StreetsGLBridge] Texture data URL still exceeds budget after downscale (${dataUrl.length} chars)`
+        )
+        return undefined
+      }
+      return dataUrl
     } catch (e) {
       console.warn('[StreetsGLBridge] Could not serialize texture to data URL:', e)
       return undefined

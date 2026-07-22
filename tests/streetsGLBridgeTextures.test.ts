@@ -2,13 +2,18 @@ import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest'
 import * as THREE from 'three'
 import {
   StreetsGLBridge,
-  STREETS_GL_MAX_MESH_PARTS
+  STREETS_GL_MAX_MESH_PARTS,
+  STREETS_GL_MAX_TEXTURE_SIZE
 } from '../src/utils/streetsGLBridge'
+import { STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS } from '../src/utils/streetsGLBridgeSecurity'
+
+type CanvasRecord = { width: number; height: number; mime?: string }
 
 /**
  * Minimal canvas stub so textureToDataURL can run in Node/vitest.
+ * Tracks last encode size/mime for quality assertions.
  */
-function installCanvasStub() {
+function installCanvasStub(records: CanvasRecord[] = []) {
   class FakeCanvas {
     width = 0
     height = 0
@@ -25,6 +30,7 @@ function installCanvasStub() {
       }
     }
     toDataURL(type?: string) {
+      records.push({ width: this.width, height: this.height, mime: type })
       return `data:${type || 'image/png'};base64,STUB`
     }
   }
@@ -65,6 +71,66 @@ function makeSolidMesh(name: string, color: number): THREE.Mesh {
   mesh.name = name
   return mesh
 }
+
+describe('StreetsGLBridge texture serialization quality', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('caps long-edge at STREETS_GL_MAX_TEXTURE_SIZE (2k) and prefers JPEG for opaque maps', () => {
+    const records: CanvasRecord[] = []
+    installCanvasStub(records)
+
+    // Undersized buffer is fine — stub putImageData never samples full texels.
+    const tex = new THREE.DataTexture(new Uint8Array(4), 4096, 4096)
+    tex.needsUpdate = true
+    const url = StreetsGLBridge.textureToDataURL(tex)
+    expect(url).toMatch(/^data:image\/jpeg/)
+    expect(STREETS_GL_MAX_TEXTURE_SIZE).toBe(2048)
+    expect(records.length).toBeGreaterThan(0)
+    const last = records[records.length - 1]
+    expect(Math.max(last.width, last.height)).toBe(STREETS_GL_MAX_TEXTURE_SIZE)
+    expect(last.mime).toBe('image/jpeg')
+  })
+
+  it('uses PNG when forcePng is set (transparent materials)', () => {
+    const records: CanvasRecord[] = []
+    installCanvasStub(records)
+    const tex = new THREE.DataTexture(new Uint8Array(4), 64, 64)
+    tex.needsUpdate = true
+    const url = StreetsGLBridge.textureToDataURL(tex, STREETS_GL_MAX_TEXTURE_SIZE, { forcePng: true })
+    expect(url).toMatch(/^data:image\/png/)
+    expect(records[records.length - 1].mime).toBe('image/png')
+  })
+
+  it('downscales further when encoded URL would exceed SEC texture char budget', () => {
+    const records: CanvasRecord[] = []
+    installCanvasStub(records)
+    // Override toDataURL to emit oversized payloads until canvas is small enough
+    const doc = (globalThis as any).document
+    const origCreate = doc.createElement.bind(doc)
+    doc.createElement = (tag: string) => {
+      const canvas = origCreate(tag)
+      if (tag === 'canvas') {
+        canvas.toDataURL = (type?: string) => {
+          records.push({ width: canvas.width, height: canvas.height, mime: type })
+          const edge = Math.max(canvas.width, canvas.height)
+          if (edge > 512) {
+            return `data:${type || 'image/jpeg'};base64,` + 'A'.repeat(STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS)
+          }
+          return `data:${type || 'image/jpeg'};base64,OK`
+        }
+      }
+      return canvas
+    }
+
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2048, 2048)
+    tex.needsUpdate = true
+    const url = StreetsGLBridge.textureToDataURL(tex, 2048)
+    expect(url).toBe('data:image/jpeg;base64,OK')
+    expect(records.some((r) => Math.max(r.width, r.height) <= 512)).toBe(true)
+  })
+})
 
 describe('StreetsGLBridge multi-material texture parts', () => {
   beforeAll(() => {
