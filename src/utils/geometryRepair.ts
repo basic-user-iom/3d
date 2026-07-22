@@ -599,6 +599,115 @@ export function repairGeometry(
   return workingGeometry
 }
 
+export interface SimpleDecimationOptions {
+  /** More lenient fine-detail thresholds (high triangle-to-vertex ratio meshes). */
+  isHighRatioMesh?: boolean
+  /**
+   * Streets GL map-proxy mode: never skip for fine details, and skip hole validation.
+   * Prefer a lower-fidelity silhouette over failing the bridge vertex budget.
+   */
+  bridgeProxy?: boolean
+}
+
+function resolveSimpleDecimationOptions(
+  isHighRatioMeshOrOptions: boolean | SimpleDecimationOptions = false
+): Required<SimpleDecimationOptions> {
+  if (typeof isHighRatioMeshOrOptions === 'boolean') {
+    return { isHighRatioMesh: isHighRatioMeshOrOptions, bridgeProxy: false }
+  }
+  return {
+    isHighRatioMesh: isHighRatioMeshOrOptions.isHighRatioMesh === true,
+    bridgeProxy: isHighRatioMeshOrOptions.bridgeProxy === true
+  }
+}
+
+/**
+ * Ensure geometry has an index (sequential for non-indexed triangle lists).
+ */
+function ensureIndexedGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeometry | null {
+  if (!geometry.attributes.position) return null
+  if (geometry.index) return geometry
+  const count = geometry.attributes.position.count
+  if (count < 3 || count % 3 !== 0) return null
+  const indexed = geometry.clone()
+  const indices = new Uint32Array(count)
+  for (let i = 0; i < count; i++) indices[i] = i
+  indexed.setIndex(new THREE.BufferAttribute(indices, 1))
+  return indexed
+}
+
+/**
+ * Always-reduce triangle budget helper for Streets GL bridge payloads.
+ * Keeps the largest-area triangles; skips hole validation and fine-detail bailouts.
+ * Works on indexed or non-indexed triangle lists.
+ */
+export function forceReduceToTriangleBudget(
+  geometry: THREE.BufferGeometry,
+  targetTriangleCount: number,
+  meshName?: string
+): THREE.BufferGeometry | null {
+  try {
+    const indexed = ensureIndexedGeometry(geometry)
+    if (!indexed?.index || !indexed.attributes.position) return null
+
+    const indices = indexed.index.array
+    const positions = indexed.attributes.position.array
+    const originalTriangleCount = Math.floor(indices.length / 3)
+    if (targetTriangleCount < 3 || originalTriangleCount < 3) return null
+    if (targetTriangleCount >= originalTriangleCount) {
+      return indexed === geometry ? geometry.clone() : indexed
+    }
+
+    type Tri = { area: number; i0: number; i1: number; i2: number }
+    const triangles: Tri[] = []
+    for (let i = 0; i < indices.length; i += 3) {
+      const i0 = indices[i]
+      const i1 = indices[i + 1]
+      const i2 = indices[i + 2]
+      if (i0 === i1 || i1 === i2 || i0 === i2) continue
+      const x0 = positions[i0 * 3]
+      const y0 = positions[i0 * 3 + 1]
+      const z0 = positions[i0 * 3 + 2]
+      const x1 = positions[i1 * 3]
+      const y1 = positions[i1 * 3 + 1]
+      const z1 = positions[i1 * 3 + 2]
+      const x2 = positions[i2 * 3]
+      const y2 = positions[i2 * 3 + 1]
+      const z2 = positions[i2 * 3 + 2]
+      const v0x = x1 - x0
+      const v0y = y1 - y0
+      const v0z = z1 - z0
+      const v1x = x2 - x0
+      const v1y = y2 - y0
+      const v1z = z2 - z0
+      const crossX = v0y * v1z - v0z * v1y
+      const crossY = v0z * v1x - v0x * v1z
+      const crossZ = v0x * v1y - v0y * v1x
+      const area = 0.5 * Math.sqrt(crossX * crossX + crossY * crossY + crossZ * crossZ)
+      triangles.push({ area, i0, i1, i2 })
+    }
+
+    if (triangles.length < 3) return null
+    triangles.sort((a, b) => b.area - a.area)
+    const keep = triangles.slice(0, Math.min(targetTriangleCount, triangles.length))
+    const newIndices: number[] = []
+    for (const tri of keep) newIndices.push(tri.i0, tri.i1, tri.i2)
+
+    const simplified = indexed.clone()
+    simplified.setIndex(newIndices)
+    simplified.computeVertexNormals()
+    simplified.computeBoundingSphere()
+    simplified.computeBoundingBox()
+    console.log(
+      `[ForceReduce] "${meshName || 'unnamed'}": ${originalTriangleCount} → ${keep.length} triangles (bridge budget)`
+    )
+    return simplified
+  } catch (error) {
+    console.warn(`[ForceReduce] Failed for "${meshName || 'unnamed'}":`, error)
+    return null
+  }
+}
+
 /**
  * Simple manual decimation algorithm that removes triangles by area.
  * This is a fallback for when MeshoptSimplifier fails due to non-manifold geometry.
@@ -612,22 +721,27 @@ export function repairGeometry(
  * @param geometry - The geometry to simplify
  * @param targetTriangleCount - Target number of triangles
  * @param meshName - Optional mesh name for logging
- * @param isHighRatioMesh - If true, use more lenient fine detail thresholds (for meshes with high triangle-to-vertex ratio)
+ * @param isHighRatioMeshOrOptions - Legacy boolean, or {@link SimpleDecimationOptions}
  * @returns Simplified geometry or null if simplification fails
  */
 export function simpleDecimation(
   geometry: THREE.BufferGeometry,
   targetTriangleCount: number,
   meshName?: string,
-  isHighRatioMesh: boolean = false
+  isHighRatioMeshOrOptions: boolean | SimpleDecimationOptions = false
 ): THREE.BufferGeometry | null {
   try {
-    if (!geometry.index || !geometry.attributes.position) {
+    const options = resolveSimpleDecimationOptions(isHighRatioMeshOrOptions)
+    const isHighRatioMesh = options.isHighRatioMesh
+    const bridgeProxy = options.bridgeProxy
+
+    const working = bridgeProxy ? ensureIndexedGeometry(geometry) : geometry
+    if (!working?.index || !working.attributes.position) {
       return null
     }
 
-    const indices = geometry.index.array
-    const positions = geometry.attributes.position.array
+    const indices = working.index.array
+    const positions = working.attributes.position.array
     const originalTriangleCount = indices.length / 3
 
     if (targetTriangleCount >= originalTriangleCount || targetTriangleCount < 3) {
@@ -712,8 +826,8 @@ export function simpleDecimation(
     const detailPreservationThreshold = isHighRatioMesh ? 0.3 : 0.2 // Higher threshold for high-ratio meshes
 
     // If mesh has too many fine details, skip simplification to preserve details
-    // Use more lenient threshold for high-ratio meshes
-    if (fineDetailRatio > skipThreshold) {
+    // Bridge proxy must still reduce — silhouette under budget beats detail preservation.
+    if (!bridgeProxy && fineDetailRatio > skipThreshold) {
       console.log(`[SimpleDecimation] ⚠️ "${meshName || 'unnamed'}" has too many fine details (${(fineDetailRatio * 100).toFixed(1)}% small triangles). Skipping simplification to preserve headlight internals, badges, mirrors, and other details.`)
       return null // Skip simplification to preserve fine details
     }
@@ -772,7 +886,7 @@ export function simpleDecimation(
     }
 
     // Create new geometry with simplified indices
-    const simplifiedGeometry = geometry.clone()
+    const simplifiedGeometry = working.clone()
     simplifiedGeometry.setIndex(newIndices)
 
     // Recompute normals and bounds
@@ -780,12 +894,14 @@ export function simpleDecimation(
     simplifiedGeometry.computeBoundingSphere()
     simplifiedGeometry.computeBoundingBox()
 
-    // Validate the simplified geometry to ensure we didn't create holes
-    // Use a more lenient validation for fallback decimation since it's already a fallback
-    const isValid = validateSimplifiedGeometry(geometry, simplifiedGeometry, meshName)
-    if (!isValid) {
-      console.warn(`[SimpleDecimation] ⚠️ Simplified geometry failed validation for "${meshName || 'unnamed'}" - possible holes detected. Returning null.`)
-      return null
+    // Validate the simplified geometry to ensure we didn't create holes.
+    // Bridge proxy skips this — failing validation previously shipped 5M-vert originals.
+    if (!bridgeProxy) {
+      const isValid = validateSimplifiedGeometry(working, simplifiedGeometry, meshName)
+      if (!isValid) {
+        console.warn(`[SimpleDecimation] ⚠️ Simplified geometry failed validation for "${meshName || 'unnamed'}" - possible holes detected. Returning null.`)
+        return null
+      }
     }
 
     const finalTriangleCount = newIndices.length / 3

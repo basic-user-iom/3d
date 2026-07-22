@@ -10,7 +10,8 @@ export const STREETS_GL_ALLOWED_PARENT_ORIGINS = new Set([
   'http://127.0.0.1:3000'
 ])
 
-export const STREETS_GL_BRIDGE_MAX_VERTICES = 200_000
+/** Mirrored from parent streetsGLBridgeSecurity — keep in sync. */
+export const STREETS_GL_BRIDGE_MAX_VERTICES = 500_000
 export const STREETS_GL_BRIDGE_MAX_PARTS = 48
 export const STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS = 2_500_000
 export const STREETS_GL_BRIDGE_MAX_SYNC_OBJECTS = 256

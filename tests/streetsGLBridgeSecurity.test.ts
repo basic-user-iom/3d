@@ -59,11 +59,17 @@ describe('streetsGLBridgeSecurity (SEC-5)', () => {
 
     const tooManyVerts = {
       id: 'big',
-      geometry: { positions: new Float32Array((200_000 + 1) * 3) }
+      geometry: { positions: new Float32Array((500_000 + 1) * 3) }
     }
     const rejected = validateExternalObjectGeometry(tooManyVerts)
     expect(rejected.ok).toBe(false)
     expect(rejected.error).toMatch(/vertex budget/i)
+
+    const underBudget = {
+      id: 'ok',
+      geometry: { positions: new Float32Array(500_000 * 3) }
+    }
+    expect(validateExternalObjectGeometry(underBudget).ok).toBe(true)
 
     const tooManyParts = {
       id: 'parts',

@@ -1793,12 +1793,19 @@ function syncObjectToStreetsGLInternal(
         const failMsg = `Failed to add "${model.name || objectId}" to Streets GL map${vertexCount ? ` (${vertexCount.toLocaleString()} vertices)` : ''}. Check the browser console for details.`
         console.warn('[StreetsGLSync] Failed to add model to Streets GL scene:', objectId, { vertexCount })
         useAppStore.getState().setError(failMsg)
-        if (reject) reject(new Error('Add failed'))
+        // Resolve (don't reject) so fire-and-forget sync callers don't spam uncaught "Add failed".
+        // The toast already communicates the failure; Three.js viewer stays usable.
+        if (resolve) resolve()
       }
     }).catch((error) => {
       model.userData.streetsGLSyncing = false
       console.error('[StreetsGLSync] Error syncing model to Streets GL:', error)
-      if (reject) reject(error)
+      useAppStore.getState().setError(
+        `Streets GL sync error for "${model.name || objectId}": ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+      if (resolve) resolve()
     })
   }
 }

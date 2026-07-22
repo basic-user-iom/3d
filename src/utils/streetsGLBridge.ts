@@ -5,7 +5,7 @@
 
 import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
-import { simpleDecimation } from './geometryRepair'
+import { forceReduceToTriangleBudget, simpleDecimation } from './geometryRepair'
 import { resolveIframeVisibleForBridge } from '../viewer/streetsGLIframeVisibility'
 import {
   DEFAULT_STREETS_GL_ORIGIN,
@@ -15,6 +15,7 @@ import {
   parseBridgeEnvelope,
   readCapabilityFromUrl,
   readOriginFromUrl,
+  STREETS_GL_BRIDGE_MAX_VERTICES,
   validateExternalObjectGeometry,
   validateSyncObjectsPayload
 } from './streetsGLBridgeSecurity'
@@ -22,11 +23,21 @@ import {
 const isStreetsGLDebugEnabled = (): boolean =>
   typeof window !== 'undefined' && (window as any).__streetsGLDebug === true
 
-/** Vertex budget for a single Streets GL bridge payload (postMessage structured clone). */
-export const STREETS_GL_MAX_VERTICES = 200_000
+/**
+ * Vertex budget for a single Streets GL bridge payload (postMessage structured clone).
+ * Kept in lockstep with SEC-5 `STREETS_GL_BRIDGE_MAX_VERTICES`.
+ */
+export const STREETS_GL_MAX_VERTICES = STREETS_GL_BRIDGE_MAX_VERTICES
 
 /** Warn when geometry exceeds this; still attempt sync with TypedArrays. */
-export const STREETS_GL_LARGE_VERTEX_WARN = 150_000
+export const STREETS_GL_LARGE_VERTEX_WARN = Math.floor(STREETS_GL_MAX_VERTICES * 0.75)
+
+/**
+ * extractMeshParts expands indexed triangles to unique verts (3 corners / tri).
+ * Target triangle count so expanded vertex count stays under the budget.
+ */
+const STREETS_GL_EXPAND_VERTS_PER_TRI = 3
+
 
 /**
  * Cap unique textured/solid parts per object. Materials that share a texture.uuid are
@@ -342,25 +353,26 @@ export class StreetsGLBridge {
   }
 
   /**
-   * Send message to Streets GL iframe
+   * Send message to Streets GL iframe.
+   * @returns false when outbound validation rejected the payload (caller must not wait for ack).
    */
-  private sendMessage(type: string, payload: any): void {
+  private sendMessage(type: string, payload: any): boolean {
     if (!this.iframeWindow) {
       console.warn('[StreetsGLBridge] Iframe window not available')
-      return
+      return false
     }
 
     if (type === 'STREETS_GL_ADD_OBJECT') {
       const validation = validateExternalObjectGeometry(payload)
       if (!validation.ok) {
         console.error('[StreetsGLBridge] Rejected outbound addObject:', validation.error)
-        return
+        return false
       }
     } else if (type === 'STREETS_GL_SYNC_OBJECTS') {
       const validation = validateSyncObjectsPayload(payload)
       if (!validation.ok) {
         console.error('[StreetsGLBridge] Rejected outbound syncObjects:', validation.error)
-        return
+        return false
       }
     }
 
@@ -373,6 +385,7 @@ export class StreetsGLBridge {
       },
       this.targetOrigin
     )
+    return true
   }
 
   /**
@@ -407,32 +420,45 @@ export class StreetsGLBridge {
         } : null
       })
 
-      const vertexCountForTimeout = object.geometry?.positions?.length
-        ? Math.floor(object.geometry.positions.length / 3)
-        : 0
+      // Ensure geometry arrays are plain arrays for reliable postMessage (structured clone)
+      const payload = StreetsGLBridge.ensureGeometrySerializable(object)
+      const vertexCount = StreetsGLBridge.countObjectVertices(payload)
+
+      // Fail fast on SEC-5 budget / malformed geometry — never hang waiting for OBJECT_ADDED.
+      const preflight = validateExternalObjectGeometry(payload)
+      if (!preflight.ok) {
+        const errMsg = preflight.error || 'Geometry rejected by bridge security limits'
+        console.error('[StreetsGLBridge] Rejected outbound addObject:', errMsg)
+        useAppStore.getState().setError(
+          `Could not add "${object.metadata?.name || object.id}" to Streets GL: ${errMsg}. ` +
+            (vertexCount > STREETS_GL_MAX_VERTICES
+              ? 'Simplify the model in the Optimize panel, or use a lower-poly version.'
+              : 'Check the browser console for details.')
+        )
+        resolve({ success: false, queued: false })
+        return
+      }
+
       const addTimeoutMs = Math.min(
         60_000,
-        Math.max(8_000, 5_000 + Math.floor(vertexCountForTimeout / 50))
+        Math.max(8_000, 5_000 + Math.floor(vertexCount / 50))
       )
 
       const timeout = setTimeout(() => {
         this.off('STREETS_GL_OBJECT_ADDED', handler)
-        const msg = `[StreetsGLBridge] Timeout (${addTimeoutMs}ms) waiting for Streets GL to add object: ${object.id} (${vertexCountForTimeout.toLocaleString()} vertices)`
+        const msg = `[StreetsGLBridge] Timeout (${addTimeoutMs}ms) waiting for Streets GL to add object: ${object.id} (${vertexCount.toLocaleString()} vertices)`
         console.error(msg)
         useAppStore.getState().setError(
-          `Streets GL import timed out for "${object.metadata?.name || object.id}" (${vertexCountForTimeout.toLocaleString()} vertices). Try simplifying the model in the Optimize panel.`
+          `Streets GL import timed out for "${object.metadata?.name || object.id}" (${vertexCount.toLocaleString()} vertices). Try simplifying the model in the Optimize panel.`
         )
         resolve({ success: false, queued: false })
       }, addTimeoutMs)
 
-      const handler = (payload: any) => {
-        if (payload.objectId === object.id) {
+      const handler = (payloadAck: any) => {
+        if (payloadAck.objectId === object.id) {
           clearTimeout(timeout)
           this.off('STREETS_GL_OBJECT_ADDED', handler)
-          if (payload.success) {
-            const vertexCount = object.geometry?.positions?.length
-              ? Math.floor(object.geometry.positions.length / 3)
-              : 0
+          if (payloadAck.success) {
             console.log('[StreetsGLBridge] ✅ Object added to Streets GL:', {
               id: object.id,
               name: object.metadata?.name || object.id,
@@ -442,34 +468,35 @@ export class StreetsGLBridge {
             })
             this.debugLog('[StreetsGLBridge] ✅ Object successfully added to Streets GL:', object.id)
           } else {
-            console.error('[StreetsGLBridge] ❌ Failed to add object to Streets GL:', object.id, payload.error)
+            console.error('[StreetsGLBridge] ❌ Failed to add object to Streets GL:', object.id, payloadAck.error)
             useAppStore.getState().setError(
-              `Streets GL rejected object "${object.metadata?.name || object.id}": ${payload.error || 'unknown error'}`
+              `Streets GL rejected object "${object.metadata?.name || object.id}": ${payloadAck.error || 'unknown error'}`
             )
           }
-          resolve({ success: payload.success === true, queued: false })
+          resolve({ success: payloadAck.success === true, queued: false })
         }
       }
 
       this.on('STREETS_GL_OBJECT_ADDED', handler)
 
-      // Ensure geometry arrays are plain arrays for reliable postMessage (structured clone)
-      const payload = StreetsGLBridge.ensureGeometrySerializable(object)
-      const vertexCount = payload.geometry?.positions?.length
-        ? Math.floor(payload.geometry.positions.length / 3)
-        : 0
       if (vertexCount > STREETS_GL_LARGE_VERTEX_WARN) {
         console.warn('[StreetsGLBridge] ⚠️ Large geometry for Streets GL bridge:', {
           id: object.id,
           vertexCount,
-          note: vertexCount > STREETS_GL_MAX_VERTICES
-            ? 'Geometry was auto-simplified for the bridge; full detail remains in the main viewer'
-            : 'Using compact TypedArray transport'
+          note: 'Using compact TypedArray transport under SEC-5 vertex budget'
         })
       }
 
       try {
-        this.sendMessage('STREETS_GL_ADD_OBJECT', payload)
+        const sent = this.sendMessage('STREETS_GL_ADD_OBJECT', payload)
+        if (!sent) {
+          clearTimeout(timeout)
+          this.off('STREETS_GL_OBJECT_ADDED', handler)
+          useAppStore.getState().setError(
+            `Could not send model to Streets GL (${vertexCount.toLocaleString()} vertices): rejected by bridge limits.`
+          )
+          resolve({ success: false, queued: false })
+        }
       } catch (postError) {
         clearTimeout(timeout)
         this.off('STREETS_GL_OBJECT_ADDED', handler)
@@ -988,6 +1015,179 @@ export class StreetsGLBridge {
   }
 
   /**
+   * Count vertices across single geometry + parts (SEC-5 budget accounting).
+   */
+  static countObjectVertices(object: StreetsGLObject): number {
+    if (object.parts && object.parts.length > 0) {
+      return object.parts.reduce((sum, part) => {
+        const len = part.geometry?.positions?.length || 0
+        return sum + Math.floor(len / 3)
+      }, 0)
+    }
+    const len = object.geometry?.positions?.length || 0
+    return Math.floor(len / 3)
+  }
+
+  /**
+   * Thin expanded mesh parts until total vertex count ≤ budget.
+   * Drops smallest-area triangles from the heaviest parts first.
+   */
+  static reducePartsToVertexBudget(
+    parts: StreetsGLMeshPart[],
+    maxVertices: number = STREETS_GL_MAX_VERTICES
+  ): StreetsGLMeshPart[] {
+    if (parts.length === 0) return parts
+
+    const totalVerts = parts.reduce(
+      (sum, p) => sum + Math.floor((p.geometry.positions?.length || 0) / 3),
+      0
+    )
+    if (totalVerts <= maxVertices) return parts
+
+    // Expanded verts ≈ 3 per triangle (non-indexed corner dump). Target triangle count.
+    const targetTris = Math.max(4, Math.floor(maxVertices / STREETS_GL_EXPAND_VERTS_PER_TRI))
+    const currentTris = parts.reduce((sum, p) => {
+      const idx = p.geometry.indices
+      if (idx && idx.length > 0) return sum + Math.floor(idx.length / 3)
+      return sum + Math.floor((p.geometry.positions?.length || 0) / 9)
+    }, 0)
+    if (currentTris <= targetTris) {
+      // Degenerate case: verts over budget without enough tris to thin — drop trailing parts.
+      let remaining = maxVertices
+      const kept: StreetsGLMeshPart[] = []
+      for (const part of parts) {
+        const verts = Math.floor((part.geometry.positions?.length || 0) / 3)
+        if (verts <= remaining) {
+          kept.push(part)
+          remaining -= verts
+        }
+      }
+      return kept
+    }
+
+    const ratio = targetTris / currentTris
+    console.warn('[StreetsGLBridge] Post-extract triangle thin to meet vertex budget:', {
+      totalVerts,
+      maxVertices,
+      currentTris,
+      targetTris,
+      ratio: ratio.toFixed(3)
+    })
+
+    return parts
+      .map((part) => {
+        const positions = part.geometry.positions
+        const normals = part.geometry.normals
+        const uvs = part.geometry.uvs
+        const indices = part.geometry.indices
+        if (!positions || positions.length < 9) return part
+
+        // Build triangle list with areas (expanded or indexed)
+        type Tri = { area: number; corners: [number, number, number] }
+        const tris: Tri[] = []
+        const posArr = positions as ArrayLike<number>
+
+        const areaFor = (i0: number, i1: number, i2: number): number => {
+          const x0 = posArr[i0 * 3]
+          const y0 = posArr[i0 * 3 + 1]
+          const z0 = posArr[i0 * 3 + 2]
+          const x1 = posArr[i1 * 3]
+          const y1 = posArr[i1 * 3 + 1]
+          const z1 = posArr[i1 * 3 + 2]
+          const x2 = posArr[i2 * 3]
+          const y2 = posArr[i2 * 3 + 1]
+          const z2 = posArr[i2 * 3 + 2]
+          const v0x = x1 - x0
+          const v0y = y1 - y0
+          const v0z = z1 - z0
+          const v1x = x2 - x0
+          const v1y = y2 - y0
+          const v1z = z2 - z0
+          const cx = v0y * v1z - v0z * v1y
+          const cy = v0z * v1x - v0x * v1z
+          const cz = v0x * v1y - v0y * v1x
+          return 0.5 * Math.sqrt(cx * cx + cy * cy + cz * cz)
+        }
+
+        if (indices && indices.length >= 3) {
+          const idx = indices as ArrayLike<number>
+          for (let i = 0; i + 2 < idx.length; i += 3) {
+            const a = idx[i]
+            const b = idx[i + 1]
+            const c = idx[i + 2]
+            tris.push({ area: areaFor(a, b, c), corners: [a, b, c] })
+          }
+        } else {
+          const vertCount = Math.floor(posArr.length / 3)
+          for (let i = 0; i + 2 < vertCount; i += 3) {
+            tris.push({ area: areaFor(i, i + 1, i + 2), corners: [i, i + 1, i + 2] })
+          }
+        }
+
+        const keepCount = Math.max(1, Math.floor(tris.length * ratio))
+        if (keepCount >= tris.length) return part
+        tris.sort((a, b) => b.area - a.area)
+        const keep = tris.slice(0, keepCount)
+
+        // Re-expand kept triangles into compact buffers
+        const newPos: number[] = []
+        const newNorm: number[] = []
+        const newUv: number[] = []
+        const newIdx: number[] = []
+        const normArr = normals as ArrayLike<number> | undefined
+        const uvArr = uvs as ArrayLike<number> | undefined
+        let vOut = 0
+        for (const tri of keep) {
+          for (const src of tri.corners) {
+            newPos.push(posArr[src * 3], posArr[src * 3 + 1], posArr[src * 3 + 2])
+            if (normArr && normArr.length >= (src + 1) * 3) {
+              newNorm.push(normArr[src * 3], normArr[src * 3 + 1], normArr[src * 3 + 2])
+            } else {
+              newNorm.push(0, 1, 0)
+            }
+            if (uvArr && uvArr.length >= (src + 1) * 2) {
+              newUv.push(uvArr[src * 2], uvArr[src * 2 + 1])
+            } else {
+              newUv.push(0, 0)
+            }
+            newIdx.push(vOut++)
+          }
+        }
+
+        return {
+          ...part,
+          geometry: {
+            positions: Float32Array.from(newPos),
+            normals: Float32Array.from(newNorm),
+            uvs: Float32Array.from(newUv),
+            indices: Uint32Array.from(newIdx)
+          }
+        }
+      })
+      .filter((p) => (p.geometry.positions?.length || 0) >= 9)
+  }
+
+  /**
+   * Reduce a source BufferGeometry for Streets GL bridge transport.
+   * Tries bridge-proxy SimpleDecimation, then forced largest-triangle reduce.
+   */
+  static simplifyGeometryForBridge(
+    geom: THREE.BufferGeometry,
+    targetTris: number,
+    meshName: string
+  ): THREE.BufferGeometry | null {
+    const triCount = geom.index
+      ? Math.floor(geom.index.count / 3)
+      : Math.floor((geom.attributes.position?.count || 0) / 3)
+    if (triCount <= targetTris) return null
+
+    const viaSimple = simpleDecimation(geom, targetTris, meshName, { bridgeProxy: true })
+    if (viaSimple && viaSimple !== geom) return viaSimple
+
+    return forceReduceToTriangleBudget(geom, targetTris, meshName)
+  }
+
+  /**
    * Ensure geometry uses compact TypedArrays for postMessage (structured clone).
    * TypedArrays are ~4× smaller than plain JS number arrays and clone faster.
    */
@@ -1190,18 +1390,35 @@ export class StreetsGLBridge {
     const textureDataUrlCache = new Map<string, string | undefined>()
 
     let totalSourceVertices = 0
+    let totalSourceTris = 0
     threeObject.traverse((obj: any) => {
       if (obj.isMesh && obj.geometry?.attributes?.position) {
-        totalSourceVertices += obj.geometry.attributes.position.count
+        const geom = obj.geometry as THREE.BufferGeometry
+        const posCount = geom.attributes.position.count
+        totalSourceVertices += posCount
+        if (geom.index) {
+          totalSourceTris += Math.floor(geom.index.count / 3)
+        } else {
+          totalSourceTris += Math.floor(posCount / 3)
+        }
       }
     })
-    const needsSimplify = totalSourceVertices > STREETS_GL_MAX_VERTICES
-    const simplifyRatio = needsSimplify ? STREETS_GL_MAX_VERTICES / totalSourceVertices : 1
+    // After extract, each triangle becomes 3 unique verts — budget against expanded size.
+    const estimatedExpandedVerts = totalSourceTris * STREETS_GL_EXPAND_VERTS_PER_TRI
+    const needsSimplify = estimatedExpandedVerts > STREETS_GL_MAX_VERTICES
+    const targetExpandedTris = Math.max(
+      4,
+      Math.floor(STREETS_GL_MAX_VERTICES / STREETS_GL_EXPAND_VERTS_PER_TRI)
+    )
+    const simplifyRatio = needsSimplify ? targetExpandedTris / Math.max(1, totalSourceTris) : 1
     if (needsSimplify) {
       console.warn('[StreetsGLBridge] Auto-simplifying model for Streets GL bridge:', {
         name: threeObject.name || 'unnamed',
         originalVertices: totalSourceVertices,
+        originalTriangles: totalSourceTris,
+        estimatedExpandedVerts,
         targetVertices: STREETS_GL_MAX_VERTICES,
+        targetTriangles: targetExpandedTris,
         ratio: simplifyRatio.toFixed(3)
       })
     }
@@ -1333,10 +1550,16 @@ export class StreetsGLBridge {
     const traverse = (obj: any) => {
       if (obj.isMesh && obj.geometry) {
         let geom: THREE.BufferGeometry = obj.geometry
-        if (needsSimplify && geom.index) {
-          const triCount = geom.index.count / 3
+        if (needsSimplify) {
+          const triCount = geom.index
+            ? Math.floor(geom.index.count / 3)
+            : Math.floor((geom.attributes.position?.count || 0) / 3)
           const targetTris = Math.max(4, Math.floor(triCount * simplifyRatio))
-          const simplified = simpleDecimation(geom, targetTris, obj.name || 'mesh')
+          const simplified = StreetsGLBridge.simplifyGeometryForBridge(
+            geom,
+            targetTris,
+            obj.name || 'mesh'
+          )
           if (simplified && simplified !== geom) {
             geom = simplified
             disposableGeometries.push(simplified)
@@ -1400,6 +1623,7 @@ export class StreetsGLBridge {
     if (needsSimplify) {
       threeObject.userData.streetsGLGeometrySimplified = true
       threeObject.userData.streetsGLOriginalVertexCount = totalSourceVertices
+      threeObject.userData.streetsGLOriginalTriangleCount = totalSourceTris
     }
 
     const sorted = Array.from(buckets.entries())
@@ -1414,7 +1638,7 @@ export class StreetsGLBridge {
     }
 
     const kept = sorted.slice(0, STREETS_GL_MAX_MESH_PARTS)
-    return kept.map(({ bucket }) => {
+    const parts = kept.map(({ bucket }) => {
       const positions = Float32Array.from(bucket.positions)
       let normals = Float32Array.from(bucket.normals)
       if (normals.length !== positions.length) {
@@ -1447,6 +1671,8 @@ export class StreetsGLBridge {
         baseColorTextureDataUrl: bucket.textureDataUrl
       } satisfies StreetsGLMeshPart
     })
+
+    return StreetsGLBridge.reducePartsToVertexBudget(parts, STREETS_GL_MAX_VERTICES)
   }
 
   /**
