@@ -213,6 +213,20 @@ export default function LightingPanel() {
     setHdrUrlInput(hdrUrl ?? '')
   }, [hdrUrl])
 
+  const applyHdrUrl = useCallback((urlFromArg?: string) => {
+    const nextUrl = (urlFromArg ?? hdrUrlInput).trim()
+    if (!nextUrl) {
+      return
+    }
+    if (hdrObjectUrlRef.current) {
+      URL.revokeObjectURL(hdrObjectUrlRef.current)
+      hdrObjectUrlRef.current = null
+    }
+    setHdrFile(null)
+    setHdrUrl(nextUrl)
+    setHdrEnabled(true)
+  }, [hdrUrlInput, setHdrEnabled, setHdrFile, setHdrUrl])
+
   if (!showLightingPanel) return null
 
   // Handle light selection - attach transform controls when clicking on a light
@@ -238,20 +252,6 @@ export default function LightingPanel() {
 
   const selectedLight = directionalLights.find(l => l.id === selectedLightId) || directionalLights[0]
   const selectedLightShadowRadius = selectedLight ? selectedLight.shadowRadius ?? 0 : 0
-
-  const applyHdrUrl = useCallback((urlFromArg?: string) => {
-    const nextUrl = (urlFromArg ?? hdrUrlInput).trim()
-    if (!nextUrl) {
-      return
-    }
-    if (hdrObjectUrlRef.current) {
-      URL.revokeObjectURL(hdrObjectUrlRef.current)
-      hdrObjectUrlRef.current = null
-    }
-    setHdrFile(null)
-    setHdrUrl(nextUrl)
-    setHdrEnabled(true)
-  }, [hdrUrlInput, setHdrEnabled, setHdrFile, setHdrUrl])
 
   const handleAddLight = (type: LightType = 'point') => {
     // CRITICAL: Match demo light behavior - use higher intensity and better position

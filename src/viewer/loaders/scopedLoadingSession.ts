@@ -64,10 +64,11 @@ export class ScopedLoadingSession {
     const revokeBlobs = options.revokeBlobs !== false
 
     this.manager.setURLModifier((url: string) => url)
-    this.manager.onStart = undefined
-    this.manager.onLoad = undefined
-    this.manager.onProgress = undefined
-    this.manager.onError = undefined
+    // Clear hooks with no-ops (Three typings disallow assigning undefined).
+    this.manager.onStart = () => undefined
+    this.manager.onLoad = () => undefined
+    this.manager.onProgress = () => undefined
+    this.manager.onError = () => undefined
 
     if (revokeBlobs) {
       for (const url of this.blobUrls) {

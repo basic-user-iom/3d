@@ -26,6 +26,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Typecheck strict subsystems
+        run: npm run typecheck:strict-subsystems
+
       - name: Test
         run: npm run test -- --run
 

@@ -1,35 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createPanoramaAnimationLoop } from '../src/panorama/panoramaAnimationLoop'
+import { createFakeRaf } from './helpers/lifecycleAccounting'
 
 function createRafMock() {
-  let nextId = 1
-  const pending = new Map<number, FrameRequestCallback>()
-
-  const schedule = vi.fn((callback: FrameRequestCallback) => {
-    const id = nextId++
-    pending.set(id, callback)
-    return id
-  })
-
-  const cancel = vi.fn((handle: number) => {
-    pending.delete(handle)
-  })
-
-  return {
-    schedule,
-    cancel,
-    pending,
-    flush(time = 0) {
-      const entries = [...pending.entries()]
-      pending.clear()
-      for (const [, callback] of entries) {
-        callback(time)
-      }
-    },
-    pendingCount() {
-      return pending.size
-    }
-  }
+  return createFakeRaf()
 }
 
 describe('panoramaAnimationLoop (LIFE-3)', () => {

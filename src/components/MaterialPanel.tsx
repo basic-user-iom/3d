@@ -988,8 +988,6 @@ export default function MaterialPanel() {
     setMaterialProps(props)
   }, [selectedMaterial])
 
-  if (!showMaterialPanel) return null
-
   const mat = selectedMaterial?.material
   const isPBR = mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial
   const isPhysical = mat instanceof THREE.MeshPhysicalMaterial
@@ -2356,6 +2354,8 @@ export default function MaterialPanel() {
       }
     }
   }, [viewer, textureAnisotropy, setError])
+
+  if (!showMaterialPanel) return null
 
   return (
     <div

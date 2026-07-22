@@ -1868,8 +1868,6 @@ Scale: X: ${scale.x.toFixed(2)}, Y: ${scale.y.toFixed(2)}, Z: ${scale.z.toFixed(
     )
   }, [filteredAndSortedNodes, searchQuery, sortBy, sortDirection, handleSort, isLargeObject, isDuplicate, selectedObject, handleNodeClick, handleNodeDoubleClick, handleToggleVisible, handleToggleLock, handleRename, frameObject, formatSize, renderMode, formatGPS])
 
-  if (!showObjectsPanel) return null
-
   // Do NOT auto-expand the whole tree on initial load.
   // The user will manually expand nodes as needed.
 
@@ -1893,6 +1891,8 @@ Scale: X: ${scale.x.toFixed(2)}, Y: ${scale.y.toFixed(2)}, Z: ${scale.z.toFixed(
 
     expandToObject(sceneTree)
   }, [selectedObject, showObjectsPanel, sceneTree])
+
+  if (!showObjectsPanel) return null
 
   return (
     <div

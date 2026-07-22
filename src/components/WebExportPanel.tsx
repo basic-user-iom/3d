@@ -26,6 +26,7 @@ export default function WebExportPanel() {
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
   const [isMinimized, setIsMinimized] = useState(false)
+  const [isPreviewing, setIsPreviewing] = useState(false)
   
   const panelRef = useRef<HTMLDivElement | null>(null)
   const PANEL_WIDTH = 400
@@ -41,8 +42,6 @@ export default function WebExportPanel() {
   )
 
   if (!showWebExportPanel) return null
-
-  const [isPreviewing, setIsPreviewing] = useState(false)
 
   const handlePreview = async () => {
     const views = cameraViews || []

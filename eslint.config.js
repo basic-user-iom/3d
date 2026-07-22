@@ -27,10 +27,17 @@ const baseRules = {
   'no-async-promise-executor': 'warn',
 }
 
+/**
+ * BUILD-5 maintainability gates:
+ * - rules-of-hooks is a CI error (zero hook-order violations required).
+ * - exhaustive-deps stays warn for now; documented reduction target is to
+ *   clear the remaining ~40+ exhaustive-deps warnings in follow-up passes
+ *   without regressing the overall warning count (~479 at BUILD-5 baseline).
+ */
 const reactRules = {
   ...reactHooks.configs.recommended.rules,
   'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
-  'react-hooks/rules-of-hooks': 'warn',
+  'react-hooks/rules-of-hooks': 'error',
   'react-hooks/exhaustive-deps': 'warn',
 }
 
