@@ -1,14 +1,26 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import * as THREE from 'three'
 import {
   getHdrCacheKey,
   getCachedHdrPmrem,
   setCachedHdrPmrem,
   isTextureOwnedByCache,
+  disposeOwnedHdrLoadResources,
   clearHdrPmremCacheForTests,
   getHdrPmremCacheSize,
   HDR_PMREM_CACHE_MAX
 } from '../src/viewer/utils/hdrPmremCache'
+
+function mockTexture(): THREE.Texture {
+  return { dispose: vi.fn() } as unknown as THREE.Texture
+}
+
+function mockRenderTarget(texture?: THREE.Texture): THREE.WebGLCubeRenderTarget {
+  return {
+    texture: texture ?? mockTexture(),
+    dispose: vi.fn()
+  } as unknown as THREE.WebGLCubeRenderTarget
+}
 
 describe('hdrPmremCache', () => {
   afterEach(() => {
@@ -56,5 +68,67 @@ describe('hdrPmremCache', () => {
     expect(getHdrPmremCacheSize()).toBe(HDR_PMREM_CACHE_MAX)
     expect(getCachedHdrPmrem('url:/hdr-0.hdr')).toBeUndefined()
     expect(getCachedHdrPmrem(`url:/hdr-${HDR_PMREM_CACHE_MAX}.hdr`)).toBeDefined()
+  })
+
+  describe('disposeOwnedHdrLoadResources (LIFE-6)', () => {
+    it('disposes unpublished source texture and PMREM render target', () => {
+      const original = mockTexture()
+      const envMap = mockTexture()
+      const rt = mockRenderTarget(envMap)
+
+      disposeOwnedHdrLoadResources({
+        textures: [original, envMap],
+        renderTarget: rt
+      })
+
+      expect(rt.dispose).toHaveBeenCalledTimes(1)
+      expect(original.dispose).toHaveBeenCalledTimes(1)
+      // envMap is owned by the render target — do not double-dispose
+      expect(envMap.dispose).not.toHaveBeenCalled()
+    })
+
+    it('disposes a FastHDR-style single texture with no render target', () => {
+      const tex = mockTexture()
+      disposeOwnedHdrLoadResources({ textures: [tex, tex], renderTarget: null })
+      expect(tex.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not dispose resources owned by the PMREM cache', () => {
+      const original = mockTexture()
+      const envMap = mockTexture()
+      const rt = mockRenderTarget(envMap)
+      setCachedHdrPmrem({
+        cacheKey: 'url:/cached.hdr',
+        originalTexture: original,
+        pmremTexture: envMap,
+        pmremRenderTarget: rt,
+        isFastHdr: false
+      })
+
+      disposeOwnedHdrLoadResources({
+        textures: [original, envMap],
+        renderTarget: rt
+      })
+
+      expect(rt.dispose).not.toHaveBeenCalled()
+      expect(original.dispose).not.toHaveBeenCalled()
+      expect(envMap.dispose).not.toHaveBeenCalled()
+    })
+
+    it('disposes an intermediate KTX2 source copy separately from the loaded texture', () => {
+      const loaded = mockTexture()
+      const sourceCopy = mockTexture()
+      const envMap = mockTexture()
+      const rt = mockRenderTarget(envMap)
+
+      disposeOwnedHdrLoadResources({
+        textures: [loaded, sourceCopy, envMap],
+        renderTarget: rt
+      })
+
+      expect(loaded.dispose).toHaveBeenCalledTimes(1)
+      expect(sourceCopy.dispose).toHaveBeenCalledTimes(1)
+      expect(rt.dispose).toHaveBeenCalledTimes(1)
+    })
   })
 })

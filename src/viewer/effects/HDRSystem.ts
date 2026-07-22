@@ -11,6 +11,7 @@ import {
   getCachedHdrPmrem,
   setCachedHdrPmrem,
   isTextureOwnedByCache,
+  disposeOwnedHdrLoadResources,
   type HdrPmremCacheEntry
 } from '../utils/hdrPmremCache'
 
@@ -111,6 +112,8 @@ export class HDRSystem {
   private defaultEnvTexture: THREE.Texture | null = null
   private currentCacheKey: string | null = null
   private loadGeneration = 0
+  /** Aborts in-flight EXR fetch / cooperatively cancels decode when superseded. */
+  private loadAbortController: AbortController | null = null
   
   // Store original clear color to restore when HDR is disabled
   private originalClearColor: THREE.Color | null = null
@@ -217,7 +220,15 @@ export class HDRSystem {
   /**
    * Load HDR/EXR file
    */
-  async loadHDR(url: string | File, onProgress?: (progress: number) => void): Promise<THREE.DataTexture> {
+  async loadHDR(
+    url: string | File,
+    onProgress?: (progress: number) => void,
+    signal?: AbortSignal
+  ): Promise<THREE.DataTexture> {
+    if (signal?.aborted) {
+      throw this.createAbortError('HDR load aborted before start')
+    }
+
     return new Promise((resolve, reject) => {
       const isFile = url instanceof File
       const fileName = isFile ? url.name.toLowerCase() : url.toLowerCase()
@@ -250,46 +261,73 @@ export class HDRSystem {
       // FastHDR (KTX2) format - load directly without PMREM conversion needed
       if (cleanFileName.endsWith('.ktx2')) {
         console.log('[HDRSystem] Detected .ktx2 file (FastHDR), using KTX2Loader')
-        this.loadFastHDRFile(url, onProgress).then(resolve).catch(reject)
+        this.loadFastHDRFile(url, onProgress, signal).then(resolve).catch(reject)
       } else if (cleanFileName.endsWith('.hdr')) {
         console.log('[HDRSystem] Detected .hdr file, using RGBELoader')
-        this.loadHDRFile(url, onProgress).then(resolve).catch(reject)
+        this.loadHDRFile(url, onProgress, signal).then(resolve).catch(reject)
       } else if (cleanFileName.endsWith('.exr')) {
         console.log('[HDRSystem] Detected .exr file, using EXRLoader')
-        this.loadEXRFile(url, onProgress).then(resolve).catch(reject)
+        this.loadEXRFile(url, onProgress, signal).then(resolve).catch(reject)
       } else {
         // Try KTX2 first (FastHDR), then HDR, then EXR
         console.log('[HDRSystem] No extension detected, trying KTX2 (FastHDR) first, then HDR, then EXR')
         if (this.ktx2Loader) {
-          this.loadFastHDRFile(url, onProgress)
+          this.loadFastHDRFile(url, onProgress, signal)
             .then(resolve)
             .catch((ktx2Error) => {
+              if (signal?.aborted) {
+                reject(this.createAbortError('HDR load aborted'))
+                return
+              }
               console.log('[HDRSystem] KTX2 loader failed, trying HDR:', ktx2Error instanceof Error ? ktx2Error.message : String(ktx2Error))
-              this.loadHDRFile(url, onProgress)
+              this.loadHDRFile(url, onProgress, signal)
                 .then(resolve)
                 .catch((hdrError) => {
+                  if (signal?.aborted) {
+                    reject(this.createAbortError('HDR load aborted'))
+                    return
+                  }
                   console.log('[HDRSystem] HDR loader failed, trying EXR:', hdrError instanceof Error ? hdrError.message : String(hdrError))
-                  this.loadEXRFile(url, onProgress).then(resolve).catch(reject)
+                  this.loadEXRFile(url, onProgress, signal).then(resolve).catch(reject)
                 })
             })
         } else {
           // No KTX2 loader, try HDR first, then EXR
-          this.loadHDRFile(url, onProgress)
+          this.loadHDRFile(url, onProgress, signal)
             .then(resolve)
             .catch((hdrError) => {
+              if (signal?.aborted) {
+                reject(this.createAbortError('HDR load aborted'))
+                return
+              }
               console.log('[HDRSystem] HDR loader failed, trying EXR:', hdrError instanceof Error ? hdrError.message : String(hdrError))
-              this.loadEXRFile(url, onProgress).then(resolve).catch(reject)
+              this.loadEXRFile(url, onProgress, signal).then(resolve).catch(reject)
             })
         }
       }
     })
   }
+
+  private createAbortError(message: string): Error {
+    const error = new Error(message)
+    error.name = 'AbortError'
+    return error
+  }
   
   /**
    * Load HDR file (RGBE format)
    */
-  private loadHDRFile(url: string | File, onProgress?: (progress: number) => void): Promise<THREE.DataTexture> {
+  private loadHDRFile(
+    url: string | File,
+    onProgress?: (progress: number) => void,
+    signal?: AbortSignal
+  ): Promise<THREE.DataTexture> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(this.createAbortError('HDR load aborted'))
+        return
+      }
+
       if (!this.rgbeLoader) {
         this.rgbeLoader = new RGBELoader()
       }
@@ -301,6 +339,25 @@ export class HDRSystem {
       } else {
         urlString = normalizeHDRUrl(url)
       }
+
+      let settled = false
+      const settleReject = (error: unknown) => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+      const settleResolve = (texture: THREE.DataTexture) => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        resolve(texture)
+      }
+
+      const onAbort = () => {
+        settleReject(this.createAbortError('HDR load aborted'))
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
       
       this.rgbeLoader.load(
         urlString,
@@ -310,7 +367,13 @@ export class HDRSystem {
           }
           
           if (!texture) {
-            reject(new Error('HDR loader returned undefined texture'))
+            settleReject(new Error('HDR loader returned undefined texture'))
+            return
+          }
+
+          if (signal?.aborted || settled) {
+            disposeOwnedHdrLoadResources({ textures: [texture] })
+            settleReject(this.createAbortError('HDR load aborted'))
             return
           }
           
@@ -321,9 +384,10 @@ export class HDRSystem {
           texture.flipY = false
           texture.needsUpdate = true
           
-          resolve(texture)
+          settleResolve(texture)
         },
         (progress) => {
+          if (signal?.aborted || settled) return
           if (progress.lengthComputable && onProgress) {
             onProgress((progress.loaded / progress.total) * 100)
           }
@@ -332,7 +396,11 @@ export class HDRSystem {
           if (url instanceof File) {
             URL.revokeObjectURL(urlString)
           }
-          reject(error)
+          if (signal?.aborted) {
+            settleReject(this.createAbortError('HDR load aborted'))
+            return
+          }
+          settleReject(error)
         }
       )
     })
@@ -341,8 +409,17 @@ export class HDRSystem {
   /**
    * Load EXR file
    */
-  private loadEXRFile(url: string | File, onProgress?: (progress: number) => void): Promise<THREE.DataTexture> {
+  private loadEXRFile(
+    url: string | File,
+    onProgress?: (progress: number) => void,
+    signal?: AbortSignal
+  ): Promise<THREE.DataTexture> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(this.createAbortError('HDR load aborted'))
+        return
+      }
+
       if (!this.exrLoader) {
         this.exrLoader = new EXRLoader()
       }
@@ -350,16 +427,21 @@ export class HDRSystem {
       // Normalize URL if it's a string (handle Windows file paths)
       const fetchUrl = url instanceof File ? URL.createObjectURL(url) : normalizeHDRUrl(url)
       
-      fetch(fetchUrl)
+      fetch(fetchUrl, signal ? { signal } : undefined)
         .then(response => {
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`)
           }
+          onProgress?.(50)
           return response.arrayBuffer()
         })
         .then(arrayBuffer => {
           if (url instanceof File) {
             URL.revokeObjectURL(fetchUrl)
+          }
+
+          if (signal?.aborted) {
+            throw this.createAbortError('HDR load aborted')
           }
           
       const result: any = this.exrLoader!.parse(arrayBuffer)
@@ -381,12 +463,23 @@ export class HDRSystem {
           if (result.colorSpace !== undefined) {
             ;(texture as any).colorSpace = result.colorSpace
           }
-          
+
+          if (signal?.aborted) {
+            disposeOwnedHdrLoadResources({ textures: [texture] })
+            reject(this.createAbortError('HDR load aborted'))
+            return
+          }
+
+          onProgress?.(100)
           resolve(texture)
         })
         .catch(error => {
           if (url instanceof File) {
             URL.revokeObjectURL(fetchUrl)
+          }
+          if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+            reject(this.createAbortError('HDR load aborted'))
+            return
           }
           reject(error)
         })
@@ -398,8 +491,17 @@ export class HDRSystem {
    * FastHDR files are pre-compressed KTX2 textures that load much faster
    * and use less GPU memory than traditional HDR/EXR files
    */
-  private loadFastHDRFile(url: string | File, onProgress?: (progress: number) => void): Promise<THREE.DataTexture> {
+  private loadFastHDRFile(
+    url: string | File,
+    onProgress?: (progress: number) => void,
+    signal?: AbortSignal
+  ): Promise<THREE.DataTexture> {
     return new Promise(async (resolve, reject) => {
+      if (signal?.aborted) {
+        reject(this.createAbortError('HDR load aborted'))
+        return
+      }
+
       if (!this.ktx2Loader) {
         reject(new Error('KTX2Loader not available. FastHDR requires KTX2 support.'))
         return
@@ -589,6 +691,12 @@ export class HDRSystem {
             // Force texture update
             texture.needsUpdate = true
             console.log('[HDRSystem] KTX2 texture configured, resolving...')
+
+            if (signal?.aborted) {
+              disposeOwnedHdrLoadResources({ textures: [texture] })
+              reject(this.createAbortError('HDR load aborted'))
+              return
+            }
             
             // For FastHDR, we need to return a DataTexture-like object
             // But KTX2Loader returns a Texture, which should work fine
@@ -597,6 +705,7 @@ export class HDRSystem {
             resolve(texture as unknown as THREE.DataTexture)
           },
           (progress) => {
+            if (signal?.aborted) return
             if (progress.lengthComputable && onProgress) {
               onProgress((progress.loaded / progress.total) * 100)
             }
@@ -604,6 +713,10 @@ export class HDRSystem {
           (error) => {
             callbackFired = true
             clearTimeout(timeout)
+            if (signal?.aborted) {
+              reject(this.createAbortError('HDR load aborted'))
+              return
+            }
             const errorMessage = error instanceof Error ? error.message : String(error)
             console.error('[HDRSystem] KTX2Loader error:', error)
             console.error('[HDRSystem] Error details:', {
@@ -787,10 +900,31 @@ export class HDRSystem {
   /** Cancel an in-flight applyHDR load (e.g. user switched HDR quickly). */
   cancelPendingLoad(): void {
     this.loadGeneration++
+    if (this.loadAbortController) {
+      this.loadAbortController.abort()
+      this.loadAbortController = null
+    }
   }
 
   private isLoadStale(generation: number): boolean {
     return generation !== this.loadGeneration
+  }
+
+  private beginHdrLoad(): { loadGen: number; signal: AbortSignal } {
+    if (this.loadAbortController) {
+      this.loadAbortController.abort()
+      this.loadAbortController = null
+    }
+    const loadGen = ++this.loadGeneration
+    const controller = new AbortController()
+    this.loadAbortController = controller
+    return { loadGen, signal: controller.signal }
+  }
+
+  private finishHdrLoadController(signal: AbortSignal): void {
+    if (this.loadAbortController?.signal === signal) {
+      this.loadAbortController = null
+    }
   }
 
   private applyCachedEntry(entry: HdrPmremCacheEntry): THREE.DataTexture {
@@ -837,10 +971,46 @@ export class HDRSystem {
       this.disableHDR()
       return
     }
+
+    const { loadGen, signal } = this.beginHdrLoad()
+    const pendingTextures: THREE.Texture[] = []
+    let pendingRenderTarget: THREE.WebGLCubeRenderTarget | null = null
+    let publishedToCache = false
+
+    const trackTexture = (texture: THREE.Texture | null | undefined) => {
+      if (texture && !pendingTextures.includes(texture)) {
+        pendingTextures.push(texture)
+      }
+    }
+
+    const discardPendingIfUnpublished = () => {
+      if (publishedToCache) return
+      disposeOwnedHdrLoadResources({
+        textures: pendingTextures,
+        renderTarget: pendingRenderTarget
+      })
+    }
+
+    const exitIfStale = (log = true): boolean => {
+      if (!this.isLoadStale(loadGen)) return false
+      if (log) {
+        console.log('[HDRSystem] Load cancelled (superseded by newer request)')
+      }
+      discardPendingIfUnpublished()
+      // Drop instance refs only when they still point at this unpublished load.
+      if (
+        !publishedToCache &&
+        ((this.originalHdrTexture !== null &&
+          pendingTextures.includes(this.originalHdrTexture)) ||
+          (this.pmremEnvMap !== null && pendingTextures.includes(this.pmremEnvMap)) ||
+          (pendingRenderTarget !== null && this.pmremRenderTarget === pendingRenderTarget))
+      ) {
+        this.releaseTextureRefs()
+      }
+      return true
+    }
     
     try {
-      const loadGen = ++this.loadGeneration
-
       // Normalize URL if it's a string (handle Windows file paths)
       let normalizedUrl: string | File = url
       if (typeof url === 'string') {
@@ -865,12 +1035,21 @@ export class HDRSystem {
       let hdrTexture: THREE.DataTexture
       let envMap: THREE.Texture
       let isPMREMKTX2 = false
+      let originalTexture: THREE.DataTexture | null = null
+      let pmremRenderTarget: THREE.WebGLCubeRenderTarget | null = null
 
       if (cachedEntry) {
         console.log('[HDRSystem] ✅ PMREM cache hit — skipping download and PMREM bake:', cacheKey)
         onProgress?.(100)
+        if (exitIfStale()) {
+          this.finishHdrLoadController(signal)
+          return
+        }
         hdrTexture = this.applyCachedEntry(cachedEntry)
         envMap = cachedEntry.pmremTexture
+        originalTexture = cachedEntry.originalTexture as THREE.DataTexture
+        pmremRenderTarget = cachedEntry.pmremRenderTarget
+        publishedToCache = true
         isPMREMKTX2 =
           cachedEntry.isFastHdr && cachedEntry.pmremTexture === cachedEntry.originalTexture
       } else {
@@ -879,17 +1058,22 @@ export class HDRSystem {
         // Load HDR texture
         console.log('[HDRSystem] Loading HDR file...', { isFastHDR })
         let lastLoggedProgress = -1
-        hdrTexture = (await this.loadHDR(normalizedUrl, (progress) => {
-          onProgress?.(progress)
-          const roundedProgress = Math.floor(progress / 10) * 10
-          if (roundedProgress !== lastLoggedProgress) {
-            console.log(`[HDRSystem] Loading progress: ${roundedProgress.toFixed(0)}%`)
-            lastLoggedProgress = roundedProgress
-          }
-        })) as THREE.DataTexture
+        hdrTexture = (await this.loadHDR(
+          normalizedUrl,
+          (progress) => {
+            onProgress?.(progress)
+            const roundedProgress = Math.floor(progress / 10) * 10
+            if (roundedProgress !== lastLoggedProgress) {
+              console.log(`[HDRSystem] Loading progress: ${roundedProgress.toFixed(0)}%`)
+              lastLoggedProgress = roundedProgress
+            }
+          },
+          signal
+        )) as THREE.DataTexture
+        trackTexture(hdrTexture)
 
-        if (this.isLoadStale(loadGen)) {
-          console.log('[HDRSystem] Load cancelled (superseded by newer request)')
+        if (exitIfStale()) {
+          this.finishHdrLoadController(signal)
           return
         }
 
@@ -903,7 +1087,7 @@ export class HDRSystem {
             console.log('[HDRSystem] ✅ FastHDR (PMREM) detected - using directly for environment and background')
             envMap = hdrTexture
             isPMREMKTX2 = true
-            this.originalHdrTexture = hdrTexture as THREE.DataTexture
+            originalTexture = hdrTexture as THREE.DataTexture
           } else {
             let actualIsCubemap = false
             let faceCount = 1
@@ -917,12 +1101,16 @@ export class HDRSystem {
                 (hdrTexture as any).isCubeTexture === true || hdrTexture instanceof THREE.CubeTexture
             }
 
-            if (this.isLoadStale(loadGen)) return
+            if (exitIfStale()) {
+              this.finishHdrLoadController(signal)
+              return
+            }
 
             if (actualIsCubemap && faceCount === 6) {
               console.log('[HDRSystem] KTX2 file is a cubemap (faceCount = 6), using directly for environment')
               envMap = hdrTexture
               isPMREMKTX2 = false
+              originalTexture = hdrTexture as THREE.DataTexture
             } else {
               console.log('[HDRSystem] ✅ KTX2 equirectangular — generating PMREM cube map...')
               let sourceTexture: THREE.DataTexture
@@ -940,14 +1128,16 @@ export class HDRSystem {
                 sourceTexture.flipY = false
                 sourceTexture.colorSpace =
                   (hdrTexture as any).colorSpace || THREE.LinearSRGBColorSpace
-                this.originalHdrTexture = sourceTexture
+                trackTexture(sourceTexture)
               } else {
                 sourceTexture = hdrTexture as THREE.DataTexture
-                this.originalHdrTexture = sourceTexture
               }
+              originalTexture = sourceTexture
               const pmrem = this.generatePMREM(sourceTexture)
               envMap = pmrem.texture
-              this.pmremRenderTarget = pmrem.renderTarget
+              pmremRenderTarget = pmrem.renderTarget
+              pendingRenderTarget = pmremRenderTarget
+              trackTexture(envMap)
             }
           }
         } else {
@@ -968,7 +1158,9 @@ export class HDRSystem {
           try {
             const pmrem = this.generatePMREM(hdrTexture)
             envMap = pmrem.texture
-            this.pmremRenderTarget = pmrem.renderTarget
+            pmremRenderTarget = pmrem.renderTarget
+            pendingRenderTarget = pmremRenderTarget
+            trackTexture(envMap)
             console.log('[HDRSystem] ✅ PMREM cube map generated successfully')
           } finally {
             hiddenObjects.forEach((obj) => {
@@ -976,23 +1168,38 @@ export class HDRSystem {
             })
           }
 
-          if (this.isLoadStale(loadGen)) return
+          if (exitIfStale()) {
+            this.finishHdrLoadController(signal)
+            return
+          }
+
+          originalTexture = hdrTexture
         }
 
-        if (!isPMREMKTX2 && !isFastHDR) {
-          this.originalHdrTexture = hdrTexture
+        if (exitIfStale()) {
+          this.finishHdrLoadController(signal)
+          return
         }
+
+        if (!originalTexture) {
+          originalTexture = hdrTexture
+        }
+
+        // Commit ownership to instance + cache only after the load is still current.
+        this.originalHdrTexture = originalTexture
         this.pmremEnvMap = envMap
+        this.pmremRenderTarget = pmremRenderTarget
 
-        const originalForCache = this.originalHdrTexture ?? hdrTexture
-        if (this.pmremRenderTarget) {
+        const originalForCache = originalTexture
+        if (pmremRenderTarget) {
           this.storeInCache(
             cacheKey,
             originalForCache,
             envMap,
-            this.pmremRenderTarget,
+            pmremRenderTarget,
             isFastHDR
           )
+          publishedToCache = true
         } else if (isPMREMKTX2 || isFastHDR) {
           setCachedHdrPmrem({
             cacheKey,
@@ -1002,10 +1209,14 @@ export class HDRSystem {
             isFastHdr: true
           })
           this.currentCacheKey = cacheKey
+          publishedToCache = true
         }
       }
 
-      if (this.isLoadStale(loadGen)) return
+      if (exitIfStale()) {
+        this.finishHdrLoadController(signal)
+        return
+      }
 
       if (!cachedEntry) {
         // pmremEnvMap already set in miss path; ensure refs for cache hit path
@@ -1262,7 +1473,18 @@ export class HDRSystem {
       this.renderer.setClearColor(new THREE.Color(0x000000), 0)
       
       console.log('[HDRSystem] HDR applied successfully')
+      this.finishHdrLoadController(signal)
     } catch (error) {
+        const isAbort =
+          (error instanceof Error && error.name === 'AbortError') || signal.aborted
+        if (isAbort || this.isLoadStale(loadGen)) {
+          discardPendingIfUnpublished()
+          this.finishHdrLoadController(signal)
+          console.log('[HDRSystem] Load cancelled during applyHDR')
+          return
+        }
+
+        discardPendingIfUnpublished()
         const errorDetails = error instanceof Error ? error.message : String(error)
         const attemptedUrl = typeof url === 'string' ? url : (url instanceof File ? url.name : 'File object')
         const normalizedUrl = typeof url === 'string' ? normalizeHDRUrl(url) : 'N/A (File object)'
@@ -1272,6 +1494,7 @@ export class HDRSystem {
           normalizedUrl: normalizedUrl,
           urlType: url instanceof File ? 'File' : typeof url
         })
+        this.finishHdrLoadController(signal)
         this.disableHDR()
         throw error
       }
@@ -2514,6 +2737,7 @@ export class HDRSystem {
    * Dispose resources
    */
   dispose(): void {
+    this.cancelPendingLoad()
     this.disableHDR()
     
     // Ground projection is already disposed in disableHDR()

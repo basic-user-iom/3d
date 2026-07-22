@@ -69,10 +69,69 @@ export function isRenderTargetOwnedByCache(rt: THREE.WebGLCubeRenderTarget | nul
   return false
 }
 
+export type OwnedHdrLoadResources = {
+  /** Source / PMREM / intermediate textures created by an in-flight load. */
+  textures?: Array<THREE.Texture | null | undefined>
+  renderTarget?: THREE.WebGLCubeRenderTarget | null
+}
+
+/**
+ * Dispose GPU resources from a cancelled/failed HDR load.
+ * No-ops when any listed resource is owned by the shared PMREM cache
+ * (superseded loads that already published stay reusable).
+ */
+export function disposeOwnedHdrLoadResources(resources: OwnedHdrLoadResources): void {
+  const renderTarget = resources.renderTarget ?? null
+  const textures = (resources.textures ?? []).filter((t): t is THREE.Texture => !!t)
+
+  if (renderTarget && isRenderTargetOwnedByCache(renderTarget)) {
+    return
+  }
+  if (textures.some((t) => isTextureOwnedByCache(t))) {
+    return
+  }
+
+  if (renderTarget) {
+    try {
+      renderTarget.dispose()
+    } catch {
+      // already disposed
+    }
+  }
+
+  const rtTexture = renderTarget?.texture ?? null
+  const seen = new Set<THREE.Texture>()
+  for (const texture of textures) {
+    if (seen.has(texture)) continue
+    seen.add(texture)
+    if (rtTexture && texture === rtTexture) continue
+    try {
+      texture.dispose()
+    } catch {
+      // already disposed
+    }
+  }
+}
+
 function disposeCacheEntry(entry: HdrPmremCacheEntry): void {
-  entry.pmremRenderTarget?.dispose()
+  // Eviction always owns the entry — bypass cache-ownership guards.
+  try {
+    entry.pmremRenderTarget?.dispose()
+  } catch {
+    // already disposed
+  }
   if (entry.originalTexture !== entry.pmremTexture) {
-    entry.originalTexture.dispose()
+    try {
+      entry.originalTexture.dispose()
+    } catch {
+      // already disposed
+    }
+  } else if (!entry.pmremRenderTarget) {
+    try {
+      entry.originalTexture.dispose()
+    } catch {
+      // already disposed
+    }
   }
 }
 
