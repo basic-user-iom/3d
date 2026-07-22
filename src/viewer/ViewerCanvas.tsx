@@ -57,6 +57,10 @@ import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUnifo
 import { ShadowMapViewer } from 'three/addons/utils/ShadowMapViewer.js'
 import type { DirectionalLightConfig, LightType } from '../store/useAppStore'
 import { disposeTexturesFromMaterial, syncModelToStreetsGL, clearSharedViewer, computeStreetsGLPositionFromObject, STREETS_GL_OBJECT_SCALE, syncProjectObjectTransformToStreetsGL, isObjectInSceneGraph, safeAttachTransformControls, setIframeVisible, getIframeVisible, getIframePresence, ensureStreetsGLIframeVisibilityChannel } from './useViewer'
+import {
+  detachCachedImportedModelsFromScene,
+  clearStreetsGLProductHideOnCachedModels
+} from './importedModelCache'
 import { runShadowDiagnostics } from '../utils/shadowDiagnostics'
 import { autoFixShadowIssues } from '../utils/shadowAutoFixer'
 import { shadowOpacityModifierRegistry } from './materials/ShadowOpacityModifierRegistry'
@@ -5000,8 +5004,19 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         }
       }
 
-      // Dispose of scene objects
+      // Dispose of scene objects — but NEVER dispose imported models held in
+      // importedModelCache. City mode unmounts this canvas while those same
+      // Object3Ds must survive for Product-mode restore (materials/maps intact).
       if (scene) {
+        const preserved = detachCachedImportedModelsFromScene(scene)
+        if (preserved.length > 0) {
+          console.log(
+            '[ViewerCanvas] Preserved',
+            preserved.length,
+            'cached imported model(s) across scene teardown (textures kept)'
+          )
+        }
+
         scene.traverse((object) => {
           if (object instanceof THREE.Mesh) {
             // Industry-standard: Dispose geometry first
@@ -9147,7 +9162,9 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
         useAppStore.getState(),
         viewerRef.current?.transformControls
       )
-      // Show all models in main scene (they are no longer in Streets GL)
+      // Show all models in main scene (they are no longer drawn only in Streets GL).
+      // Also clear product-hide on cached roots that may not be in the scene yet.
+      clearStreetsGLProductHideOnCachedModels()
       scene.traverse((obj) => {
         if (obj.userData.renderInStreetsGL) {
           obj.visible = true
@@ -9159,9 +9176,18 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           delete obj.userData.wasHiddenForStreetsGL
         }
       })
+      // Drop stale iframe ownership from registry so Product restore stays textured + visible.
+      const appStore = useAppStore.getState()
+      for (const desc of appStore.projectObjects) {
+        if (desc.userData?.renderInStreetsGL === true) {
+          appStore.updateProjectObject(desc.id, {
+            visible: true,
+            userData: { ...desc.userData, renderInStreetsGL: undefined }
+          })
+        }
+      }
       // Use default background when iframe overlay is disabled
       // Check if HDR or other systems have set a background - if not, use default
-      const appStore = useAppStore.getState()
       const hasHDR = appStore.hdrEnabled
       const hasGroundProjection = appStore.hdrGroundProjectionEnabled
       

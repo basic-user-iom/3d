@@ -758,7 +758,9 @@ function resolveMeshForStreetsGLResync(descriptor: ProjectObject): THREE.Object3
     }
     return null
   }
-  const built = buildMeshFromDescriptor(descriptor)
+  const built = buildMeshFromDescriptor(descriptor, {
+    streetsGLOverlayActive: useAppStore.getState().streetsGLIframeOverlay === true
+  })
   if (built) return built
   const viewer = getSharedViewer()
   if (viewer?.scene) {

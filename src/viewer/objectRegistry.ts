@@ -144,12 +144,25 @@ export function descriptorFromImportedModel(
   }
 }
 
+export interface BuildMeshFromDescriptorOptions {
+  /**
+   * When true (city/hybrid + Streets GL overlay), keep iframe-owned imports hidden in
+   * the Three.js viewer. When false (Product / overlay closed), always restore visibility
+   * and clear `renderInStreetsGL` so textures are shown again — never re-apply product-hide
+   * from a stale registry flag after leaving Streets GL.
+   */
+  streetsGLOverlayActive?: boolean
+}
+
 /**
  * Rebuild a live THREE.Mesh from a descriptor. Used when a Three.js scene becomes
  * available (e.g. leaving city mode) and a descriptor has no live object yet.
  * Primitives rebuild from stored dimensions; imported models restore from the in-memory cache.
  */
-export function buildMeshFromDescriptor(descriptor: ProjectObject): THREE.Mesh | null {
+export function buildMeshFromDescriptor(
+  descriptor: ProjectObject,
+  opts?: BuildMeshFromDescriptorOptions
+): THREE.Mesh | null {
   if (descriptor.kind === 'imported') {
     const cached = getCachedImportedModelScene(descriptor.id)
     if (!cached) return null
@@ -158,6 +171,8 @@ export function buildMeshFromDescriptor(descriptor: ProjectObject): THREE.Mesh |
     cached.userData.streetsGLObjectId = descriptor.streetsGLObjectId || descriptor.id
     if (descriptor.userData) {
       for (const [key, value] of Object.entries(descriptor.userData)) {
+        // Do not copy stale product-hide into the live mesh when overlay is off.
+        if (key === 'renderInStreetsGL' && opts?.streetsGLOverlayActive !== true) continue
         cached.userData[key] = value
       }
     }
@@ -165,12 +180,17 @@ export function buildMeshFromDescriptor(descriptor: ProjectObject): THREE.Mesh |
     cached.position.set(t.position.x, t.position.y, t.position.z)
     cached.rotation.set(t.rotation.x, t.rotation.y, t.rotation.z)
     cached.scale.set(t.scale.x, t.scale.y, t.scale.z)
-    // Keep iframe-only hide on the Three.js root when restoring hybrid/city imports.
-    if ((cached.userData as any).renderInStreetsGL === true || descriptor.userData?.renderInStreetsGL === true) {
+    // Keep iframe-only hide only while Streets GL overlay still owns the draw.
+    if (
+      opts?.streetsGLOverlayActive === true &&
+      ((cached.userData as any).renderInStreetsGL === true ||
+        descriptor.userData?.renderInStreetsGL === true)
+    ) {
       cached.visible = false
       cached.userData.renderInStreetsGL = true
     } else {
-      cached.visible = descriptor.visible
+      delete cached.userData.renderInStreetsGL
+      cached.visible = descriptor.visible !== false
     }
     cached.updateMatrixWorld(true)
     // Return first mesh child for API compatibility, or wrap — reconciler uses Object3D add.
@@ -250,14 +270,15 @@ export interface ReconcileSceneResult {
  */
 export function reconcileSceneFromRegistry(
   scene: THREE.Object3D,
-  projectObjects: ProjectObject[]
+  projectObjects: ProjectObject[],
+  opts?: BuildMeshFromDescriptorOptions
 ): ReconcileSceneResult {
   const rebuilt: THREE.Object3D[] = []
   for (const descriptor of projectObjects) {
     if (findSceneObjectByProjectId(scene, descriptor.id)) {
       continue
     }
-    const obj = buildMeshFromDescriptor(descriptor)
+    const obj = buildMeshFromDescriptor(descriptor, opts)
     if (!obj) continue
     scene.add(obj)
     rebuilt.push(obj)

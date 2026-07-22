@@ -43,8 +43,24 @@ export default function ObjectRegistryReconciler() {
       if (cancelled) return
       const viewer = getSharedViewer()
       if (viewer?.scene) {
-        const descriptors = useAppStore.getState().projectObjects
-        const { rebuilt } = reconcileSceneFromRegistry(viewer.scene, descriptors)
+        const store = useAppStore.getState()
+        const descriptors = store.projectObjects
+        const overlayActive = store.streetsGLIframeOverlay === true
+        const { rebuilt } = reconcileSceneFromRegistry(viewer.scene, descriptors, {
+          streetsGLOverlayActive: overlayActive
+        })
+        // Leaving city/Streets GL → Product: drop stale iframe product-hide from registry
+        // so later rebuilds / panel state do not re-hide textured models.
+        if (!overlayActive) {
+          for (const desc of descriptors) {
+            if (desc.userData?.renderInStreetsGL === true) {
+              updateProjectObject(desc.id, {
+                visible: true,
+                userData: { ...desc.userData, renderInStreetsGL: undefined }
+              })
+            }
+          }
+        }
         if (rebuilt.length > 0) {
           rebuilt.forEach((mesh) => {
             const id = (mesh.userData as any).projectObjectId as string | undefined
