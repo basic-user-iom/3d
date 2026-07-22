@@ -4518,7 +4518,8 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         windIntensity: s.windIntensity,
         cloudDensity: s.cloudDensity,
         rainIntensity: s.rainIntensity,
-        snowIntensity: s.snowIntensity
+        snowIntensity: s.snowIntensity,
+        waterEnabled: s.waterEnabled
       }
     }
 
@@ -4743,9 +4744,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
       const hdrOnlyMode = useAppStore.getState().hdrOnlyMode
       if (!hdrOnlyMode) {
         if (viewerRef.current?.particleSystems) {
-          viewerRef.current.particleSystems.forEach(system => system.update(deltaTime, camera.position))
+          viewerRef.current.particleSystems.forEach(system => {
+            if (system.config?.enabled && (system.config.intensity ?? 0) > 0) {
+              system.update(deltaTime, camera.position)
+            }
+          })
         }
-        if (viewerRef.current?.waterSystem) {
+        if (viewerRef.current?.waterSystem?.isEnabled()) {
           viewerRef.current.waterSystem.update(deltaTime)
         }
         // Three.js Sky doesn't need per-frame updates (it's a static shader)
@@ -7835,7 +7840,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           })
           viewerRef.current.standaloneWaterSystem.setSunDirection(lightSunDir)
         } else {
-          viewerRef.current.standaloneWaterSystem.setEnabled(false)
+          // PERF-1: dispose disabled water so idle pause can stop the render loop.
+          try {
+            viewerRef.current.standaloneWaterSystem.destroy()
+          } catch (e) {
+            console.debug('Warning: Could not destroy standalone water system:', e)
+          }
+          viewerRef.current.standaloneWaterSystem = undefined
         }
       }
       
@@ -9054,8 +9065,18 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         }
       }
     } else if (rainSystem) {
-      try { console.log('[WeatherDebug] Disabling rain system') } catch {}
-      rainSystem.updateConfig({ enabled: false })
+      // PERF-1: destroy disabled rain so it cannot keep the render loop alive.
+      try { console.log('[WeatherDebug] Destroying rain system') } catch {}
+      try {
+        rainSystem.destroy()
+      } catch (e) {
+        console.debug('Warning: Could not destroy rain system:', e)
+      }
+      if (particleSystems) {
+        const index = particleSystems.indexOf(rainSystem)
+        if (index > -1) particleSystems.splice(index, 1)
+      }
+      rainSystem = undefined
     }
 
     // Update or create snow particle system
@@ -9096,7 +9117,17 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
         }
       }
     } else if (snowSystem) {
-      snowSystem.updateConfig({ enabled: false })
+      // PERF-1: destroy disabled snow so it cannot keep the render loop alive.
+      try {
+        snowSystem.destroy()
+      } catch (e) {
+        console.debug('Warning: Could not destroy snow system:', e)
+      }
+      if (particleSystems) {
+        const index = particleSystems.indexOf(snowSystem)
+        if (index > -1) particleSystems.splice(index, 1)
+      }
+      snowSystem = undefined
     }
 
     // Fog is now handled by THREE.FogExp2 (exponential height fog) instead of particles
@@ -9152,7 +9183,13 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
           })
       }
     } else if (waterSystem) {
-      waterSystem.updateConfig({ enabled: false })
+      // PERF-1: dispose disabled water so idle pause can stop the render loop.
+      try {
+        waterSystem.destroy()
+      } catch (e) {
+        console.debug('Warning: Could not destroy water system:', e)
+      }
+      viewerRef.current.waterSystem = undefined
     }
 
     // IMPROVED: PARTICLE SYSTEM SUMMARY - throttled and fixed to prevent Texture serialization errors
@@ -9230,6 +9267,9 @@ export default function ViewerCanvas({ onViewerReady }: ViewerCanvasProps) {
     // This runs AFTER all weather/Three.js Sky logic to ensure HDR takes priority
     // This is a DUPLICATE of the check above - removed to prevent conflicts
     // The lighting effect's final check is the authoritative one
+
+    // Wake idle loop after enable/disable so re-enable resumes continuous updates.
+    wakeViewerRender(viewerRef.current)
     
   }, [rainIntensity, snowIntensity, fogDensity, windIntensity, rainParticleScale, rainParticleSpeed,
 rainCollisionEnabled, snowParticleScale, snowParticleSpeed, snowCollisionEnabled, waterEnabled, waterLevel,

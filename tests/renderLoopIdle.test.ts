@@ -5,6 +5,8 @@ import {
   captureFrameMotionState,
   hasFrameMotion,
   hasOrbitControlsDamping,
+  isParticleSystemActive,
+  isWaterSystemActive,
   needsContinuousSceneUpdates,
   restartAnimationLoopIfIdle
 } from '../src/viewer/utils/renderLoopIdle'
@@ -119,5 +121,115 @@ describe('renderLoopIdle', () => {
         rainIntensity: 0.2
       })
     ).toBe(true)
+  })
+
+  it('treats disabled retained particle systems as inactive', () => {
+    expect(isParticleSystemActive({ config: { enabled: false, intensity: 0.8, type: 'rain' } })).toBe(false)
+    expect(isParticleSystemActive({ config: { enabled: true, intensity: 0, type: 'snow' } })).toBe(false)
+    expect(isParticleSystemActive({ config: { enabled: true, intensity: 0.4, type: 'rain' } })).toBe(true)
+  })
+
+  it('allows idle after rain/snow systems are disabled but still retained', () => {
+    const viewer = {
+      particleSystems: [
+        { config: { enabled: false, intensity: 0.5, type: 'rain' } },
+        { config: { enabled: false, intensity: 0.3, type: 'snow' } }
+      ]
+    }
+    expect(
+      needsContinuousSceneUpdates(viewer, undefined, {
+        rainIntensity: 0,
+        snowIntensity: 0,
+        waterEnabled: false
+      })
+    ).toBe(false)
+  })
+
+  it('keeps animating while any particle system remains active', () => {
+    const viewer = {
+      particleSystems: [
+        { config: { enabled: false, intensity: 0.5, type: 'rain' } },
+        { config: { enabled: true, intensity: 0.2, type: 'snow' } }
+      ]
+    }
+    expect(needsContinuousSceneUpdates(viewer)).toBe(true)
+  })
+
+  it('treats disabled water systems as inactive and allows idle', () => {
+    expect(isWaterSystemActive({ getConfig: () => ({ enabled: false }) })).toBe(false)
+    expect(isWaterSystemActive({ isEnabled: () => false })).toBe(false)
+    expect(isWaterSystemActive({ isEnabled: () => true })).toBe(true)
+
+    const viewer = {
+      waterSystem: { isEnabled: () => false },
+      standaloneWaterSystem: { getConfig: () => ({ enabled: false }) }
+    }
+    expect(
+      needsContinuousSceneUpdates(viewer, undefined, {
+        rainIntensity: 0,
+        snowIntensity: 0,
+        waterEnabled: false
+      })
+    ).toBe(false)
+  })
+
+  it('keeps animating for enabled water or waterEnabled activity flag', () => {
+    expect(
+      needsContinuousSceneUpdates(
+        { standaloneWaterSystem: { getConfig: () => ({ enabled: true }) } },
+        undefined,
+        { waterEnabled: false }
+      )
+    ).toBe(true)
+
+    expect(
+      needsContinuousSceneUpdates({}, undefined, { waterEnabled: true })
+    ).toBe(true)
+  })
+
+  it('covers enable/disable combinations for weather and water idle gating', () => {
+    const disabledRain = { config: { enabled: false, intensity: 0.5, type: 'rain' } }
+    const activeSnow = { config: { enabled: true, intensity: 0.2, type: 'snow' } }
+    const disabledWater = { isEnabled: () => false }
+    const activeWater = { getConfig: () => ({ enabled: true }) }
+
+    // All disabled → idle
+    expect(
+      needsContinuousSceneUpdates(
+        { particleSystems: [disabledRain], waterSystem: disabledWater },
+        undefined,
+        { rainIntensity: 0, snowIntensity: 0, waterEnabled: false }
+      )
+    ).toBe(false)
+
+    // Rain intensity alone (system not yet created) → continuous
+    expect(
+      needsContinuousSceneUpdates({}, undefined, { rainIntensity: 0.1, snowIntensity: 0 })
+    ).toBe(true)
+
+    // Snow active with disabled rain → continuous
+    expect(
+      needsContinuousSceneUpdates(
+        { particleSystems: [disabledRain, activeSnow] },
+        undefined,
+        { rainIntensity: 0, snowIntensity: 0.2 }
+      )
+    ).toBe(true)
+
+    // Water only → continuous; disable → idle
+    expect(
+      needsContinuousSceneUpdates(
+        { standaloneWaterSystem: activeWater },
+        undefined,
+        { waterEnabled: true }
+      )
+    ).toBe(true)
+    expect(
+      needsContinuousSceneUpdates(
+        { standaloneWaterSystem: { getConfig: () => ({ enabled: false }) } },
+        undefined,
+        { waterEnabled: false }
+      )
+    ).toBe(false)
   })
 })

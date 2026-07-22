@@ -545,7 +545,13 @@ export class WaterSystem {
     }
   }
 
+  isEnabled(): boolean {
+    return this.config.enabled
+  }
+
   update(deltaTime: number, cameraPosition?: THREE.Vector3) {
+    if (!this.config.enabled) return
+
     this.time += deltaTime
 
     if (this.config.mode === 'marchingCubes' && this.marchingCubes) {

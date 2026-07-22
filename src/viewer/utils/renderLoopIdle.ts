@@ -15,6 +15,7 @@ export interface SceneActivityFlags {
   cloudDensity?: number
   rainIntensity?: number
   snowIntensity?: number
+  waterEnabled?: boolean
 }
 
 export interface RenderLoopViewerState {
@@ -25,6 +26,41 @@ export interface RenderLoopViewerState {
   waterSystem?: unknown
   standaloneWaterSystem?: unknown
   transformControls?: unknown
+}
+
+/** Particle/weather systems that still need per-frame updates. */
+export function isParticleSystemActive(system: unknown): boolean {
+  if (!system || typeof system !== 'object') return false
+  const config = (system as { config?: { enabled?: boolean; intensity?: number } }).config
+  if (!config) return true
+  if (config.enabled === false) return false
+  if (typeof config.intensity === 'number' && config.intensity <= 0) return false
+  return true
+}
+
+/** Water systems that still need per-frame updates. */
+export function isWaterSystemActive(system: unknown): boolean {
+  if (!system || typeof system !== 'object') return false
+  const s = system as {
+    isEnabled?: () => boolean
+    getConfig?: () => { enabled?: boolean }
+    config?: { enabled?: boolean }
+  }
+  if (typeof s.isEnabled === 'function') return !!s.isEnabled()
+  if (typeof s.getConfig === 'function') return !!s.getConfig()?.enabled
+  if (s.config) return s.config.enabled !== false
+  // Unknown retained object — keep the loop alive rather than drop updates.
+  return true
+}
+
+export function hasActiveParticleSystems(viewer: RenderLoopViewerState | null | undefined): boolean {
+  const systems = viewer?.particleSystems
+  if (!systems?.length) return false
+  return systems.some(isParticleSystemActive)
+}
+
+export function hasActiveWaterSystems(viewer: RenderLoopViewerState | null | undefined): boolean {
+  return isWaterSystemActive(viewer?.waterSystem) || isWaterSystemActive(viewer?.standaloneWaterSystem)
 }
 
 export function createFrameMotionState(): FrameMotionState {
@@ -117,13 +153,14 @@ export function needsContinuousSceneUpdates(
   if (!viewer) return false
   if ((viewer.transformControls as { dragging?: boolean } | null | undefined)?.dragging) return true
   if (hasActiveAnimationMixers(viewer)) return true
-  if (viewer.particleSystems?.length) return true
-  if (viewer.waterSystem) return true
-  if (viewer.standaloneWaterSystem) return true
+  // PERF-1: only retained *active* weather/water systems keep the loop alive.
+  if (hasActiveParticleSystems(viewer)) return true
+  if (hasActiveWaterSystems(viewer)) return true
 
   const rain = activity?.rainIntensity ?? 0
   const snow = activity?.snowIntensity ?? 0
   if (rain > 0 || snow > 0) return true
+  if (activity?.waterEnabled) return true
 
   // CSM shadows update on camera motion — no idle redraw required.
   // Dynamic sky: animate only when wind or visible volumetric clouds need motion.

@@ -440,7 +440,13 @@ export class ParticleSystem {
   updateConfig(config: Partial<ParticleSystemConfig>) {
     const oldConfig = { ...this.config }
     this.config = { ...this.config, ...config }
-    
+
+    // PERF-1: tear down GPU resources when disabled so idle scenes can pause.
+    if (!this.config.enabled || this.config.intensity <= 0) {
+      this.destroy()
+      return
+    }
+
     // Check if quality changed
     if (config.quality && config.quality !== oldConfig.quality) {
       const qualitySettings = this.QUALITY_PRESETS[this.config.quality || 'high'];
@@ -457,6 +463,14 @@ export class ParticleSystem {
     const scaleChanged = config.particleScale !== undefined && config.particleScale !== oldConfig.particleScale
     const speedChanged = config.particleSpeed !== undefined && config.particleSpeed !== oldConfig.particleSpeed
     const gustsChanged = config.windGusts !== undefined && config.windGusts !== oldConfig.windGusts
+
+    // Re-enable after destroy, or recreate when count/gusts change.
+    if (!this.particles || countChanged || gustsChanged) {
+      this.particleCount = newCount
+      this.destroy()
+      this.setupParticles()
+      return
+    }
 
     // In-place updates for performance
     if (this.geometry && (scaleChanged || speedChanged)) {
@@ -476,25 +490,18 @@ export class ParticleSystem {
       }
     }
 
-    // Recreate only when necessary
-    if (countChanged || gustsChanged) {
-      this.particleCount = newCount
-      this.destroy()
-      this.setupParticles()
-    }
-
     // Update visibility
     if (this.material) {
       if (this.material instanceof THREE.PointsMaterial) {
         this.material.opacity = this.config.intensity * (this.config.type === 'fog' ? 0.3 : 0.8)
-        this.material.visible = this.config.enabled && this.config.intensity > 0
+        this.material.visible = true
       } else {
-        this.material.visible = this.config.enabled && this.config.intensity > 0
+        this.material.visible = true
       }
     }
     
     if (this.particles) {
-      this.particles.visible = this.config.enabled && this.config.intensity > 0
+      this.particles.visible = true
     }
   }
 
