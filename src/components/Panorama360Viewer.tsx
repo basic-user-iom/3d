@@ -25,6 +25,7 @@ import {
   syncPanoramaCameraAtOrigin,
   type PanoramaLiveLook
 } from '../panorama/panoramaSphericalCoords'
+import { createPanoramaAnimationLoop } from '../panorama/panoramaAnimationLoop'
 import './Panorama360Viewer.css'
 
 /** Fields that affect marker/popup rendering — used to invalidate projected hotspot cache. */
@@ -998,9 +999,8 @@ export default function Panorama360Viewer({
       ktx2LoaderRef.current.detectSupport(renderer)
     }
 
-    // Animation loop
-    const animate = () => {
-      requestAnimationFrame(animate)
+    // Animation loop — cancel + disposed guard on unmount (LIFE-3).
+    const animationLoop = createPanoramaAnimationLoop(() => {
       const isAnimatingOrientation = updateOrientationAnimationRef.current()
       if (controls && camera && !isAnimatingOrientation) {
         controls.update()
@@ -1051,14 +1051,15 @@ export default function Panorama360Viewer({
           return prev
         })
       }
-    }
-    animate()
-    
+    })
+    animationLoop.start()
+
     // Initial render
     renderer.render(scene, camera)
 
     // Handle resize (window + flex layout changes via ResizeObserver)
     const handleResize = () => {
+      if (animationLoop.isDisposed()) return
       if (!containerRef.current || !camera || !renderer) return
       const newWidth = containerRef.current.clientWidth
       const newHeight = containerRef.current.clientHeight
@@ -1070,9 +1071,12 @@ export default function Panorama360Viewer({
     window.addEventListener('resize', handleResize)
     const resizeObserver = new ResizeObserver(handleResize)
     resizeObserver.observe(container)
-    requestAnimationFrame(handleResize)
+    const resizeRafId = requestAnimationFrame(handleResize)
 
     return () => {
+      // Stop RAF before tearing down WebGL resources so late frames no-op.
+      animationLoop.stop()
+      cancelAnimationFrame(resizeRafId)
       controls.removeEventListener('change', handleControlsChange)
       renderer.domElement.removeEventListener('wheel', handleWheelZoom)
       renderer.domElement.removeEventListener('touchstart', handleTouchStartPinch)
