@@ -5,7 +5,7 @@ import {
   STREETS_GL_MAX_VERTICES
 } from '../src/utils/streetsGLBridge'
 import { validateExternalObjectGeometry } from '../src/utils/streetsGLBridgeSecurity'
-import { forceReduceToTriangleBudget, simpleDecimation } from '../src/utils/geometryRepair'
+import { forceReduceToTriangleBudget, simpleDecimation, meshoptSimplifyToTriangleBudget } from '../src/utils/geometryRepair'
 
 function makeIframe(): HTMLIFrameElement {
   const postMessage = vi.fn()
@@ -141,6 +141,76 @@ describe('StreetsGLBridge vertex budget + simplify', () => {
     const forced = forceReduceToTriangleBudget(geom, target, 'disk')
     expect(forced).not.toBeNull()
     expect(forced!.index!.count / 3).toBeLessThanOrEqual(target)
+  })
+
+  it('forceReduce and meshopt preserve UV attribute length after triangle cut', async () => {
+    const { MeshoptSimplifier } = await import('meshoptimizer')
+    await MeshoptSimplifier.ready
+
+    const geom = new THREE.SphereGeometry(1, 48, 48)
+    // SphereGeometry already has uvs
+    expect(geom.attributes.uv).toBeTruthy()
+    const uvBefore = geom.attributes.uv.count
+    const triBefore = geom.index!.count / 3
+    const target = Math.max(32, Math.floor(triBefore / 4))
+
+    // Stale groups would previously survive reduce — plant one that overshoots.
+    geom.clearGroups()
+    geom.addGroup(0, geom.index!.count * 2, 0)
+
+    const forced = forceReduceToTriangleBudget(geom, target, 'uv-sphere')
+    expect(forced).not.toBeNull()
+    expect(forced!.attributes.uv).toBeTruthy()
+    expect(forced!.attributes.uv.count).toBe(uvBefore)
+    expect(forced!.groups.length).toBe(1)
+    expect(forced!.groups[0].count).toBe(forced!.index!.count)
+    expect(forced!.groups[0].count).toBeLessThanOrEqual(target * 3)
+
+    const meshopt = meshoptSimplifyToTriangleBudget(geom, target, 'uv-sphere-meshopt')
+    // Meshopt may fail on some topologies; if it succeeds, UVs must stay.
+    if (meshopt) {
+      expect(meshopt.attributes.uv).toBeTruthy()
+      expect(meshopt.attributes.uv.count).toBe(uvBefore)
+      expect(meshopt.groups[0].count).toBe(meshopt.index!.count)
+      expect(meshopt.index!.count / 3).toBeLessThanOrEqual(target + 1)
+    }
+  })
+
+  it('extractMeshParts preserves UVs after budget simplify with material groups', async () => {
+    const { MeshoptSimplifier } = await import('meshoptimizer')
+    await MeshoptSimplifier.ready
+
+    // Dense textured sphere: expands over budget → simplify path.
+    const geom = new THREE.SphereGeometry(1, 160, 160)
+    // Fake a GLTF-style material group that would go stale if simplify rewrote indices in-place.
+    geom.clearGroups()
+    geom.addGroup(0, geom.index!.count, 0)
+
+    const tex = new THREE.DataTexture(new Uint8Array([200, 100, 50, 255]), 1, 1)
+    tex.needsUpdate = true
+    const root = new THREE.Group()
+    const mesh = new THREE.Mesh(
+      geom,
+      new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff })
+    )
+    mesh.name = 'gothic-proxy'
+    root.add(mesh)
+
+    const parts = StreetsGLBridge.extractMeshPartsFromThreeJS(root)
+    expect(parts.length).toBeGreaterThan(0)
+    const part = parts[0]
+    const vertCount = Math.floor((part.geometry.positions?.length || 0) / 3)
+    expect(vertCount).toBeGreaterThan(0)
+    expect(vertCount).toBeLessThanOrEqual(STREETS_GL_MAX_VERTICES)
+    expect((part.geometry.uvs as Float32Array).length).toBe(vertCount * 2)
+
+    // UVs should not be all zeros (would look like a single atlas texel / noise smear)
+    const uvs = part.geometry.uvs as Float32Array
+    let nonZero = 0
+    for (let i = 0; i < uvs.length; i++) {
+      if (Math.abs(uvs[i]) > 1e-6) nonZero++
+    }
+    expect(nonZero).toBeGreaterThan(uvs.length * 0.25)
   })
 
   it('reducePartsToVertexBudget thins oversized expanded parts', () => {

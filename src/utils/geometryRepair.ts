@@ -4,6 +4,10 @@
  */
 
 import * as THREE from 'three'
+import { MeshoptSimplifier } from 'meshoptimizer'
+
+// Kick off WASM init early so bridge simplify can use Meshopt when the user places a model.
+void MeshoptSimplifier.ready.catch(() => {})
 
 export interface GeometryRepairResult {
   trianglesRemoved: number
@@ -624,7 +628,7 @@ function resolveSimpleDecimationOptions(
 /**
  * Ensure geometry has an index (sequential for non-indexed triangle lists).
  */
-function ensureIndexedGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeometry | null {
+export function ensureIndexedGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeometry | null {
   if (!geometry.attributes.position) return null
   if (geometry.index) return geometry
   const count = geometry.attributes.position.count
@@ -637,9 +641,140 @@ function ensureIndexedGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeom
 }
 
 /**
+ * After rewriting the index buffer, stale `geometry.groups` still point at the old
+ * index ranges. Extract then reads past the new index → undefined verts / UV (0,0)
+ * noise. Always clear groups on bridge-simplified geometry.
+ */
+export function clearStaleGeometryGroups(geometry: THREE.BufferGeometry): void {
+  geometry.clearGroups()
+  if (geometry.index && geometry.index.count >= 3) {
+    geometry.addGroup(0, geometry.index.count, 0)
+  }
+}
+
+/**
+ * Slice a contiguous index range into a standalone geometry (attributes cloned).
+ * Used so multi-material groups can be simplified independently without stale groups.
+ */
+export function extractIndexRangeGeometry(
+  geometry: THREE.BufferGeometry,
+  start: number,
+  count: number
+): THREE.BufferGeometry | null {
+  const indexed = ensureIndexedGeometry(geometry)
+  if (!indexed?.index || !indexed.attributes.position) return null
+  const src = indexed.index.array
+  const clampedStart = Math.max(0, Math.min(start, src.length))
+  const available = src.length - clampedStart
+  const triAligned = Math.floor(Math.min(count, available) / 3) * 3
+  if (triAligned < 3) return null
+
+  const sliced = indexed.clone()
+  const newIdx = new Uint32Array(triAligned)
+  for (let i = 0; i < triAligned; i++) {
+    newIdx[i] = src[clampedStart + i] as number
+  }
+  sliced.setIndex(new THREE.BufferAttribute(newIdx, 1))
+  clearStaleGeometryGroups(sliced)
+  return sliced
+}
+
+/**
+ * UV-preserving Meshopt edge-collapse for Streets GL bridge.
+ * Keeps the vertex attribute buffers (including `uv`); only rewrites indices.
+ * Returns null if WASM is not ready yet or the mesh is unsuitable.
+ */
+export function meshoptSimplifyToTriangleBudget(
+  geometry: THREE.BufferGeometry,
+  targetTriangleCount: number,
+  meshName?: string
+): THREE.BufferGeometry | null {
+  try {
+    if (!MeshoptSimplifier.supported) return null
+    // ready is a Promise; if WASM has not finished, exports throw — catch below.
+    const indexed = ensureIndexedGeometry(geometry)
+    if (!indexed?.index || !indexed.attributes.position) return null
+
+    const indices = new Uint32Array(indexed.index.array as ArrayLike<number>)
+    const positions = new Float32Array(indexed.attributes.position.array as ArrayLike<number>)
+    const originalTriangleCount = Math.floor(indices.length / 3)
+    if (targetTriangleCount < 3 || originalTriangleCount < 3) return null
+    if (targetTriangleCount >= originalTriangleCount) {
+      const clone = indexed === geometry ? geometry.clone() : indexed
+      clearStaleGeometryGroups(clone)
+      return clone
+    }
+
+    const targetIndexCount = targetTriangleCount * 3
+    const targetError = 0.05
+    let simplifiedIndices: Uint32Array | null = null
+
+    const uvAttr = indexed.attributes.uv
+    if (uvAttr && uvAttr.itemSize >= 2 && uvAttr.count === indexed.attributes.position.count) {
+      const vertexCount = indexed.attributes.position.count
+      const attrs = new Float32Array(vertexCount * 2)
+      const uvArray = uvAttr.array as ArrayLike<number>
+      for (let i = 0; i < vertexCount; i++) {
+        attrs[i * 2] = uvArray[i * 2] ?? 0
+        attrs[i * 2 + 1] = uvArray[i * 2 + 1] ?? 0
+      }
+      const result = MeshoptSimplifier.simplifyWithAttributes(
+        indices,
+        positions,
+        3,
+        attrs,
+        2,
+        [1.0, 1.0],
+        null,
+        targetIndexCount,
+        targetError
+      )
+      simplifiedIndices = Array.isArray(result) ? result[0] : (result as Uint32Array)
+    } else {
+      const result = MeshoptSimplifier.simplify(
+        indices,
+        positions,
+        3,
+        targetIndexCount,
+        targetError
+      )
+      simplifiedIndices = Array.isArray(result) ? result[0] : (result as Uint32Array)
+    }
+
+    if (!simplifiedIndices || simplifiedIndices.length < 3) return null
+    // Must actually reduce; otherwise fall through to other strategies.
+    if (simplifiedIndices.length >= indices.length) return null
+
+    const simplified = indexed.clone()
+    simplified.setIndex(new THREE.BufferAttribute(simplifiedIndices, 1))
+    clearStaleGeometryGroups(simplified)
+    // Keep original normals when present — recompute can soften baked shading;
+    // bridge extract remaps normals anyway. Prefer UV fidelity over normal refresh.
+    if (!simplified.attributes.normal) {
+      simplified.computeVertexNormals()
+    }
+    simplified.computeBoundingSphere()
+    simplified.computeBoundingBox()
+
+    const finalTris = Math.floor(simplifiedIndices.length / 3)
+    console.log(
+      `[MeshoptBridge] "${meshName || 'unnamed'}": ${originalTriangleCount} → ${finalTris} triangles (UV-preserving)`
+    )
+    return simplified
+  } catch (error) {
+    console.warn(
+      `[MeshoptBridge] Failed for "${meshName || 'unnamed'}" (will try area fallback):`,
+      error
+    )
+    return null
+  }
+}
+
+/**
  * Always-reduce triangle budget helper for Streets GL bridge payloads.
  * Keeps the largest-area triangles; skips hole validation and fine-detail bailouts.
  * Works on indexed or non-indexed triangle lists.
+ * Note: area deletion creates holes — prefer {@link meshoptSimplifyToTriangleBudget} first.
  */
 export function forceReduceToTriangleBudget(
   geometry: THREE.BufferGeometry,
@@ -655,7 +790,9 @@ export function forceReduceToTriangleBudget(
     const originalTriangleCount = Math.floor(indices.length / 3)
     if (targetTriangleCount < 3 || originalTriangleCount < 3) return null
     if (targetTriangleCount >= originalTriangleCount) {
-      return indexed === geometry ? geometry.clone() : indexed
+      const clone = indexed === geometry ? geometry.clone() : indexed
+      clearStaleGeometryGroups(clone)
+      return clone
     }
 
     type Tri = { area: number; i0: number; i1: number; i2: number }
@@ -695,6 +832,8 @@ export function forceReduceToTriangleBudget(
 
     const simplified = indexed.clone()
     simplified.setIndex(newIndices)
+    // CRITICAL: drop stale material groups that still reference the pre-reduce index length.
+    clearStaleGeometryGroups(simplified)
     simplified.computeVertexNormals()
     simplified.computeBoundingSphere()
     simplified.computeBoundingBox()
@@ -888,6 +1027,8 @@ export function simpleDecimation(
     // Create new geometry with simplified indices
     const simplifiedGeometry = working.clone()
     simplifiedGeometry.setIndex(newIndices)
+    // Drop stale material groups (old start/count point past the new index → UV noise).
+    clearStaleGeometryGroups(simplifiedGeometry)
 
     // Recompute normals and bounds
     simplifiedGeometry.computeVertexNormals()

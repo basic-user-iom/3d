@@ -150,4 +150,47 @@ describe('StreetsGLBridge multi-material texture parts', () => {
     expect(serial.parts?.[0].geometry.uvs).toBeInstanceOf(Float32Array)
     expect(serial.parts?.[0].geometry.indices).toBeInstanceOf(Uint32Array)
   })
+
+  it('multi-material mesh with geometry.groups keeps per-texture UVs after force reduce path', () => {
+    // Two materials on one BufferGeometry with groups — the bug that scrambled UVs
+    // when simplify rewrote indices but left stale group ranges.
+    const positions = new Float32Array([
+      // tri A
+      0, 0, 0, 1, 0, 0, 0, 1, 0,
+      // tri B
+      2, 0, 0, 3, 0, 0, 2, 1, 0
+    ])
+    const uvs = new Float32Array([
+      0, 0, 0.4, 0, 0.2, 0.4,
+      0.6, 0.6, 1, 0.6, 0.8, 1
+    ])
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+    geom.setIndex([0, 1, 2, 3, 4, 5])
+    geom.addGroup(0, 3, 0)
+    geom.addGroup(3, 3, 1)
+
+    const texA = new THREE.DataTexture(new Uint8Array([255, 0, 0, 255]), 1, 1)
+    texA.needsUpdate = true
+    const texB = new THREE.DataTexture(new Uint8Array([0, 255, 0, 255]), 1, 1)
+    texB.needsUpdate = true
+
+    const mesh = new THREE.Mesh(geom, [
+      new THREE.MeshStandardMaterial({ map: texA }),
+      new THREE.MeshStandardMaterial({ map: texB })
+    ])
+    const root = new THREE.Group()
+    root.add(mesh)
+
+    const parts = StreetsGLBridge.extractMeshPartsFromThreeJS(root)
+    expect(parts.length).toBe(2)
+    for (const part of parts) {
+      const vc = Math.floor((part.geometry.positions?.length || 0) / 3)
+      expect((part.geometry.uvs as Float32Array).length).toBe(vc * 2)
+      const partUvs = part.geometry.uvs as Float32Array
+      // Each part should carry its own UV region (not all zeros)
+      expect(partUvs.some((v) => Math.abs(v) > 1e-6)).toBe(true)
+    }
+  })
 })

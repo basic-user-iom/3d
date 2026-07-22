@@ -5,7 +5,12 @@
 
 import * as THREE from 'three'
 import { useAppStore } from '../store/useAppStore'
-import { forceReduceToTriangleBudget, simpleDecimation } from './geometryRepair'
+import {
+  extractIndexRangeGeometry,
+  forceReduceToTriangleBudget,
+  meshoptSimplifyToTriangleBudget,
+  simpleDecimation
+} from './geometryRepair'
 import { resolveIframeVisibleForBridge } from '../viewer/streetsGLIframeVisibility'
 import {
   DEFAULT_STREETS_GL_ORIGIN,
@@ -1169,7 +1174,8 @@ export class StreetsGLBridge {
 
   /**
    * Reduce a source BufferGeometry for Streets GL bridge transport.
-   * Tries bridge-proxy SimpleDecimation, then forced largest-triangle reduce.
+   * Prefer Meshopt (UV-preserving edge collapse), then SimpleDecimation, then
+   * forced largest-triangle reduce. Area fallbacks moth-eat the mesh — Meshopt first.
    */
   static simplifyGeometryForBridge(
     geom: THREE.BufferGeometry,
@@ -1180,6 +1186,9 @@ export class StreetsGLBridge {
       ? Math.floor(geom.index.count / 3)
       : Math.floor((geom.attributes.position?.count || 0) / 3)
     if (triCount <= targetTris) return null
+
+    const viaMeshopt = meshoptSimplifyToTriangleBudget(geom, targetTris, meshName)
+    if (viaMeshopt) return viaMeshopt
 
     const viaSimple = simpleDecimation(geom, targetTris, meshName, { bridgeProxy: true })
     if (viaSimple && viaSimple !== geom) return viaSimple
@@ -1510,11 +1519,20 @@ export class StreetsGLBridge {
 
       // Expand indexed triangles so each part owns a compact vertex buffer (avoids sharing
       // vertices across different materials on the same BufferGeometry).
-      for (let i = indexStart; i < indexStart + indexCount; i += 3) {
-        if (i + 2 >= indexStart + indexCount) break
+      // Clamp to index buffer length — stale geometry.groups after simplify used to read
+      // past the new index and inject undefined→NaN verts / UV (0,0) white-noise samples.
+      const indexLen = (indexList as ArrayLike<number>).length
+      const indexEnd = Math.min(indexStart + indexCount, indexLen)
+      for (let i = indexStart; i + 2 < indexEnd; i += 3) {
         const cornerIndices = [indexList[i], indexList[i + 1], indexList[i + 2]]
-        for (const srcIdx of cornerIndices) {
-          if (srcIdx < 0 || srcIdx >= srcVertexCount) {
+        for (const rawIdx of cornerIndices) {
+          const srcIdx = rawIdx as number
+          if (
+            typeof srcIdx !== 'number' ||
+            !Number.isFinite(srcIdx) ||
+            srcIdx < 0 ||
+            srcIdx >= srcVertexCount
+          ) {
             bucket.positions.push(0, 0, 0)
             bucket.normals.push(0, 1, 0)
             bucket.uvs.push(0, 0)
@@ -1549,24 +1567,9 @@ export class StreetsGLBridge {
 
     const traverse = (obj: any) => {
       if (obj.isMesh && obj.geometry) {
-        let geom: THREE.BufferGeometry = obj.geometry
-        if (needsSimplify) {
-          const triCount = geom.index
-            ? Math.floor(geom.index.count / 3)
-            : Math.floor((geom.attributes.position?.count || 0) / 3)
-          const targetTris = Math.max(4, Math.floor(triCount * simplifyRatio))
-          const simplified = StreetsGLBridge.simplifyGeometryForBridge(
-            geom,
-            targetTris,
-            obj.name || 'mesh'
-          )
-          if (simplified && simplified !== geom) {
-            geom = simplified
-            disposableGeometries.push(simplified)
-          }
-        }
+        const sourceGeom: THREE.BufferGeometry = obj.geometry
 
-        if (!geom.attributes?.position) {
+        if (!sourceGeom.attributes?.position) {
           if (obj.children?.length) {
             for (const child of obj.children) traverse(child)
           }
@@ -1581,8 +1584,8 @@ export class StreetsGLBridge {
           ? obj.material
           : [obj.material]
 
-        const indexAttr = geom.index
-        const posCount = geom.attributes.position.count
+        const indexAttr = sourceGeom.index
+        const posCount = sourceGeom.attributes.position.count
         const fullIndexCount = indexAttr ? indexAttr.count : posCount
         const indexArray: ArrayLike<number> = indexAttr
           ? (indexAttr.array as ArrayLike<number>)
@@ -1593,8 +1596,8 @@ export class StreetsGLBridge {
             })()
 
         const groups =
-          geom.groups && geom.groups.length > 0
-            ? geom.groups
+          sourceGeom.groups && sourceGeom.groups.length > 0
+            ? sourceGeom.groups
             : [{ start: 0, count: fullIndexCount, materialIndex: 0 }]
 
         for (const group of groups) {
@@ -1605,7 +1608,46 @@ export class StreetsGLBridge {
           const mat = materials[matIndex]
           const { key, color, texture, forcePng } = partKeyForMaterial(mat)
           const bucket = getBucket(key, color, texture, forcePng)
-          appendTriangleVertices(bucket, geom, indexArray, group.start, group.count)
+
+          // Simplify per material group so (1) Meshopt/area-reduce cannot leave stale
+          // group ranges that read past the new index, and (2) multi-material cars keep
+          // each texture matched to its own triangles after reduction.
+          if (needsSimplify) {
+            const groupTris = Math.floor(group.count / 3)
+            const targetTris = Math.max(4, Math.floor(groupTris * simplifyRatio))
+            const sliced =
+              extractIndexRangeGeometry(sourceGeom, group.start, group.count) ||
+              sourceGeom
+            if (sliced !== sourceGeom) disposableGeometries.push(sliced)
+
+            let workGeom = sliced
+            if (groupTris > targetTris) {
+              const simplified = StreetsGLBridge.simplifyGeometryForBridge(
+                sliced,
+                targetTris,
+                obj.name || 'mesh'
+              )
+              if (simplified && simplified !== sliced) {
+                workGeom = simplified
+                disposableGeometries.push(simplified)
+              }
+            }
+
+            const workIndex = workGeom.index
+              ? (workGeom.index.array as ArrayLike<number>)
+              : (() => {
+                  const n = workGeom.attributes.position.count
+                  const seq = new Uint32Array(n)
+                  for (let i = 0; i < n; i++) seq[i] = i
+                  return seq
+                })()
+            const workCount = workGeom.index
+              ? workGeom.index.count
+              : workGeom.attributes.position.count
+            appendTriangleVertices(bucket, workGeom, workIndex, 0, workCount)
+          } else {
+            appendTriangleVertices(bucket, sourceGeom, indexArray, group.start, group.count)
+          }
         }
       }
 
