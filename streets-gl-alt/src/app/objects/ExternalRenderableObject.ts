@@ -172,6 +172,30 @@ export default class ExternalRenderableObject extends RenderableObject3D {
 	}
 
 	public setBaseColorTextureFromDataUrl(renderer: AbstractRenderer, dataUrl: string): void {
+		this.loadBaseColorImage(renderer, dataUrl)
+	}
+
+	public setBaseColorTextureFromBytes(
+		renderer: AbstractRenderer,
+		bytes: ArrayBuffer,
+		mime = 'image/jpeg'
+	): void {
+		const blob = new Blob([bytes], { type: mime || 'image/jpeg' })
+		const objectUrl = URL.createObjectURL(blob)
+		this.loadBaseColorImage(renderer, objectUrl, () => {
+			try {
+				URL.revokeObjectURL(objectUrl)
+			} catch {
+				/* ignore */
+			}
+		})
+	}
+
+	private loadBaseColorImage(
+		renderer: AbstractRenderer,
+		src: string,
+		onSettled?: () => void
+	): void {
 		if (this.baseColorTexture) {
 			this.baseColorTexture.delete()
 			this.baseColorTexture = null
@@ -179,32 +203,41 @@ export default class ExternalRenderableObject extends RenderableObject3D {
 		this.useBaseColorMap = false
 
 		const image = new Image()
+		const finish = (): void => {
+			onSettled?.()
+		}
 		image.onload = () => {
 			try {
 				this.baseColorTexture = renderer.createTexture2D({
 					width: image.width,
 					height: image.height,
 					data: image,
-					minFilter: RendererTypes.MinFilter.Linear,
+					minFilter: RendererTypes.MinFilter.LinearMipmapLinear,
 					magFilter: RendererTypes.MagFilter.Linear,
 					wrap: RendererTypes.TextureWrap.Repeat,
 					format: RendererTypes.TextureFormat.RGBA8Unorm,
-					mipmaps: false,
+					mipmaps: true,
+					anisotropy: 16,
 					flipY: false
 				})
 				this.useBaseColorMap = true
 				console.log('[ExternalRenderableObject] Base color texture loaded:', {
 					width: image.width,
-					height: image.height
+					height: image.height,
+					mipmaps: true,
+					anisotropy: 16
 				})
 			} catch (error) {
 				console.warn('[ExternalRenderableObject] Failed to create base color texture:', error)
+			} finally {
+				finish()
 			}
 		}
 		image.onerror = () => {
-			console.warn('[ExternalRenderableObject] Failed to decode base color texture data URL')
+			console.warn('[ExternalRenderableObject] Failed to decode base color texture')
+			finish()
 		}
-		image.src = dataUrl
+		image.src = src
 	}
 
 	public delete(): void {

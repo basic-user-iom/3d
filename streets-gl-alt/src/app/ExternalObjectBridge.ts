@@ -39,6 +39,8 @@ interface ExternalMeshPart {
   geometry: GeometryData
   color?: { r: number; g: number; b: number }
   baseColorTextureDataUrl?: string
+  baseColorTextureBytes?: ArrayBuffer
+  baseColorTextureMime?: string
 }
 
 interface ExternalObject {
@@ -368,7 +370,9 @@ export class ExternalObjectBridge {
           id: data.id,
           partCount: parent.children.length,
           totalVertices,
-          texturedParts: meshParts.filter((p) => !!p.baseColorTextureDataUrl).length
+          texturedParts: meshParts.filter(
+            (p) => !!p.baseColorTextureDataUrl || !!p.baseColorTextureBytes
+          ).length
         })
       } else {
         // No geometry - create a simple container object (invisible but can be used as a marker)
@@ -513,12 +517,19 @@ export class ExternalObjectBridge {
       const textureDataUrl =
         data.metadata?.baseColorTextureDataUrl ||
         data.metadata?.material?.baseColorTextureDataUrl
+      const textureBytes =
+        data.metadata?.baseColorTextureBytes ||
+        data.metadata?.material?.baseColorTextureBytes
+      const textureMime =
+        data.metadata?.baseColorTextureMime ||
+        data.metadata?.material?.baseColorTextureMime
       return [
         {
           geometry: data.geometry,
           color: data.color || { r: 1, g: 1, b: 1 },
-          baseColorTextureDataUrl:
-            typeof textureDataUrl === 'string' ? textureDataUrl : undefined
+          baseColorTextureDataUrl: textureDataUrl,
+          baseColorTextureBytes: textureBytes,
+          baseColorTextureMime: textureMime
         }
       ]
     }
@@ -568,8 +579,9 @@ export class ExternalObjectBridge {
     if (!geometryData) return null
 
     let objectColor = part.color || data.color || { r: 1, g: 1, b: 1 }
+    const textureBytes = part.baseColorTextureBytes
     const textureDataUrl = part.baseColorTextureDataUrl
-    if (textureDataUrl) {
+    if (textureBytes || textureDataUrl) {
       objectColor = { r: 1, g: 1, b: 1 }
     }
 
@@ -580,8 +592,16 @@ export class ExternalObjectBridge {
     ;(renderable as any).externalMetadata = data.metadata || {}
     ;(renderable as any).pickingId = pickingId
 
-    if (textureDataUrl && renderer) {
-      renderable.setBaseColorTextureFromDataUrl(renderer, textureDataUrl)
+    if (renderer) {
+      if (textureBytes && textureBytes.byteLength > 0) {
+        renderable.setBaseColorTextureFromBytes(
+          renderer,
+          textureBytes,
+          part.baseColorTextureMime || 'image/jpeg'
+        )
+      } else if (textureDataUrl) {
+        renderable.setBaseColorTextureFromDataUrl(renderer, textureDataUrl)
+      }
     }
 
     return renderable

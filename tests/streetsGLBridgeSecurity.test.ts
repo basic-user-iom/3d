@@ -86,6 +86,18 @@ describe('streetsGLBridgeSecurity (SEC-5)', () => {
       metadata: { baseColorTextureDataUrl: 'data:image/png;base64,' + 'A'.repeat(2_500_001) }
     }
     expect(validateExternalObjectGeometry(hugeTexture).ok).toBe(false)
+
+    const hugeBinary = {
+      id: 'tex-bin',
+      geometry: { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]) },
+      parts: [
+        {
+          geometry: { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]) },
+          baseColorTextureBytes: new ArrayBuffer(8_000_001)
+        }
+      ]
+    }
+    expect(validateExternalObjectGeometry(hugeBinary).ok).toBe(false)
   })
 
   it('rejects oversized sync batches', () => {

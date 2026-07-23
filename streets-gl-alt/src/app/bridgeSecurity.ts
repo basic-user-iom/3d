@@ -13,7 +13,13 @@ export const STREETS_GL_ALLOWED_PARENT_ORIGINS = new Set([
 /** Mirrored from parent streetsGLBridgeSecurity — keep in sync. */
 export const STREETS_GL_BRIDGE_MAX_VERTICES = 500_000
 export const STREETS_GL_BRIDGE_MAX_PARTS = 48
+/** Legacy data-URL char cap (base64-inflated). Prefer binary `baseColorTextureBytes` for large maps. */
 export const STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS = 2_500_000
+/**
+ * Per-texture compressed byte budget for ArrayBuffer / TypedArray transfer.
+ * ~8MB fits typical 4k JPEG@0.92 albedo without forcing muddy half-size retries.
+ */
+export const STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES = 8_000_000
 export const STREETS_GL_BRIDGE_MAX_SYNC_OBJECTS = 256
 export const STREETS_GL_BRIDGE_MAX_ID_CHARS = 256
 export const STREETS_GL_BRIDGE_MAX_HIDDEN_BUILDINGS = 10_000
@@ -104,6 +110,23 @@ function textureDataUrlTooLarge(value: unknown): boolean {
   return typeof value === 'string' && value.length > STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS
 }
 
+function textureBytesTooLarge(value: unknown): boolean {
+  if (value instanceof ArrayBuffer) {
+    return value.byteLength > STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES
+  }
+  if (ArrayBuffer.isView(value)) {
+    return value.byteLength > STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES
+  }
+  return false
+}
+
+function partTexturePayloadTooLarge(part: Record<string, unknown>): boolean {
+  return (
+    textureDataUrlTooLarge(part.baseColorTextureDataUrl) ||
+    textureBytesTooLarge(part.baseColorTextureBytes)
+  )
+}
+
 export interface GeometryValidationResult {
   ok: boolean
   error?: string
@@ -148,10 +171,10 @@ export function validateExternalObjectGeometry(payload: unknown): GeometryValida
       if (partVerts <= 0) continue
       partCount += 1
       vertexCount += partVerts
-      if (textureDataUrlTooLarge((part as { baseColorTextureDataUrl?: unknown }).baseColorTextureDataUrl)) {
+      if (partTexturePayloadTooLarge(part as Record<string, unknown>)) {
         return {
           ok: false,
-          error: 'Texture data URL exceeds size limit',
+          error: 'Texture payload exceeds size limit',
           vertexCount,
           partCount
         }
@@ -173,19 +196,26 @@ export function validateExternalObjectGeometry(payload: unknown): GeometryValida
   }
 
   const meta = data.metadata as Record<string, unknown> | undefined
-  if (textureDataUrlTooLarge(meta?.baseColorTextureDataUrl)) {
+  if (
+    textureDataUrlTooLarge(meta?.baseColorTextureDataUrl) ||
+    textureBytesTooLarge(meta?.baseColorTextureBytes)
+  ) {
     return {
       ok: false,
-      error: 'Texture data URL exceeds size limit',
+      error: 'Texture payload exceeds size limit',
       vertexCount,
       partCount
     }
   }
-  const material = meta?.material as { baseColorTextureDataUrl?: unknown } | undefined
-  if (textureDataUrlTooLarge(material?.baseColorTextureDataUrl)) {
+  const material = meta?.material as Record<string, unknown> | undefined
+  if (
+    material &&
+    (textureDataUrlTooLarge(material.baseColorTextureDataUrl) ||
+      textureBytesTooLarge(material.baseColorTextureBytes))
+  ) {
     return {
       ok: false,
-      error: 'Texture data URL exceeds size limit',
+      error: 'Texture payload exceeds size limit',
       vertexCount,
       partCount
     }
