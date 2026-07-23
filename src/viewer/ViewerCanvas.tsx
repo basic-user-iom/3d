@@ -9110,6 +9110,12 @@ waterColor, waterOpacity, waveSpeed, waveHeight, waterReflectivity, oceanDistort
           obj.visible = true
           return
         }
+        // Sync failed: keep visible in the Three.js viewer (nothing in the iframe to show).
+        if (obj.userData.streetsGLSyncFailed === true) {
+          obj.visible = true
+          delete obj.userData.renderInStreetsGL
+          return
+        }
         if (obj.userData.isModel || obj.userData.isImportedModel) {
           // Primitives should remain visible in main scene for transform controls
           if (obj.userData.isPrimitive) {

@@ -1767,6 +1767,7 @@ function syncObjectToStreetsGLInternal(
       if (result.success || result.queued) {
         model.userData.streetsGLObjectId = objectId
         model.userData.streetsGLAdded = true
+        delete model.userData.streetsGLSyncFailed
         const wantVisible = getIframeVisible(model)
         setIframePresence(model, wantVisible ? 'present' : 'hidden', {
           projectId: (model.userData.projectObjectId as string | undefined) || objectId,
@@ -1789,10 +1790,14 @@ function syncObjectToStreetsGLInternal(
           projectId: (model.userData.projectObjectId as string | undefined) || objectId,
           persistRegistry: false
         })
+        // Don't leave the model stuck product-hidden with nothing in the iframe.
+        model.userData.streetsGLSyncFailed = true
+        model.visible = true
+        delete model.userData.renderInStreetsGL
         const vertexCount = streetsGLObject.geometry?.positions?.length
           ? Math.floor(streetsGLObject.geometry.positions.length / 3)
           : 0
-        const failMsg = `Failed to add "${model.name || objectId}" to Streets GL map${vertexCount ? ` (${vertexCount.toLocaleString()} vertices)` : ''}. Check the browser console for details.`
+        const failMsg = `Failed to add "${model.name || objectId}" to Streets GL map${vertexCount ? ` (${vertexCount.toLocaleString()} vertices)` : ''}. The model was restored in the 3D viewer — check the browser console for details.`
         console.warn('[StreetsGLSync] Failed to add model to Streets GL scene:', objectId, { vertexCount })
         useAppStore.getState().setError(failMsg)
         // Resolve (don't reject) so fire-and-forget sync callers don't spam uncaught "Add failed".

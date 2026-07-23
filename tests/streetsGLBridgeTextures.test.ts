@@ -8,10 +8,11 @@ import {
 import {
   STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES,
   STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS,
+  STREETS_GL_BRIDGE_MAX_TOTAL_TEXTURE_BYTES,
   validateExternalObjectGeometry
 } from '../src/utils/streetsGLBridgeSecurity'
 
-type CanvasRecord = { width: number; height: number; mime?: string }
+type CanvasRecord = { width: number; height: number; mime?: string; quality?: number }
 
 /**
  * Minimal canvas stub so textureToDataURL / serializeTextureForBridge can run in Node/vitest.
@@ -33,8 +34,8 @@ function installCanvasStub(records: CanvasRecord[] = []) {
         putImageData: () => {}
       }
     }
-    toDataURL(type?: string) {
-      records.push({ width: this.width, height: this.height, mime: type })
+    toDataURL(type?: string, quality?: number) {
+      records.push({ width: this.width, height: this.height, mime: type, quality })
       // Valid tiny base64 payload so dataUrlToArrayBuffer succeeds.
       return `data:${type || 'image/png'};base64,U1RVQg==`
     }
@@ -75,6 +76,12 @@ function makeSolidMesh(name: string, color: number): THREE.Mesh {
   const mesh = new THREE.Mesh(geom, mat)
   mesh.name = name
   return mesh
+}
+
+/** Build a valid-looking JPEG data URL whose decoded byte length ≈ targetBytes. */
+function oversizedJpegDataUrl(targetBytes: number, type = 'image/jpeg'): string {
+  const b64Len = Math.ceil(targetBytes / 3) * 4
+  return `data:${type};base64,` + 'A'.repeat(b64Len)
 }
 
 describe('StreetsGLBridge texture serialization quality', () => {
@@ -135,14 +142,12 @@ describe('StreetsGLBridge texture serialization quality', () => {
     doc.createElement = (tag: string) => {
       const canvas = origCreate(tag)
       if (tag === 'canvas') {
-        canvas.toDataURL = (type?: string) => {
-          records.push({ width: canvas.width, height: canvas.height, mime: type })
+        canvas.toDataURL = (type?: string, quality?: number) => {
+          records.push({ width: canvas.width, height: canvas.height, mime: type, quality })
           const edge = Math.max(canvas.width, canvas.height)
           if (edge > 512) {
             // Base64 length ≈ 4/3 of bytes; exceed MAX_TEXTURE_BYTES after decode.
-            const rawLen = STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES + 1024
-            const b64Len = Math.ceil(rawLen / 3) * 4
-            return `data:${type || 'image/jpeg'};base64,` + 'A'.repeat(b64Len)
+            return oversizedJpegDataUrl(STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES + 1024, type || 'image/jpeg')
           }
           return `data:${type || 'image/jpeg'};base64,T0s=`
         }
@@ -156,6 +161,36 @@ describe('StreetsGLBridge texture serialization quality', () => {
     expect(serialized).toBeTruthy()
     expect(serialized!.bytes!.byteLength).toBeLessThanOrEqual(STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES)
     expect(records.some((r) => Math.max(r.width, r.height) <= 512)).toBe(true)
+  })
+
+  it('quality-backoff before edge downscale when JPEG is over per-texture budget', () => {
+    const records: CanvasRecord[] = []
+    installCanvasStub(records)
+    const doc = (globalThis as any).document
+    const origCreate = doc.createElement.bind(doc)
+    doc.createElement = (tag: string) => {
+      const canvas = origCreate(tag)
+      if (tag === 'canvas') {
+        canvas.toDataURL = (type?: string, quality?: number) => {
+          records.push({ width: canvas.width, height: canvas.height, mime: type, quality })
+          const q = typeof quality === 'number' ? quality : 1
+          // High quality overflows; lower quality fits at full edge.
+          if (q > 0.7) {
+            return oversizedJpegDataUrl(STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES + 2048, type || 'image/jpeg')
+          }
+          return `data:${type || 'image/jpeg'};base64,T0s=`
+        }
+      }
+      return canvas
+    }
+
+    const tex = new THREE.DataTexture(new Uint8Array(4), 4096, 4096)
+    tex.needsUpdate = true
+    const serialized = StreetsGLBridge.serializeTextureForBridge(tex, 4096)
+    expect(serialized).toBeTruthy()
+    expect(Math.max(serialized!.width, serialized!.height)).toBe(4096)
+    expect(records.some((r) => typeof r.quality === 'number' && r.quality <= 0.7)).toBe(true)
+    expect(records.every((r) => Math.max(r.width, r.height) === 4096)).toBe(true)
   })
 
   it('omits oversized data URLs when binary bytes fit (legacy char budget)', () => {
@@ -185,6 +220,89 @@ describe('StreetsGLBridge texture serialization quality', () => {
     expect(serialized!.dataUrl).toBeUndefined()
   })
 
+  it('textureToDataURL never returns a string over the SEC char budget', () => {
+    const records: CanvasRecord[] = []
+    installCanvasStub(records)
+    const doc = (globalThis as any).document
+    const origCreate = doc.createElement.bind(doc)
+    doc.createElement = (tag: string) => {
+      const canvas = origCreate(tag)
+      if (tag === 'canvas') {
+        canvas.toDataURL = (type?: string) => {
+          records.push({ width: canvas.width, height: canvas.height, mime: type })
+          // Bytes fit per-texture budget (~3MB) but base64 string exceeds char cap.
+          return oversizedJpegDataUrl(3_000_000, type || 'image/jpeg')
+        }
+      }
+      return canvas
+    }
+
+    const tex = new THREE.DataTexture(new Uint8Array(4), 4096, 4096)
+    tex.needsUpdate = true
+    const dataUrl = StreetsGLBridge.textureToDataURL(tex, 4096)
+    expect(dataUrl).toBeUndefined()
+
+    const payload = StreetsGLBridge.fromThreeJSObject(
+      (() => {
+        const root = new THREE.Group()
+        root.add(makeTexturedMesh('tower', tex, [0, 0, 1, 0, 1, 1, 0, 1]))
+        return root
+      })(),
+      'meshy-tower'
+    )
+    // Must not poison metadata with a rebuilt oversized data URL (the d3ede81 reject).
+    expect(payload.metadata?.baseColorTextureDataUrl).toBeUndefined()
+    expect(payload.parts?.[0]?.baseColorTextureBytes).toBeInstanceOf(ArrayBuffer)
+    const validation = validateExternalObjectGeometry(payload)
+    expect(validation.ok).toBe(true)
+  })
+
+  it('auto-reduces largest textures when aggregate payload exceeds total budget', () => {
+    const records: CanvasRecord[] = []
+    installCanvasStub(records)
+    const doc = (globalThis as any).document
+    const origCreate = doc.createElement.bind(doc)
+    doc.createElement = (tag: string) => {
+      const canvas = origCreate(tag)
+      if (tag === 'canvas') {
+        canvas.toDataURL = (type?: string) => {
+          records.push({ width: canvas.width, height: canvas.height, mime: type })
+          const edge = Math.max(canvas.width, canvas.height)
+          // Each 4k map is ~7MB (under per-texture 8MB) but two exceed 12MB total.
+          // Half edge drops to ~2MB so aggregate fits after reducing the largest.
+          if (edge >= 4096) {
+            return oversizedJpegDataUrl(7_000_000, type || 'image/jpeg')
+          }
+          if (edge >= 2048) {
+            return oversizedJpegDataUrl(2_000_000, type || 'image/jpeg')
+          }
+          return `data:${type || 'image/jpeg'};base64,T0s=`
+        }
+      }
+      return canvas
+    }
+
+    const texA = new THREE.DataTexture(new Uint8Array(4), 8192, 8192)
+    texA.needsUpdate = true
+    const texB = new THREE.DataTexture(new Uint8Array(4), 4096, 4096)
+    texB.needsUpdate = true
+    const root = new THREE.Group()
+    root.add(makeTexturedMesh('body', texA, [0, 0, 1, 0, 1, 1, 0, 1]))
+    root.add(makeTexturedMesh('detail', texB, [0, 0, 1, 0, 1, 1, 0, 1]))
+
+    const parts = StreetsGLBridge.extractMeshPartsFromThreeJS(root)
+    expect(parts.length).toBe(2)
+    const total = parts.reduce(
+      (sum, p) => sum + ((p.baseColorTextureBytes as ArrayBuffer | undefined)?.byteLength || 0),
+      0
+    )
+    expect(total).toBeLessThanOrEqual(STREETS_GL_BRIDGE_MAX_TOTAL_TEXTURE_BYTES)
+    expect(records.some((r) => Math.max(r.width, r.height) <= 2048)).toBe(true)
+
+    const payload = StreetsGLBridge.fromThreeJSObject(root, 'meshy-8k-4k')
+    expect(validateExternalObjectGeometry(payload).ok).toBe(true)
+  })
+
   it('validateExternalObjectGeometry accepts binary textures under byte budget', () => {
     const bytes = new ArrayBuffer(1024)
     const ok = validateExternalObjectGeometry({
@@ -210,6 +328,25 @@ describe('StreetsGLBridge texture serialization quality', () => {
     })
     expect(tooBig.ok).toBe(false)
     expect(tooBig.error).toMatch(/texture payload/i)
+  })
+
+  it('validateExternalObjectGeometry rejects absolute oversize aggregate cleanly', () => {
+    const half = Math.floor(STREETS_GL_BRIDGE_MAX_TOTAL_TEXTURE_BYTES / 2) + 100_000
+    const rejected = validateExternalObjectGeometry({
+      id: 'agg-big',
+      parts: [
+        {
+          geometry: { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]) },
+          baseColorTextureBytes: new ArrayBuffer(half)
+        },
+        {
+          geometry: { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]) },
+          baseColorTextureBytes: new ArrayBuffer(half)
+        }
+      ]
+    })
+    expect(rejected.ok).toBe(false)
+    expect(rejected.error).toMatch(/texture payload/i)
   })
 })
 

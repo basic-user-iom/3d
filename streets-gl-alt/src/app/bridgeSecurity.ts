@@ -20,6 +20,12 @@ export const STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS = 2_500_000
  * ~8MB fits typical 4k JPEG@0.92 albedo without forcing muddy half-size retries.
  */
 export const STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES = 8_000_000
+/**
+ * Aggregate compressed texture budget for one addObject / sync item (all mesh parts).
+ * Two 4k Meshy albedos at high JPEG quality can exceed this — parent must quality/edge
+ * backoff (largest first) before postMessage rather than hard-failing.
+ */
+export const STREETS_GL_BRIDGE_MAX_TOTAL_TEXTURE_BYTES = 12_000_000
 export const STREETS_GL_BRIDGE_MAX_SYNC_OBJECTS = 256
 export const STREETS_GL_BRIDGE_MAX_ID_CHARS = 256
 export const STREETS_GL_BRIDGE_MAX_HIDDEN_BUILDINGS = 10_000
@@ -127,6 +133,36 @@ function partTexturePayloadTooLarge(part: Record<string, unknown>): boolean {
   )
 }
 
+function texturePayloadByteLength(value: unknown): number {
+  if (value instanceof ArrayBuffer) return value.byteLength
+  if (ArrayBuffer.isView(value)) return value.byteLength
+  if (typeof value === 'string' && value.startsWith('data:')) {
+    const comma = value.indexOf(',')
+    const payload = comma >= 0 ? value.slice(comma + 1) : value
+    return Math.floor((payload.length * 3) / 4)
+  }
+  return 0
+}
+
+function accumulateUniqueTextureBytes(
+  value: unknown,
+  seen: WeakSet<object>,
+  seenDataUrls: Set<string>
+): number {
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    const key = value instanceof ArrayBuffer ? value : value.buffer
+    if (seen.has(key as ArrayBuffer)) return 0
+    seen.add(key as ArrayBuffer)
+    return texturePayloadByteLength(value)
+  }
+  if (typeof value === 'string' && value.startsWith('data:')) {
+    if (seenDataUrls.has(value)) return 0
+    seenDataUrls.add(value)
+    return texturePayloadByteLength(value)
+  }
+  return 0
+}
+
 export interface GeometryValidationResult {
   ok: boolean
   error?: string
@@ -152,6 +188,9 @@ export function validateExternalObjectGeometry(payload: unknown): GeometryValida
 
   let vertexCount = 0
   let partCount = 0
+  let textureBytesTotal = 0
+  const seenTextureBuffers = new WeakSet<object>()
+  const seenTextureDataUrls = new Set<string>()
 
   if (partsRaw && partsRaw.length > 0) {
     if (partsRaw.length > STREETS_GL_BRIDGE_MAX_PARTS) {
@@ -166,12 +205,13 @@ export function validateExternalObjectGeometry(payload: unknown): GeometryValida
       if (!part || typeof part !== 'object') {
         return { ok: false, error: 'Invalid mesh part', vertexCount, partCount }
       }
+      const partRec = part as Record<string, unknown>
       const geometry = (part as { geometry?: { positions?: unknown } }).geometry
       const partVerts = vertexCountFromPositions(geometry?.positions)
       if (partVerts <= 0) continue
       partCount += 1
       vertexCount += partVerts
-      if (partTexturePayloadTooLarge(part as Record<string, unknown>)) {
+      if (partTexturePayloadTooLarge(partRec)) {
         return {
           ok: false,
           error: 'Texture payload exceeds size limit',
@@ -179,6 +219,16 @@ export function validateExternalObjectGeometry(payload: unknown): GeometryValida
           partCount
         }
       }
+      textureBytesTotal += accumulateUniqueTextureBytes(
+        partRec.baseColorTextureBytes,
+        seenTextureBuffers,
+        seenTextureDataUrls
+      )
+      textureBytesTotal += accumulateUniqueTextureBytes(
+        partRec.baseColorTextureDataUrl,
+        seenTextureBuffers,
+        seenTextureDataUrls
+      )
     }
   } else {
     const geometry = data.geometry as { positions?: unknown } | undefined
@@ -207,12 +257,45 @@ export function validateExternalObjectGeometry(payload: unknown): GeometryValida
       partCount
     }
   }
+  if (!partsRaw || partsRaw.length === 0) {
+    textureBytesTotal += accumulateUniqueTextureBytes(
+      meta?.baseColorTextureBytes,
+      seenTextureBuffers,
+      seenTextureDataUrls
+    )
+    textureBytesTotal += accumulateUniqueTextureBytes(
+      meta?.baseColorTextureDataUrl,
+      seenTextureBuffers,
+      seenTextureDataUrls
+    )
+  }
   const material = meta?.material as Record<string, unknown> | undefined
   if (
     material &&
     (textureDataUrlTooLarge(material.baseColorTextureDataUrl) ||
       textureBytesTooLarge(material.baseColorTextureBytes))
   ) {
+    return {
+      ok: false,
+      error: 'Texture payload exceeds size limit',
+      vertexCount,
+      partCount
+    }
+  }
+  if (!partsRaw || partsRaw.length === 0) {
+    textureBytesTotal += accumulateUniqueTextureBytes(
+      material?.baseColorTextureBytes,
+      seenTextureBuffers,
+      seenTextureDataUrls
+    )
+    textureBytesTotal += accumulateUniqueTextureBytes(
+      material?.baseColorTextureDataUrl,
+      seenTextureBuffers,
+      seenTextureDataUrls
+    )
+  }
+
+  if (textureBytesTotal > STREETS_GL_BRIDGE_MAX_TOTAL_TEXTURE_BYTES) {
     return {
       ok: false,
       error: 'Texture payload exceeds size limit',

@@ -22,6 +22,7 @@ import {
   readOriginFromUrl,
   STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES,
   STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS,
+  STREETS_GL_BRIDGE_MAX_TOTAL_TEXTURE_BYTES,
   STREETS_GL_BRIDGE_MAX_VERTICES,
   validateExternalObjectGeometry,
   validateSyncObjectsPayload
@@ -61,8 +62,8 @@ export const STREETS_GL_MAX_MESH_PARTS = 48
  */
 export const STREETS_GL_MAX_TEXTURE_SIZE = 4096
 
-/** JPEG quality for opaque albedo maps sent across the bridge. */
-const STREETS_GL_TEXTURE_JPEG_QUALITY = 0.92
+/** JPEG quality ladder for opaque albedo maps (high → compact) before edge downscale. */
+const STREETS_GL_TEXTURE_JPEG_QUALITY_STEPS = [0.92, 0.85, 0.75, 0.65, 0.55, 0.45] as const
 
 /** Compressed texture payload for Streets GL (prefer bytes over data URL). */
 export interface StreetsGLSerializedTexture {
@@ -73,6 +74,12 @@ export interface StreetsGLSerializedTexture {
   bytes?: ArrayBuffer
   /** Legacy/fallback when bytes unavailable or under the data-URL char budget. */
   dataUrl?: string
+}
+
+export type SerializeTextureForBridgeOptions = {
+  forcePng?: boolean
+  /** Override per-texture compressed byte budget (default SEC-5 max). */
+  maxBytes?: number
 }
 
 export interface GeometryData {
@@ -462,11 +469,15 @@ export class StreetsGLBridge {
       if (!preflight.ok) {
         const errMsg = preflight.error || 'Geometry rejected by bridge security limits'
         console.error('[StreetsGLBridge] Rejected outbound addObject:', errMsg)
+        const isTexture =
+          typeof errMsg === 'string' && /texture payload/i.test(errMsg)
         useAppStore.getState().setError(
-          `Could not add "${object.metadata?.name || object.id}" to Streets GL: ${errMsg}. ` +
-            (vertexCount > STREETS_GL_MAX_VERTICES
-              ? 'Simplify the model in the Optimize panel, or use a lower-poly version.'
-              : 'Check the browser console for details.')
+          isTexture
+            ? `Could not add "${object.metadata?.name || object.id}" to Streets GL: textures are still too large after compression. Try fewer/smaller maps, or re-export with smaller textures.`
+            : `Could not add "${object.metadata?.name || object.id}" to Streets GL: ${errMsg}. ` +
+                (vertexCount > STREETS_GL_MAX_VERTICES
+                  ? 'Simplify the model in the Optimize panel, or use a lower-poly version.'
+                  : 'Check the browser console for details.')
         )
         resolve({ success: false, queued: false })
         return
@@ -1036,9 +1047,10 @@ export class StreetsGLBridge {
         type: threeObject.type || 'Object3D',
         userData: threeObject.userData || {},
         material: material,
-        // Legacy single-texture fields (first textured part) for older iframe builds
-        baseColorTextureDataUrl:
-          primaryPart?.baseColorTextureDataUrl ?? material?.baseColorTextureDataUrl,
+        // Legacy single-texture fields (first textured part) for older iframe builds.
+        // Prefer part binary bytes — never fall back to extractMaterial data URLs, which
+        // used to rebuild oversized base64 strings and trip the SEC-5 char cap.
+        baseColorTextureDataUrl: primaryPart?.baseColorTextureDataUrl,
         baseColorTextureBytes: primaryPart?.baseColorTextureBytes,
         baseColorTextureMime: primaryPart?.baseColorTextureMime,
         parts,
@@ -1422,6 +1434,7 @@ export class StreetsGLBridge {
       vertexOffset: number
       color: { r: number; g: number; b: number }
       texture?: THREE.Texture
+      forcePng?: boolean
       serializedTexture?: StreetsGLSerializedTexture
       vertexWeight: number
     }
@@ -1528,6 +1541,7 @@ export class StreetsGLBridge {
           vertexOffset: 0,
           color,
           texture,
+          forcePng,
           serializedTexture,
           vertexWeight: 0
         }
@@ -1716,6 +1730,7 @@ export class StreetsGLBridge {
     }
 
     const kept = sorted.slice(0, STREETS_GL_MAX_MESH_PARTS)
+    StreetsGLBridge.fitBucketTexturesToTotalBudget(kept.map(({ bucket }) => bucket), textureSerializeCache)
     const parts = kept.map(({ bucket }) => {
       const positions = Float32Array.from(bucket.positions)
       let normals = Float32Array.from(bucket.normals)
@@ -1839,16 +1854,104 @@ export class StreetsGLBridge {
   }
 
   /**
+   * Shrink the largest mesh-part textures first until the aggregate compressed byte
+   * budget fits (or textures are dropped after heavy reduction).
+   */
+  private static fitBucketTexturesToTotalBudget(
+    buckets: Array<{
+      texture?: THREE.Texture
+      forcePng?: boolean
+      serializedTexture?: StreetsGLSerializedTexture
+    }>,
+    cache: Map<string, StreetsGLSerializedTexture | undefined>,
+    maxTotalBytes = STREETS_GL_BRIDGE_MAX_TOTAL_TEXTURE_BYTES
+  ): void {
+    const textured = buckets.filter((b) => b.serializedTexture?.bytes || b.serializedTexture?.dataUrl)
+    if (textured.length === 0) return
+
+    const totalBytes = () =>
+      textured.reduce((sum, b) => {
+        const bytes = b.serializedTexture?.bytes
+        if (bytes) return sum + bytes.byteLength
+        const dataUrl = b.serializedTexture?.dataUrl
+        if (!dataUrl) return sum
+        const comma = dataUrl.indexOf(',')
+        const payload = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+        return sum + Math.floor((payload.length * 3) / 4)
+      }, 0)
+
+    if (totalBytes() <= maxTotalBytes) return
+
+    console.warn(
+      `[StreetsGLBridge] Aggregate texture payload ${totalBytes()} bytes exceeds ` +
+        `${maxTotalBytes}; reducing largest maps first`
+    )
+
+    // Progressive: lower edge on the current largest map until under budget.
+    let guard = 0
+    while (totalBytes() > maxTotalBytes && guard++ < 24) {
+      const ranked = [...textured]
+        .filter((b) => b.texture && b.serializedTexture)
+        .sort((a, b) => {
+          const aBytes = a.serializedTexture!.bytes?.byteLength ?? 0
+          const bBytes = b.serializedTexture!.bytes?.byteLength ?? 0
+          return bBytes - aBytes
+        })
+      const victim = ranked[0]
+      if (!victim?.texture || !victim.serializedTexture) break
+
+      const curEdge = Math.max(victim.serializedTexture.width, victim.serializedTexture.height)
+      const nextEdge = Math.max(256, Math.floor(curEdge / 2))
+      const remaining = Math.max(
+        64_000,
+        maxTotalBytes -
+          (totalBytes() - (victim.serializedTexture.bytes?.byteLength ?? 0))
+      )
+
+      if (nextEdge >= curEdge) {
+        // Already at floor — drop this texture rather than blocking the whole object.
+        console.warn(
+          `[StreetsGLBridge] Dropping texture still over aggregate budget at ${curEdge}px`
+        )
+        victim.serializedTexture = undefined
+        const cacheKey = `${victim.texture.uuid}:${victim.forcePng ? 'png' : 'auto'}`
+        cache.set(cacheKey, undefined)
+        continue
+      }
+
+      const reserialized = StreetsGLBridge.serializeTextureForBridge(
+        victim.texture,
+        nextEdge,
+        { forcePng: victim.forcePng, maxBytes: Math.min(STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES, remaining) }
+      )
+      victim.serializedTexture = reserialized
+      const cacheKey = `${victim.texture.uuid}:${victim.forcePng ? 'png' : 'auto'}`
+      cache.set(cacheKey, reserialized)
+
+      if (!reserialized) {
+        console.warn('[StreetsGLBridge] Texture omitted after aggregate budget reduction')
+      }
+    }
+
+    if (totalBytes() > maxTotalBytes) {
+      console.warn(
+        `[StreetsGLBridge] Aggregate texture payload still ${totalBytes()} after reduction ` +
+          `(limit ${maxTotalBytes}) — outbound validation may reject`
+      )
+    }
+  }
+
+  /**
    * Serialize a Three.js texture for Streets GL postMessage.
-   * Caps the longest edge at maxSize (default 4k). Opaque maps use JPEG; PNG only when
-   * alpha is required. Prefers compressed ArrayBuffer bytes (no base64 bloat); attaches a
-   * data URL only when it fits the SEC char budget. Downscales only when the compressed
-   * byte budget is exceeded.
+   * Caps the longest edge at maxSize (default 4k). Opaque maps use JPEG with quality
+   * backoff before edge downscale; PNG only when alpha is required. Prefers compressed
+   * ArrayBuffer bytes (no base64 bloat); attaches a data URL only when it fits the SEC
+   * char budget.
    */
   static serializeTextureForBridge(
     texture: THREE.Texture,
     maxSize = STREETS_GL_MAX_TEXTURE_SIZE,
-    options?: { forcePng?: boolean }
+    options?: SerializeTextureForBridgeOptions
   ): StreetsGLSerializedTexture | undefined {
     const image = texture?.image as CanvasImageSource & {
       width?: number
@@ -1916,14 +2019,23 @@ export class StreetsGLBridge {
       const usePng =
         options?.forcePng === true || (texture as { premultiplyAlpha?: boolean }).premultiplyAlpha === true
 
+      const byteBudget = Math.max(
+        1,
+        Math.min(
+          options?.maxBytes ?? STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES,
+          STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES
+        )
+      )
+
       const encodeAt = (
-        edgeCap: number
+        edgeCap: number,
+        jpegQuality: number
       ): { dataUrl: string; width: number; height: number; mime: string } | undefined => {
         const scale = Math.min(1, edgeCap / Math.max(srcW, srcH))
         const outW = Math.max(1, Math.round(srcW * scale))
         const outH = Math.max(1, Math.round(srcH * scale))
         const mime = usePng ? 'image/png' : 'image/jpeg'
-        const quality = usePng ? undefined : STREETS_GL_TEXTURE_JPEG_QUALITY
+        const quality = usePng ? undefined : jpegQuality
 
         let dataUrl: string
         if (source !== canvas) {
@@ -1948,21 +2060,28 @@ export class StreetsGLBridge {
       }
 
       let edgeCap = Math.max(1, Math.min(maxSize, STREETS_GL_MAX_TEXTURE_SIZE))
-      let encoded = encodeAt(edgeCap)
+      let qualityIdx = 0
+      let encoded = encodeAt(edgeCap, STREETS_GL_TEXTURE_JPEG_QUALITY_STEPS[qualityIdx])
       if (!encoded) return undefined
 
       let bytes = StreetsGLBridge.dataUrlToArrayBuffer(encoded.dataUrl)
 
-      // Budget against compressed bytes (preferred). Fall back to data-URL char length
-      // when base64 decode is unavailable.
       const overBudget = (): boolean => {
-        if (bytes) return bytes.byteLength > STREETS_GL_BRIDGE_MAX_TEXTURE_BYTES
+        if (bytes) return bytes.byteLength > byteBudget
         return encoded!.dataUrl.length > STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS
       }
 
-      while (overBudget() && edgeCap > 256) {
-        edgeCap = Math.max(256, Math.floor(edgeCap / 2))
-        encoded = encodeAt(edgeCap)
+      // Prefer JPEG quality backoff at the current edge, then halve the long edge.
+      while (overBudget()) {
+        if (!usePng && qualityIdx < STREETS_GL_TEXTURE_JPEG_QUALITY_STEPS.length - 1) {
+          qualityIdx += 1
+        } else if (edgeCap > 256) {
+          edgeCap = Math.max(256, Math.floor(edgeCap / 2))
+          qualityIdx = Math.min(qualityIdx, 2)
+        } else {
+          break
+        }
+        encoded = encodeAt(edgeCap, STREETS_GL_TEXTURE_JPEG_QUALITY_STEPS[qualityIdx])
         if (!encoded) return undefined
         bytes = StreetsGLBridge.dataUrlToArrayBuffer(encoded.dataUrl)
       }
@@ -1987,8 +2106,14 @@ export class StreetsGLBridge {
         if (encoded.dataUrl.length <= STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS) {
           result.dataUrl = encoded.dataUrl
         }
-      } else {
+      } else if (encoded.dataUrl.length <= STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS) {
         result.dataUrl = encoded.dataUrl
+      } else {
+        console.warn(
+          `[StreetsGLBridge] Texture data URL exceeds char budget and bytes unavailable (` +
+            `${encoded.dataUrl.length} chars)`
+        )
+        return undefined
       }
 
       return result
@@ -2001,17 +2126,23 @@ export class StreetsGLBridge {
   /**
    * Convert a Three.js texture image to a data URL for postMessage transport.
    * Caps the longest edge at maxSize (default 4k). Prefer {@link serializeTextureForBridge}
-   * for new call sites (binary transfer).
+   * for new call sites (binary transfer). Never returns a data URL over the SEC char budget.
    */
   static textureToDataURL(
     texture: THREE.Texture,
     maxSize = STREETS_GL_MAX_TEXTURE_SIZE,
-    options?: { forcePng?: boolean }
+    options?: SerializeTextureForBridgeOptions
   ): string | undefined {
     const serialized = StreetsGLBridge.serializeTextureForBridge(texture, maxSize, options)
     if (!serialized) return undefined
-    if (serialized.dataUrl) return serialized.dataUrl
-    // Large maps may omit dataUrl — rebuild a data URL from bytes for legacy callers.
+    if (serialized.dataUrl) {
+      if (serialized.dataUrl.length <= STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS) {
+        return serialized.dataUrl
+      }
+      return undefined
+    }
+    // Large maps may omit dataUrl — only rebuild when the result still fits the char cap.
+    // Rebuilding oversized base64 previously poisoned metadata and tripped SEC-5 rejection.
     if (serialized.bytes) {
       const view = new Uint8Array(serialized.bytes)
       let binary = ''
@@ -2019,7 +2150,11 @@ export class StreetsGLBridge {
       for (let i = 0; i < view.length; i += chunk) {
         binary += String.fromCharCode(...view.subarray(i, i + chunk))
       }
-      return `data:${serialized.mime};base64,${btoa(binary)}`
+      const dataUrl = `data:${serialized.mime};base64,${btoa(binary)}`
+      if (dataUrl.length <= STREETS_GL_BRIDGE_MAX_TEXTURE_DATA_URL_CHARS) {
+        return dataUrl
+      }
+      return undefined
     }
     return undefined
   }
